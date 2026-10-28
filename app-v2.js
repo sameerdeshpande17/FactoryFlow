@@ -18,6 +18,12 @@ const purchases = [
   { id: 'PO-488', supplier: 'WestPack Films', material: 'BOPP film · 25 micron', amount: 63800, delivery: 'Nov 01', status: 'Part received' }
 ];
 
+const invoiceRecords = [
+  { id: 'INV-392', customer: 'Kaleva Naturals', job: 'JB-831 · Label roll', amount: 72000, due: 'Today', status: 'Due soon', phone: '919845678901' },
+  { id: 'INV-389', customer: 'Narmada Foods', job: 'JB-822 · Pouch run', amount: 54000, due: 'Oct 24', status: 'Overdue', phone: '919812345678' },
+  { id: 'INV-385', customer: 'Shree Packaging', job: 'JB-812 · Carton run', amount: 126000, due: 'Paid Oct 22', status: 'Paid', phone: '919876543210' }
+];
+
 const materials = [
   { sku: 'RM-0142', item: 'Kraft paper · 180 GSM', category: 'Paper', location: 'A-12', onHand: '3,840 kg', stock: 82, status: 'In stock' },
   { sku: 'RM-0251', item: 'BOPP film · 25 micron', category: 'Film', location: 'B-04', onHand: '1,260 kg', stock: 56, status: 'In stock' },
@@ -78,7 +84,7 @@ function quoteRows() {
   const query = (ui('#globalSearch').value || '').toLowerCase();
   const rows = quotes.filter((quote) => (app.filter === 'All' || quote.status === app.filter) && JSON.stringify(quote).toLowerCase().includes(query));
   if (!rows.length) return '<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">⌕</div><h2>No quotes found</h2><p>Try another search or create a fresh quote.</p></div></td></tr>';
-  return rows.map((quote) => '<tr><td class="order-code">' + quote.id + '</td><td><div class="item-name">' + quote.customer + '</div><div class="subtle">' + quote.scope + '</div></td><td>' + quote.qty.toLocaleString() + ' units</td><td>' + currency(quote.value) + '</td><td>' + quote.valid + '</td><td>' + status(quote.status) + '</td><td class="table-actions"><button class="table-button" data-share="' + quote.id + '">WhatsApp</button><button class="row-menu" data-convert="' + quote.id + '" title="Convert to job">→</button></td></tr>').join('');
+  return rows.map((quote) => '<tr><td class="order-code">' + quote.id + '</td><td><div class="item-name">' + quote.customer + '</div><div class="subtle">' + quote.scope + '</div></td><td>' + quote.qty.toLocaleString() + ' units</td><td>' + currency(quote.value) + '</td><td>' + quote.valid + '</td><td>' + status(quote.status) + '</td><td class="table-actions"><button class="table-button" data-document="' + quote.id + '">View</button><button class="table-button" data-share="' + quote.id + '">WhatsApp</button><button class="row-menu" data-convert="' + quote.id + '" title="Convert to job">→</button></td></tr>').join('');
 }
 function quotesPage() {
   const tabs = ['All', 'Sent', 'Viewed', 'Follow up', 'Accepted'].map((label) => '<button class="filter-tab ' + (app.filter === label ? 'active' : '') + '" data-filter="' + label + '">' + label + (label === 'All' ? ' (' + quotes.length + ')' : '') + '</button>').join('');
@@ -115,7 +121,7 @@ function workersPage() {
 }
 
 function invoicesPage() {
-  const invoices = [{ id: 'INV-392', customer: 'Kaleva Naturals', job: 'JB-831 · Label roll', amount: 72000, due: 'Today', status: 'Due soon' }, { id: 'INV-389', customer: 'Narmada Foods', job: 'JB-822 · Pouch run', amount: 54000, due: 'Oct 24', status: 'Overdue' }, { id: 'INV-385', customer: 'Shree Packaging', job: 'JB-812 · Carton run', amount: 126000, due: 'Paid Oct 22', status: 'Paid' }];
+  const invoices = invoiceRecords;
   const rows = invoices.map((invoice) => '<tr><td class="order-code">' + invoice.id + '<div class="subtle">GST 18%</div></td><td><div class="item-name">' + invoice.customer + '</div><div class="subtle">' + invoice.job + '</div></td><td>' + currency(invoice.amount) + '</td><td>' + invoice.due + '</td><td>' + status(invoice.status) + '</td><td>' + (invoice.status === 'Paid' ? '<span class="subtle">Received</span>' : '<button class="table-button" data-reminder="' + invoice.id + '">WhatsApp reminder</button>') + '</td></tr>').join('');
   return head('FINANCE', 'GST-ready invoices', 'Create a compliant invoice from delivery proof and nudge payment over WhatsApp.', '<button class="primary-button" data-action="invoice">＋ Create GST invoice</button>') + '<section class="content-card"><div class="toolbar"><div><strong style="font-size:12px">Receivables</strong><span class="subtle" style="margin-left:8px;font-size:11px">₹1.26L pending</span></div><button class="secondary-button" data-action="reminders">◔ Send payment reminders</button></div><div class="table-scroll"><table class="data-table"><thead><tr><th>INVOICE</th><th>CUSTOMER / JOB</th><th>AMOUNT</th><th>PAYMENT DUE</th><th>STATUS</th><th>ACTION</th></tr></thead><tbody>' + rows + '</tbody></table></div></section>';
 }
@@ -154,14 +160,15 @@ function notify(message) {
   ui('#toastRegion').append(item);
   setTimeout(() => item.remove(), 3600);
 }
-function closeModal() { ui('#modalBackdrop').hidden = true; }
-function openModal(markup) {
+function closeModal() { ui('#modalBackdrop').hidden = true; ui('.modal').classList.remove('document-modal'); }
+function openModal(markup, wide) {
+  ui('.modal').classList.toggle('document-modal', Boolean(wide));
   ui('#modalContent').innerHTML = markup;
   ui('#modalBackdrop').hidden = false;
   all('[data-close]').forEach((button) => button.addEventListener('click', closeModal));
 }
 function newQuote() {
-  openModal('<h2 id="modalTitle">New quotation</h2><p>Create the quote in English, then send it on WhatsApp in the customer’s preferred language.</p><form id="quoteForm" class="form-grid"><label>Customer name<input required name="customer" placeholder="e.g. Shree Packaging"></label><div class="form-row"><label>Product or service<input required name="scope" placeholder="e.g. Corrugated carton"></label><label>Quantity<input required name="qty" type="number" min="1" placeholder="0"></label></div><div class="form-row"><label>Quote value (₹)<input required name="value" type="number" min="1" placeholder="0"></label><label>Valid until<input required name="valid" type="date"></label></div><label>WhatsApp number<input name="phone" type="tel" placeholder="91 98765 43210"></label><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="primary-button" type="submit">Create quote</button></div></form>');
+  openModal('<h2 id="modalTitle">New quotation</h2><p>Create the quote in English, then send it on WhatsApp in the customer’s preferred language.</p><form id="quoteForm" class="form-grid"><label>Customer name<input required name="customer" placeholder="e.g. Shree Packaging"></label><div class="form-row"><label>Product or service<input required name="scope" placeholder="e.g. Corrugated carton"></label><label>Quantity<input required name="qty" type="number" min="1" placeholder="0"></label></div><div class="form-row"><label>Base quote value (before GST)<input required name="value" type="number" min="1" placeholder="0"></label><label>Valid until<input required name="valid" type="date"></label></div><label>WhatsApp number<input name="phone" type="tel" placeholder="91 98765 43210"></label><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="primary-button" type="submit">Create quote</button></div></form>');
   ui('#quoteForm').addEventListener('submit', (event) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -188,6 +195,40 @@ function newPurchase() {
     purchases.unshift({ id: 'PO-' + (492 + purchases.length), supplier: data.get('supplier'), material: data.get('material'), amount: Number(data.get('amount')), delivery, status: 'Confirmed' });
     closeModal(); goto('purchases'); notify('Purchase order is ready to send to the supplier.');
   });
+}
+function safe(value) { return String(value).replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[character])); }
+function quoteDocument(id) {
+  const quote = quotes.find((item) => item.id === id);
+  if (!quote) return;
+  const gst = Math.round(quote.value * .18);
+  const total = quote.value + gst;
+  const body = '<div class="document-heading"><div><span class="eyebrow">FACTORYFLOW · QUOTE</span><h2 id="modalTitle">Quotation ' + safe(quote.id) + '</h2><p>Prepared for ' + safe(quote.customer) + '</p></div><div class="document-status">' + status(quote.status) + '<small>Valid until ' + safe(quote.valid) + '</small></div></div><div class="document-parties"><div><span>FROM</span><strong>FactoryFlow demo workspace</strong><small>Job-work OS for small manufacturers<br>GSTIN: add in Settings</small></div><div><span>BILL TO</span><strong>' + safe(quote.customer) + '</strong><small>Shared on WhatsApp<br>Preferred language: English / हिंदी</small></div></div><div class="document-lines"><div class="document-line document-line-head"><span>DESCRIPTION</span><span>QTY</span><span>RATE</span><span>AMOUNT</span></div><div class="document-line"><strong>' + safe(quote.scope) + '</strong><span>' + quote.qty.toLocaleString() + ' units</span><span>—</span><strong>' + currency(quote.value) + '</strong></div></div><div class="document-total"><div><span>Subtotal</span><strong>' + currency(quote.value) + '</strong></div><div><span>GST · 18%</span><strong>' + currency(gst) + '</strong></div><div class="grand-total"><span>Quote total</span><strong>' + currency(total) + '</strong></div></div><p class="document-note">This estimate is prepared from the base quote value. Confirm the final HSN/SAC and GST treatment before issuing a tax invoice.</p><div class="modal-actions"><button class="secondary-button" type="button" data-close>Close</button><button class="secondary-button" type="button" data-print-quote="' + quote.id + '">Print</button><button class="primary-button" type="button" data-doc-share="' + quote.id + '">◔ Share on WhatsApp</button></div>';
+  openModal(body, true);
+  ui('[data-doc-share]').addEventListener('click', () => share(quote.id));
+  ui('[data-print-quote]').addEventListener('click', () => printQuote(quote.id));
+}
+function printQuote(id) {
+  const quote = quotes.find((item) => item.id === id);
+  if (!quote) return;
+  const gst = Math.round(quote.value * .18);
+  const total = quote.value + gst;
+  const printable = '<h1>FactoryFlow</h1><p class="accent">QUOTATION ' + safe(quote.id) + '</p><hr><p><b>Customer:</b> ' + safe(quote.customer) + '<br><b>Valid until:</b> ' + safe(quote.valid) + '</p><table><thead><tr><th>Description</th><th>Quantity</th><th>Base value</th></tr></thead><tbody><tr><td>' + safe(quote.scope) + '</td><td>' + quote.qty.toLocaleString() + ' units</td><td>' + currency(quote.value) + '</td></tr></tbody></table><div class="totals"><p>Subtotal <b>' + currency(quote.value) + '</b></p><p>GST (18%) <b>' + currency(gst) + '</b></p><h2>Quote total ' + currency(total) + '</h2></div><p class="small">Estimate only. Confirm HSN/SAC and tax treatment before invoicing.</p>';
+  const printer = window.open('', '_blank');
+  if (!printer) { notify('Please allow pop-ups to print this quotation.'); return; }
+  printer.opener = null;
+  printer.document.write('<!doctype html><html><head><title>Quote ' + safe(quote.id) + '</title><style>body{font-family:Arial,sans-serif;color:#14251b;padding:42px;max-width:780px;margin:auto}h1{margin:0;font-size:28px}.accent{color:#257a54;font-weight:bold;letter-spacing:1px}hr{border:0;border-top:1px solid #dbe3dc;margin:25px 0}table{border-collapse:collapse;width:100%;margin-top:25px}th,td{padding:12px;text-align:left;border-bottom:1px solid #dbe3dc}th{font-size:11px;color:#65736b;text-transform:uppercase}.totals{margin:24px 0 0 auto;width:310px}.totals p{display:flex;justify-content:space-between}.totals h2{border-top:2px solid #183f2d;padding-top:12px;display:flex;justify-content:space-between;font-size:17px}.small{font-size:11px;color:#65736b;margin-top:44px}</style></head><body>' + printable + '</body></html>');
+  printer.document.close();
+  printer.focus();
+  setTimeout(() => printer.print(), 250);
+}
+function openReminder(id) {
+  const invoice = invoiceRecords.find((item) => item.id === id);
+  if (!invoice) return;
+  const message = 'Namaste ' + invoice.customer + ', a gentle reminder that ' + invoice.id + ' for ' + currency(invoice.amount) + ' is due ' + invoice.due + '. Please let us know the payment status. Thank you.';
+  const body = '<h2 id="modalTitle">Payment reminder</h2><p>Review the WhatsApp message before sending it to ' + safe(invoice.customer) + '.</p><div class="reminder-card"><span>' + safe(invoice.id) + ' · ' + status(invoice.status) + '</span><strong>' + currency(invoice.amount) + '</strong><p>' + safe(message) + '</p></div><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="secondary-button" type="button" data-copy-reminder>Copy text</button><button class="primary-button" type="button" data-send-reminder>◔ Open WhatsApp</button></div>';
+  openModal(body);
+  ui('[data-copy-reminder]').addEventListener('click', async () => { await navigator.clipboard?.writeText(message); notify('Payment reminder copied.'); });
+  ui('[data-send-reminder]').addEventListener('click', () => { window.open('https://wa.me/' + invoice.phone + '?text=' + encodeURIComponent(message), '_blank', 'noopener'); notify('Payment reminder opened in WhatsApp.'); });
 }
 function share(id) {
   const quote = quotes.find((item) => item.id === id);
@@ -217,9 +258,10 @@ function bind() {
   all('[data-go]').forEach((button) => button.addEventListener('click', () => goto(button.dataset.go)));
   all('[data-new]').forEach((button) => button.addEventListener('click', () => ({ quote: newQuote, job: newJob, purchase: newPurchase }[button.dataset.new]())));
   all('[data-filter]').forEach((button) => button.addEventListener('click', () => { app.filter = button.dataset.filter; render(); }));
+  all('[data-document]').forEach((button) => button.addEventListener('click', () => quoteDocument(button.dataset.document)));
   all('[data-share]').forEach((button) => button.addEventListener('click', () => share(button.dataset.share)));
   all('[data-convert]').forEach((button) => button.addEventListener('click', () => convert(button.dataset.convert)));
-  all('[data-reminder]').forEach((button) => button.addEventListener('click', () => notify(button.dataset.reminder + ' payment reminder prepared for WhatsApp.')));
+  all('[data-reminder]').forEach((button) => button.addEventListener('click', () => openReminder(button.dataset.reminder)));
   all('[data-group]').forEach((button) => button.addEventListener('click', () => notify('You joined the ' + button.dataset.group + ' buying group.')));
   all('[data-action]').forEach((button) => button.addEventListener('click', () => { if (button.dataset.action === 'language') toggleLanguage(); else notify(actionMessage(button.dataset.action)); }));
 }
