@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#11231b" />
+    <meta name="description" content="FactoryFlow is a focused command center for modern manufacturing operations." />
+    <title>FactoryFlow — Operations command center</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="Primary navigation">
+        <a class="brand" href="#dashboard" aria-label="FactoryFlow home">
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span>Factory<span>Flow</span></span>
+        </a>
+
+        <div class="facility-switcher">
+          <span class="facility-dot"></span>
+          <span><small>FACILITY</small><strong>Northstar Works</strong></span>
+          <span class="chevron">⌄</span>
+        </div>
+
+        <nav class="nav-list">
+          <button class="nav-link active" data-view="dashboard"><span>⌂</span>Overview <em>अवलोकन</em></button>
+          <button class="nav-link" data-view="quotes"><span>▤</span>Quotes <em>कोट</em> <b id="quoteBadge">3</b></button>
+          <button class="nav-link" data-view="jobs"><span>◉</span>Jobs <em>जॉब्स</em></button>
+          <button class="nav-link" data-view="purchases"><span>▣</span>Purchase <em>खरीद</em></button>
+          <button class="nav-link" data-view="materials"><span>◫</span>Materials <em>सामग्री</em></button>
+          <button class="nav-link" data-view="workers"><span>♙</span>Job workers <em>वर्कर</em></button>
+          <button class="nav-link" data-view="invoices"><span>▤</span>Invoices <em>बिल</em></button>
+          <button class="nav-link" data-view="marketplace"><span>◇</span>Marketplace <em>बाज़ार</em></button>
+        </nav>
+
+        <div class="sidebar-bottom">
+          <button class="nav-link" data-view="settings"><span>⚙</span>Settings</button>
+          <div class="user-card">
+            <span class="avatar">SD</span>
+            <span><strong>Sameer Deshpande</strong><small>Operations lead</small></span>
+            <button class="more-button" aria-label="Account options">•••</button>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main-content">
+        <header class="topbar">
+          <button class="mobile-menu" id="mobileMenu" aria-label="Open navigation">☰</button>
+          <div class="breadcrumb"><span id="pageKicker">JOB-WORK OS</span><strong id="pageTitle">Overview</strong></div>
+          <div class="topbar-actions">
+            <label class="search-box"><span>⌕</span><input id="globalSearch" type="search" placeholder="Search quotes, jobs, suppliers…" /></label>
+            <button class="language-toggle" id="languageToggle" aria-label="Switch language">हिं</button>
+            <button class="icon-button notification-button" id="notificationButton" aria-label="Notifications">♧<i></i></button>
+            <button class="date-pill" id="dateButton"><span>▣</span><span id="todayDate">Oct 28, 2026</span></button>
+          </div>
+        </header>
+
+        <div id="view" class="view-container" tabindex="-1"></div>
+      </main>
+    </div>
+
+    <div class="toast-region" id="toastRegion" aria-live="polite"></div>
+    <div class="modal-backdrop" id="modalBackdrop" hidden>
+      <section class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+        <button class="modal-close" id="modalClose" aria-label="Close">×</button>
+        <div id="modalContent"></div>
+      </section>
+    </div>
+    <script src="app-v2.js" defer></script>
+  </body>
+</html>
