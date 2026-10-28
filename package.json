@@ -1,0 +1,14 @@
+{
+  "name": "factoryflow",
+  "version": "0.1.0",
+  "private": true,
+  "description": "WhatsApp-first job-work OS for small manufacturers",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "check": "node --check server.js && node --check app-v2.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

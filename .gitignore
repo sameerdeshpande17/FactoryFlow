@@ -1,0 +1,4 @@
+data/factoryflow.json
+data/factoryflow.json.tmp
+node_modules/
+.env

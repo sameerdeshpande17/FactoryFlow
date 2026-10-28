@@ -33,6 +33,8 @@ const materials = [
 ];
 
 const app = { view: 'dashboard', filter: 'All', language: localStorage.getItem('ff-language') || 'en' };
+let workspaceReady = false;
+let syncInFlight = false;
 const ui = (selector) => document.querySelector(selector);
 const all = (selector) => [...document.querySelectorAll(selector)];
 const currency = (value) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(value);
@@ -45,11 +47,67 @@ const titles = {
   marketplace: ['B2B NETWORK', 'Marketplace'], settings: ['WORKSPACE', 'Settings']
 };
 
-function save() {
+function save(shouldSync = true) {
   localStorage.setItem('ff-quotes', JSON.stringify(quotes));
   localStorage.setItem('ff-jobs', JSON.stringify(jobs));
   localStorage.setItem('ff-language', app.language);
   ui('#quoteBadge').textContent = quotes.filter((quote) => quote.status === 'Follow up').length || '0';
+  if (shouldSync && workspaceReady) syncWorkspace();
+}
+
+function setDataStatus(label, state) {
+  const indicator = ui('#dataStatus');
+  if (!indicator) return;
+  indicator.textContent = label;
+  indicator.dataset.state = state;
+}
+
+async function syncWorkspace() {
+  if (syncInFlight || location.protocol === 'file:') return;
+  syncInFlight = true;
+  setDataStatus('Saving…', 'pending');
+  try {
+    const response = await fetch('/api/sync', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ quotes, jobs, purchases, materials })
+    });
+    if (!response.ok) throw new Error('Workspace sync failed.');
+    setDataStatus('Synced', 'online');
+  } catch {
+    setDataStatus('Local mode', 'offline');
+  } finally {
+    syncInFlight = false;
+  }
+}
+
+async function hydrateWorkspace() {
+  if (location.protocol === 'file:') {
+    setDataStatus('Local mode', 'offline');
+    workspaceReady = true;
+    return;
+  }
+  setDataStatus('Connecting…', 'pending');
+  try {
+    const response = await fetch('/api/bootstrap', { headers: { Accept: 'application/json' } });
+    if (!response.ok) throw new Error('Workspace is unavailable.');
+    const payload = await response.json();
+    const remote = payload.state || {};
+    const hasRemoteData = ['quotes', 'jobs', 'purchases', 'materials'].some((key) => Array.isArray(remote[key]) && remote[key].length);
+    if (hasRemoteData) {
+      quotes.splice(0, quotes.length, ...remote.quotes);
+      jobs.splice(0, jobs.length, ...remote.jobs);
+      purchases.splice(0, purchases.length, ...remote.purchases);
+      materials.splice(0, materials.length, ...remote.materials);
+    }
+    workspaceReady = true;
+    save(hasRemoteData ? false : true);
+    setDataStatus('Synced', 'online');
+    render();
+  } catch {
+    workspaceReady = true;
+    setDataStatus('Local mode', 'offline');
+  }
 }
 
 function head(eyebrow, title, description, action) {
@@ -193,7 +251,7 @@ function newPurchase() {
     const data = new FormData(event.currentTarget);
     const delivery = data.get('delivery') ? new Date(data.get('delivery') + 'T00:00:00').toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }) : 'To confirm';
     purchases.unshift({ id: 'PO-' + (492 + purchases.length), supplier: data.get('supplier'), material: data.get('material'), amount: Number(data.get('amount')), delivery, status: 'Confirmed' });
-    closeModal(); goto('purchases'); notify('Purchase order is ready to send to the supplier.');
+    save(); closeModal(); goto('purchases'); notify('Purchase order is ready to send to the supplier.');
   });
 }
 function safe(value) { return String(value).replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[character])); }
@@ -276,5 +334,6 @@ ui('#languageToggle').addEventListener('click', toggleLanguage);
 ui('#globalSearch').addEventListener('input', () => { if (app.view === 'quotes') ui('#quotesBody').innerHTML = quoteRows(); });
 ui('#todayDate').textContent = new Date(2026, 9, 28).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' });
 ui('#languageToggle').textContent = app.language === 'hi' ? 'EN' : 'हिं';
-save();
+save(false);
 render();
+hydrateWorkspace();
