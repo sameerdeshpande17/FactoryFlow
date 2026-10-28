@@ -24,6 +24,8 @@ const invoiceRecords = [
   { id: 'INV-385', customer: 'Shree Packaging', job: 'JB-812 · Carton run', amount: 126000, due: 'Paid Oct 22', status: 'Paid', phone: '919876543210' }
 ];
 
+const deliveries = JSON.parse(localStorage.getItem('ff-deliveries') || 'null') || [];
+
 const materials = [
   { sku: 'RM-0142', item: 'Kraft paper · 180 GSM', category: 'Paper', location: 'A-12', onHand: '3,840 kg', stock: 82, status: 'In stock' },
   { sku: 'RM-0251', item: 'BOPP film · 25 micron', category: 'Film', location: 'B-04', onHand: '1,260 kg', stock: 56, status: 'In stock' },
@@ -50,6 +52,7 @@ const titles = {
 function save(shouldSync = true) {
   localStorage.setItem('ff-quotes', JSON.stringify(quotes));
   localStorage.setItem('ff-jobs', JSON.stringify(jobs));
+  localStorage.setItem('ff-deliveries', JSON.stringify(deliveries));
   localStorage.setItem('ff-language', app.language);
   ui('#quoteBadge').textContent = quotes.filter((quote) => quote.status === 'Follow up').length || '0';
   if (shouldSync && workspaceReady) syncWorkspace();
@@ -70,7 +73,7 @@ async function syncWorkspace() {
     const response = await fetch('/api/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ quotes, jobs, purchases, materials })
+      body: JSON.stringify({ quotes, jobs, purchases, materials, deliveries })
     });
     if (!response.ok) throw new Error('Workspace sync failed.');
     setDataStatus('Synced', 'online');
@@ -93,12 +96,13 @@ async function hydrateWorkspace() {
     if (!response.ok) throw new Error('Workspace is unavailable.');
     const payload = await response.json();
     const remote = payload.state || {};
-    const hasRemoteData = ['quotes', 'jobs', 'purchases', 'materials'].some((key) => Array.isArray(remote[key]) && remote[key].length);
+    const hasRemoteData = ['quotes', 'jobs', 'purchases', 'materials', 'deliveries'].some((key) => Array.isArray(remote[key]) && remote[key].length);
     if (hasRemoteData) {
       quotes.splice(0, quotes.length, ...remote.quotes);
       jobs.splice(0, jobs.length, ...remote.jobs);
       purchases.splice(0, purchases.length, ...remote.purchases);
       materials.splice(0, materials.length, ...remote.materials);
+      deliveries.splice(0, deliveries.length, ...(remote.deliveries || []));
     }
     workspaceReady = true;
     save(hasRemoteData ? false : true);
@@ -151,14 +155,17 @@ function quotesPage() {
 }
 
 function jobCard(job, note, warning) {
-  return '<article class="work-card"><strong>' + job.id + ' · ' + job.item + '</strong><p>' + job.qty.toLocaleString() + ' units · ' + job.customer + '</p><footer><span class="small-avatar">' + job.owner + '</span><span class="due ' + (warning ? 'warn' : '') + '">◷ ' + note + '</span></footer></article>';
+  const proof = deliveries.find((delivery) => delivery.jobId === job.id);
+  return '<article class="work-card"><strong>' + job.id + ' · ' + job.item + '</strong><p>' + job.qty.toLocaleString() + ' units · ' + job.customer + '</p><footer><span class="small-avatar">' + job.owner + '</span><span class="due ' + (warning ? 'warn' : '') + '">' + (proof ? '✓ Proof saved' : '◷ ') + note + '</span></footer></article>';
 }
 function jobsPage() {
   const pending = jobs.find((job) => job.status === 'Material pending') || jobs[0];
   const active = jobs.filter((job) => job.status === 'In production' || job.status === 'With worker');
   const qc = jobs.find((job) => job.status === 'QC review') || jobs[0];
+  const proof = deliveries.find((delivery) => delivery.jobId === qc.id);
+  const proofAction = proof ? '<button class="text-button" data-view-proof="' + qc.id + '">View proof →</button>' : '<button class="text-button" data-proof-job="' + qc.id + '">Add proof →</button>';
   return head('JOB CONTROL', 'Jobs in motion', 'Assign job workers, track progress, and capture proof before delivery.', '<button class="primary-button" data-new="job">＋ Create job</button>') +
-  '<section class="kanban"><div class="kanban-column"><div class="kanban-title">READY TO ASSIGN <span class="kanban-count">1</span></div>' + jobCard(pending, 'Material pending', true) + '<article class="work-card"><strong>Assign a verified worker</strong><p>Match capacity, rate, and delivery promise in one place.</p><footer><button class="text-button" data-go="workers">Find workers →</button></footer></article></div><div class="kanban-column"><div class="kanban-title">WITH JOB WORKER <span class="kanban-count">' + active.length + '</span></div>' + active.map((job) => jobCard(job, job.due)).join('') + '</div><div class="kanban-column"><div class="kanban-title">DELIVERY & QC <span class="kanban-count">1</span></div>' + jobCard(qc, 'Proof needed') + '<article class="work-card"><strong>Capture delivery proof</strong><p>Attach a signed challan or delivery photo, then issue the invoice.</p><footer><span class="status setup">Ready</span><button class="text-button" data-action="proof">Add proof →</button></footer></article></div></section>';
+  '<section class="kanban"><div class="kanban-column"><div class="kanban-title">READY TO ASSIGN <span class="kanban-count">1</span></div>' + jobCard(pending, 'Material pending', true) + '<article class="work-card"><strong>Assign a verified worker</strong><p>Match capacity, rate, and delivery promise in one place.</p><footer><button class="text-button" data-go="workers">Find workers →</button></footer></article></div><div class="kanban-column"><div class="kanban-title">WITH JOB WORKER <span class="kanban-count">' + active.length + '</span></div>' + active.map((job) => jobCard(job, job.due)).join('') + '</div><div class="kanban-column"><div class="kanban-title">DELIVERY & QC <span class="kanban-count">1</span></div>' + jobCard(qc, proof ? ' · ' + proof.receivedBy : 'Proof needed') + '<article class="work-card"><strong>' + (proof ? 'Delivery proof captured' : 'Capture delivery proof') + '</strong><p>' + (proof ? 'Saved for ' + safe(proof.receivedBy) + '. Keep this with the GST invoice.' : 'Attach a signed challan or delivery photo, then issue the invoice.') + '</p><footer><span class="status ' + (proof ? 'on-track' : 'setup') + '">' + (proof ? 'Saved' : 'Ready') + '</span>' + proofAction + '</footer></article></div></section>';
 }
 
 function purchasesPage() {
@@ -175,7 +182,7 @@ function materialsPage() {
 function workersPage() {
   const people = [['Ravi Cartons', 'Carton conversion · 72% capacity', 'RK', ''], ['Aman Printworks', 'Flexo printing · 44% capacity', 'AP', 'alt'], ['Sanket Lamination', 'Film lamination · Available', 'SL', 'gold'], ['Disha Finishing', 'Spot UV & finishing · 61% capacity', 'DF', '']];
   const list = people.map((person) => '<div class="team-person"><span class="person-avatar ' + person[3] + '">' + person[2] + '</span><span class="person-info"><strong>' + person[0] + ' <span class="verified">✓ verified</span></strong><small>' + person[1] + '</small></span><span class="status on-track">Verified</span></div>').join('');
-  return head('PARTNERS', 'Your job-worker network', 'Assignments, rate visibility, and delivery proof without endless follow-ups.', '<button class="primary-button" data-action="invite">＋ Invite worker</button>') + '<section class="team-grid"><div class="panel"><header class="panel-header"><h2>Available job workers</h2><button class="text-button" data-go="marketplace">Discover suppliers →</button></header><div class="team-list">' + list + '</div></div><div class="panel"><header class="panel-header"><h2>Active assignments</h2><span class="status running">3 live</span></header><div class="schedule-list">' + schedule('JB-841', 'Ravi Cartons', '12,000 cartons · due today', 68) + schedule('JB-838', 'Aman Printworks', '8,000 pouches · due tomorrow', 42) + schedule('JB-835', 'Ravi Cartons', 'Waiting for black ink', 15, true) + '</div><div class="panel callout" style="margin:18px -1px -1px"><h2 style="font-size:14px;margin-top:0">Proof makes payment easy</h2><p style="margin-bottom:12px">Capture a delivery photo or signed challan and share it instantly.</p><button class="secondary-button" data-action="proof">Add delivery proof</button></div></div></section>';
+  return head('PARTNERS', 'Your job-worker network', 'Assignments, rate visibility, and delivery proof without endless follow-ups.', '<button class="primary-button" data-action="invite">＋ Invite worker</button>') + '<section class="team-grid"><div class="panel"><header class="panel-header"><h2>Available job workers</h2><button class="text-button" data-go="marketplace">Discover suppliers →</button></header><div class="team-list">' + list + '</div></div><div class="panel"><header class="panel-header"><h2>Active assignments</h2><span class="status running">3 live</span></header><div class="schedule-list">' + schedule('JB-841', 'Ravi Cartons', '12,000 cartons · due today', 68) + schedule('JB-838', 'Aman Printworks', '8,000 pouches · due tomorrow', 42) + schedule('JB-835', 'Ravi Cartons', 'Waiting for black ink', 15, true) + '</div><div class="panel callout" style="margin:18px -1px -1px"><h2 style="font-size:14px;margin-top:0">Proof makes payment easy</h2><p style="margin-bottom:12px">Capture a delivery photo or signed challan and share it instantly.</p><button class="secondary-button" data-proof-job="JB-831">Add delivery proof</button></div></div></section>';
 }
 
 function invoicesPage() {
@@ -255,6 +262,69 @@ function newPurchase() {
   });
 }
 function safe(value) { return String(value).replace(/[&<>"']/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[character])); }
+function fileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.addEventListener('load', () => resolve(reader.result));
+    reader.addEventListener('error', () => reject(new Error('The attachment could not be read.')));
+    reader.readAsDataURL(file);
+  });
+}
+function openDeliveryProof(jobId) {
+  const selectedJob = jobs.find((job) => job.id === jobId) || jobs[0];
+  if (!selectedJob) return;
+  const jobOptions = jobs.map((job) => '<option value="' + safe(job.id) + '"' + (job.id === selectedJob.id ? ' selected' : '') + '>' + safe(job.id + ' · ' + job.customer + ' · ' + job.item) + '</option>').join('');
+  const today = new Date().toISOString().slice(0, 10);
+  const form = '<h2 id="modalTitle">Capture delivery proof</h2><p>Record who received the delivery and attach a signed challan or photo. Files stay in this local workspace.</p><form id="proofForm" class="form-grid"><label>Job<select name="jobId">' + jobOptions + '</select></label><div class="form-row"><label>Delivered on<input required name="deliveredAt" type="date" value="' + today + '"></label><label>Received by<input required name="receivedBy" placeholder="Recipient name"></label></div><label>Challan or reference number<input name="challan" placeholder="e.g. DC-2084"></label><label>Delivery photo or signed challan<input name="attachment" type="file" accept="image/jpeg,image/png,image/webp,application/pdf"></label><small class="upload-hint">Optional JPG, PNG, WebP, or PDF up to 1 MB.</small><label>Notes<input name="notes" placeholder="e.g. 12 cartons received in good condition"></label><p id="proofError" class="form-error" hidden></p><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="primary-button" type="submit">Save proof</button></div></form>';
+  openModal(form, true);
+  ui('#proofForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const formData = new FormData(event.currentTarget);
+    const file = formData.get('attachment');
+    const error = ui('#proofError');
+    let attachment = null;
+    if (file && file.size) {
+      const acceptedTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+      if (file.size > 1_000_000) {
+        error.textContent = 'Choose an image or PDF smaller than 1 MB.';
+        error.hidden = false;
+        return;
+      }
+      if (!acceptedTypes.includes(file.type)) {
+        error.textContent = 'Only JPG, PNG, WebP, and PDF files can be used as delivery proof.';
+        error.hidden = false;
+        return;
+      }
+      try {
+        attachment = { name: file.name, type: file.type, size: file.size, dataUrl: await fileAsDataUrl(file) };
+      } catch (readError) {
+        error.textContent = readError.message;
+        error.hidden = false;
+        return;
+      }
+    }
+    const job = jobs.find((item) => item.id === formData.get('jobId'));
+    if (!job) return;
+    const delivery = { id: 'DP-' + (101 + deliveries.length), jobId: job.id, customer: job.customer, receivedBy: formData.get('receivedBy'), challan: formData.get('challan') || 'Not provided', deliveredAt: formData.get('deliveredAt'), notes: formData.get('notes') || 'No additional notes.', attachment, createdAt: new Date().toISOString() };
+    const existing = deliveries.findIndex((item) => item.jobId === job.id);
+    if (existing >= 0) deliveries.splice(existing, 1, delivery); else deliveries.unshift(delivery);
+    job.status = 'Delivered';
+    job.due = 'Delivered ' + new Date(delivery.deliveredAt + 'T12:00:00').toLocaleDateString('en-IN', { month: 'short', day: 'numeric' });
+    job.progress = 100;
+    save(); closeModal(); goto('jobs'); notify('Delivery proof saved for ' + job.id + '.');
+  });
+}
+function viewDeliveryProof(jobId) {
+  const delivery = deliveries.find((item) => item.jobId === jobId);
+  if (!delivery) { openDeliveryProof(jobId); return; }
+  const attachment = delivery.attachment;
+  const attachmentBlock = attachment
+    ? (attachment.type.startsWith('image/') ? '<img class="proof-image" src="' + attachment.dataUrl + '" alt="Delivery proof for ' + safe(delivery.jobId) + '">' : '<a class="proof-file" href="' + attachment.dataUrl + '" download="' + safe(attachment.name) + '">⇩ Download ' + safe(attachment.name) + '</a>')
+    : '<div class="proof-empty">No file was attached to this proof record.</div>';
+  const body = '<h2 id="modalTitle">Delivery proof · ' + safe(delivery.jobId) + '</h2><p>Saved ' + new Date(delivery.deliveredAt + 'T12:00:00').toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' }) + ' for ' + safe(delivery.customer) + '.</p><div class="proof-details"><div><span>RECEIVED BY</span><strong>' + safe(delivery.receivedBy) + '</strong></div><div><span>CHALLAN / REF.</span><strong>' + safe(delivery.challan) + '</strong></div><div><span>NOTES</span><strong>' + safe(delivery.notes) + '</strong></div></div>' + attachmentBlock + '<div class="modal-actions"><button class="secondary-button" type="button" data-close>Close</button><button class="primary-button" type="button" data-proof-job="' + safe(delivery.jobId) + '">Replace proof</button></div>';
+  openModal(body, true);
+  ui('[data-proof-job]').addEventListener('click', () => openDeliveryProof(delivery.jobId));
+}
 function quoteDocument(id) {
   const quote = quotes.find((item) => item.id === id);
   if (!quote) return;
@@ -319,6 +389,8 @@ function bind() {
   all('[data-document]').forEach((button) => button.addEventListener('click', () => quoteDocument(button.dataset.document)));
   all('[data-share]').forEach((button) => button.addEventListener('click', () => share(button.dataset.share)));
   all('[data-convert]').forEach((button) => button.addEventListener('click', () => convert(button.dataset.convert)));
+  all('[data-proof-job]').forEach((button) => button.addEventListener('click', () => openDeliveryProof(button.dataset.proofJob)));
+  all('[data-view-proof]').forEach((button) => button.addEventListener('click', () => viewDeliveryProof(button.dataset.viewProof)));
   all('[data-reminder]').forEach((button) => button.addEventListener('click', () => openReminder(button.dataset.reminder)));
   all('[data-group]').forEach((button) => button.addEventListener('click', () => notify('You joined the ' + button.dataset.group + ' buying group.')));
   all('[data-action]').forEach((button) => button.addEventListener('click', () => { if (button.dataset.action === 'language') toggleLanguage(); else notify(actionMessage(button.dataset.action)); }));

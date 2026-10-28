@@ -21,6 +21,7 @@ Opening index.html directly is still supported as a browser-only fallback, but c
 - Verified supplier discovery, group buying, payment protection, and working-capital entry points
 - English/Hindi language switch and responsive layout
 - Local API-backed persistence for quotes, jobs, purchases, and materials
+- Delivery-proof records with recipient, challan/reference, notes, and an optional 1 MB photo or PDF
 - Responsive layout for desktop and mobile screens
 
 ## Suggested next steps

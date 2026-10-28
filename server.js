@@ -24,7 +24,15 @@ function ensureDataStore() {
 
 function readStore() {
   ensureDataStore();
-  return JSON.parse(fs.readFileSync(dataPath, 'utf8'));
+  const stored = JSON.parse(fs.readFileSync(dataPath, 'utf8'));
+  return {
+    workspace: stored.workspace || { name: 'Northstar Works', cluster: 'Packaging', locale: 'en-IN' },
+    quotes: list(stored.quotes),
+    jobs: list(stored.jobs),
+    purchases: list(stored.purchases),
+    materials: list(stored.materials),
+    deliveries: list(stored.deliveries)
+  };
 }
 
 function writeStore(payload) {
@@ -47,7 +55,7 @@ function readJson(request) {
     let body = '';
     request.on('data', (chunk) => {
       body += chunk;
-      if (body.length > 1_000_000) request.destroy(new Error('Request body is too large.'));
+      if (body.length > 2_000_000) request.destroy(new Error('Request body is too large.'));
     });
     request.on('end', () => {
       try {
@@ -91,7 +99,8 @@ async function handleApi(request, response, pathname) {
         quotes: list(body.quotes),
         jobs: list(body.jobs),
         purchases: list(body.purchases),
-        materials: list(body.materials)
+        materials: list(body.materials),
+        deliveries: list(body.deliveries)
       };
       writeStore(next);
       return sendJson(response, 200, { ok: true, updatedAt: new Date().toISOString(), customers: customerDirectory(next) });
