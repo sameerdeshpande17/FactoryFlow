@@ -103,3 +103,80 @@ test('rejects zero, negative, or non-numeric receipt quantities', () => {
   }
   assert.equal(materials.length, 0);
 });
+
+
+test('consuming material reduces on-hand quantity and recalculates stock health', () => {
+  const materials = [{
+    sku: 'RM-0001',
+    item: 'Water-based ink · black',
+    category: 'Ink',
+    location: 'C-18',
+    onHand: '34 kg',
+    capacity: 100,
+    stock: 34,
+    status: 'In stock'
+  }];
+
+  const result = inventory.consumeFromStock(materials, 'RM-0001', 10, 'kg');
+
+  assert.equal(result.previousOnHand, '34 kg');
+  assert.equal(result.onHand, '24 kg');
+  assert.equal(result.usedQuantity, 10);
+  assert.equal(result.material.stock, 24);
+  assert.equal(result.material.status, 'Low stock');
+});
+
+test('rejects consumption greater than available stock without mutation', () => {
+  const materials = [{
+    sku: 'RM-0001',
+    item: 'Packaging adhesive',
+    onHand: '5 kg',
+    capacity: 20,
+    stock: 25,
+    status: 'Critical'
+  }];
+  assert.throws(
+    () => inventory.consumeFromStock(materials, 'RM-0001', 6, 'kg'),
+    /Insufficient stock/i
+  );
+  assert.equal(materials[0].onHand, '5 kg');
+  assert.equal(materials[0].stock, 25);
+});
+
+test('rejects a consumption unit mismatch without changing inventory', () => {
+  const materials = [{
+    sku: 'RM-0001',
+    item: 'Mono-carton board',
+    onHand: '640 sheets',
+    capacity: 1000,
+    stock: 64,
+    status: 'In stock'
+  }];
+  assert.throws(
+    () => inventory.consumeFromStock(materials, 'RM-0001', 5, 'kg'),
+    /Unit mismatch/i
+  );
+  assert.equal(materials[0].onHand, '640 sheets');
+});
+
+test('consuming all available stock preserves zero stock and marks the material critical', () => {
+  const materials = [{
+    sku: 'RM-0001',
+    item: 'Water-based ink',
+    onHand: '12 kg',
+    capacity: 100,
+    stock: 12,
+    status: 'Critical'
+  }];
+  const result = inventory.consumeFromStock(materials, 'RM-0001', 12, 'kg');
+  assert.equal(result.onHand, '0 kg');
+  assert.equal(materials[0].stock, 0);
+  assert.equal(materials[0].status, 'Critical');
+});
+
+test('rejects a material SKU that does not exist', () => {
+  assert.throws(
+    () => inventory.consumeFromStock([], 'RM-MISSING', 1, 'kg'),
+    /Select a material/i
+  );
+});
