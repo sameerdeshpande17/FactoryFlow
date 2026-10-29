@@ -166,7 +166,7 @@ function quotesPage() {
 
 function jobCard(job, note, warning) {
   const proof = deliveries.find((delivery) => delivery.jobId === job.id);
-  const consumeAction = !['Delivered', 'QC review'].includes(job.status)
+  const consumeAction = ['In production', 'With worker'].includes(job.status)
     ? '<button class="text-button" data-consume-job="' + safe(job.id) + '">Record material use →</button>'
     : '';
   return '<article class="work-card"><strong>' + job.id + ' · ' + job.item + '</strong><p>' + job.qty.toLocaleString() + ' units · ' + job.customer + '</p><footer><span class="small-avatar">' + job.owner + '</span><span class="due ' + (warning ? 'warn' : '') + '">' + (proof ? '✓ Proof saved' : '◷ ') + note + '</span></footer>' + (consumeAction ? '<footer>' + consumeAction + '</footer>' : '') + '</article>';
@@ -513,8 +513,8 @@ function receiveMaterials() {
 
 function consumeMaterials(jobId) {
   const job = jobs.find((item) => item.id === jobId);
-  if (!job || ['Delivered', 'QC review'].includes(job.status)) {
-    notify('Material consumption can only be recorded for active production jobs.');
+  if (!job || !['In production', 'With worker'].includes(job.status)) {
+    notify('Material consumption can only be recorded for jobs in production or with a job worker.');
     return;
   }
   if (!materials.length) {
