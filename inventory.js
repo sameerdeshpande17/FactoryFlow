@@ -56,7 +56,7 @@
       if (!Number.isFinite(Number(material.stock))) material.stock = 50;
       if (!Number.isFinite(Number(material.capacity)) || Number(material.capacity) <= 0) {
         const ratio = Math.max(Number(material.stock) / 100, 0.01);
-        material.capacity = parsed ? parsed.quantity / ratio : 1;
+        material.capacity = parsed ? Math.max(parsed.quantity, 1) / ratio : 1;
       }
       if (!Number.isFinite(Number(material.reorderLevel))) material.reorderLevel = Number(material.capacity) * 0.30;
       if (!Number.isFinite(Number(material.criticalLevel))) material.criticalLevel = Number(material.capacity) * 0.15;
