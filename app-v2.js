@@ -35,6 +35,7 @@ const materials = [
   { sku: 'RM-0324', item: 'Packaging adhesive', category: 'Adhesive', location: 'D-09', onHand: '42 kg', stock: 13, status: 'Critical' },
   { sku: 'RM-0197', item: 'Mono-carton board', category: 'Board', location: 'B-22', onHand: '640 sheets', stock: 68, status: 'In stock' }
 ];
+window.FactoryFlowInventory.ensureStockMetadata(materials);
 
 const app = { view: 'dashboard', filter: 'All', language: localStorage.getItem('ff-language') || 'en' };
 let workspaceReady = false;
@@ -108,6 +109,7 @@ async function hydrateWorkspace() {
       deliveries.splice(0, deliveries.length, ...(remote.deliveries || []));
       receipts.splice(0, receipts.length, ...(remote.receipts || []));
     }
+    window.FactoryFlowInventory.ensureStockMetadata(materials);
     workspaceReady = true;
     save(hasRemoteData ? false : true);
     setDataStatus('Synced', 'online');
@@ -182,7 +184,7 @@ function materialsPage() {
   const rows = materials.map((item) => '<tr><td class="order-code">' + item.sku + '</td><td class="item-name">' + item.item + '</td><td>' + item.category + '</td><td>' + item.location + '</td><td>' + item.onHand + '</td><td><div class="stock-bar ' + (item.status === 'Critical' ? 'critical' : item.status === 'Low stock' ? 'warn' : '') + '"><i style="width:' + item.stock + '%"></i></div></td><td>' + status(item.status) + '</td></tr>').join('');
   return head('RAW MATERIAL', 'Material you can trust', 'See stock health early, before a job worker or customer has to wait.', '<button class="primary-button" data-new="purchase">＋ Purchase material</button>') + '<div class="inventory-grid"><article class="inventory-stat"><span>TRACKED MATERIALS</span><strong>48</strong><small>Across 4 storage zones</small></article><article class="inventory-stat"><span>REORDER ALERTS</span><strong>' + low + '</strong><small>Needs a purchase order today</small></article><article class="inventory-stat"><span>STOCK VALUE</span><strong>₹8.42L</strong><small>↑ 3.8% vs. last month</small></article></div><section class="content-card"><div class="toolbar"><strong style="font-size:12px">Stock by material</strong><button class="secondary-button" data-action="receive">＋ Receive material</button></div><div class="table-scroll"><table class="data-table"><thead><tr><th>SKU</th><th>MATERIAL</th><th>CATEGORY</th><th>LOCATION</th><th>ON HAND</th><th>STOCK LEVEL</th><th>STATUS</th></tr></thead><tbody>' + rows + '</tbody></table></div></section>' +
   '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Recent material receipts</strong><span class="subtle">' + receipts.length + ' recorded</span></div>' +
-  (receipts.length ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>RECEIPT</th><th>PURCHASE ORDER</th><th>SUPPLIER / MATERIAL</th><th>QUANTITY</th><th>REFERENCE</th><th>DATE</th></tr></thead><tbody>' + receipts.slice(0, 10).map((receipt) => '<tr><td class="order-code">' + safe(receipt.id) + '</td><td>' + safe(receipt.purchaseId) + '</td><td><div class="item-name">' + safe(receipt.supplier) + '</div><div class="subtle">' + safe(receipt.material) + '</div></td><td>' + receipt.quantity + ' ' + safe(receipt.unit) + '</td><td>' + safe(receipt.reference || '—') + '</td><td>' + new Date(receipt.receivedAt).toLocaleDateString('en-IN') + '</td></tr>').join('') + '</tbody></table></div>' : '<div class="empty-state"><h2>No receipts recorded</h2><p>Use “Receive material” to record the next supplier delivery.</p></div>') + '</section>';
+  (receipts.length ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>RECEIPT</th><th>PURCHASE ORDER</th><th>SUPPLIER / MATERIAL</th><th>QUANTITY</th><th>STOCK AFTER</th><th>REFERENCE</th><th>DATE</th></tr></thead><tbody>' + receipts.slice(0, 10).map((receipt) => '<tr><td class="order-code">' + safe(receipt.id) + '</td><td>' + safe(receipt.purchaseId) + '</td><td><div class="item-name">' + safe(receipt.supplier) + '</div><div class="subtle">' + safe(receipt.material) + '</div></td><td>' + receipt.quantity + ' ' + safe(receipt.unit) + '</td><td>' + safe(receipt.stockAfter || '—') + '</td><td>' + safe(receipt.reference || '—') + '</td><td>' + new Date(receipt.receivedAt).toLocaleDateString('en-IN') + '</td></tr>').join('') + '</tbody></table></div>' : '<div class="empty-state"><h2>No receipts recorded</h2><p>Use “Receive material” to record the next supplier delivery.</p></div>') + '</section>';
 }
 
 function workersPage() {
@@ -435,7 +437,7 @@ function receiveMaterials() {
     notify('Create an active purchase order before recording a receipt.');
     return;
   }
-  openModal('<h2 id="modalTitle">Receive material</h2><p>Record a delivery against an existing purchase order.</p><form id="receiveMaterialForm" class="form-grid"><label>Purchase order<select name="purchaseId">' + eligiblePurchases.map((item) => '<option value="' + safe(item.id) + '">' + safe(item.id + ' · ' + item.supplier + ' · ' + item.material) + '</option>').join('') + '</select></label><label>Quantity received<input required name="quantity" type="number" min="0.01" step="0.01" placeholder="e.g. 500"></label><label>Unit<input required name="unit" placeholder="kg, sheets, rolls…"></label><label>Receipt status<select name="statusAfterReceipt"><option value="Part received" selected>Part received</option><option value="Received">Received — order complete</option></select></label><label>Delivery note / challan<input name="reference" placeholder="Optional reference"></label><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="primary-button" type="submit">Record receipt</button></div></form>');
+  openModal('<h2 id="modalTitle">Receive material</h2><p>Record a delivery against an existing purchase order. Stock-on-hand and stock health update automatically.</p><form id="receiveMaterialForm" class="form-grid"><label>Purchase order<select name="purchaseId">' + eligiblePurchases.map((item) => '<option value="' + safe(item.id) + '">' + safe(item.id + ' · ' + item.supplier + ' · ' + item.material) + '</option>').join('') + '</select></label><label>Quantity received<input required name="quantity" type="number" min="0.01" step="0.01" placeholder="e.g. 500"></label><label>Unit<input required name="unit" placeholder="kg, sheets, rolls…"></label><label>Receipt status<select name="statusAfterReceipt"><option value="Part received" selected>Part received</option><option value="Received">Received — order complete</option></select></label><label>Delivery note / challan<input name="reference" placeholder="Optional reference"></label><p id="receiptError" class="form-error" hidden></p><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="primary-button" type="submit">Record receipt</button></div></form>');
   ui('#receiveMaterialForm').addEventListener('submit', (event) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -445,6 +447,22 @@ function receiveMaterials() {
       closeModal();
       return;
     }
+
+    let stockUpdate;
+    try {
+      stockUpdate = window.FactoryFlowInventory.receiveIntoStock(
+        materials,
+        purchase.material,
+        Number(data.get('quantity')),
+        data.get('unit')
+      );
+    } catch (error) {
+      const errorElement = ui('#receiptError');
+      errorElement.textContent = error.message;
+      errorElement.hidden = false;
+      return;
+    }
+
     const receipt = {
       id: 'MR-' + (101 + receipts.length),
       purchaseId: purchase.id,
@@ -453,6 +471,10 @@ function receiveMaterials() {
       quantity: Number(data.get('quantity')),
       unit: data.get('unit').trim(),
       reference: data.get('reference').trim(),
+      stockSku: stockUpdate.material.sku,
+      stockBefore: stockUpdate.previousOnHand,
+      stockAfter: stockUpdate.material.onHand,
+      createdMaterial: stockUpdate.created,
       receivedAt: new Date().toISOString()
     };
     receipts.unshift(receipt);
@@ -460,7 +482,7 @@ function receiveMaterials() {
     save();
     closeModal();
     goto('materials');
-    notify('Receipt ' + receipt.id + ' recorded for ' + purchase.id + '.');
+    notify('Receipt ' + receipt.id + ' recorded. ' + stockUpdate.material.item + ' stock is now ' + stockUpdate.material.onHand + '.');
   });
 }
 
