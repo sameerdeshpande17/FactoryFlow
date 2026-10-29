@@ -42,7 +42,7 @@ let syncInFlight = false;
 const ui = (selector) => document.querySelector(selector);
 const all = (selector) => [...document.querySelectorAll(selector)];
 const currency = (value) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(value);
-const stClass = (value) => ({ Sent: 'setup', Viewed: 'on-track', 'Follow up': 'delayed', Accepted: 'running', 'In production': 'running', 'With worker': 'on-track', 'Material pending': 'delayed', 'QC review': 'setup', 'In transit': 'on-track', Confirmed: 'running', 'Part received': 'setup', 'In stock': 'in-stock', 'Low stock': 'low', Critical: 'critical', Paid: 'in-stock', Overdue: 'critical', 'Due soon': 'low' }[value] || 'setup');
+const stClass = (value) => ({ Sent: 'setup', Viewed: 'on-track', 'Follow up': 'delayed', Accepted: 'running', 'In production': 'running', 'With worker': 'on-track', 'Material pending': 'delayed', 'QC review': 'setup', 'In transit': 'on-track', Confirmed: 'running', 'Part received': 'setup', Received: 'in-stock', Draft: 'setup', Cancelled: 'critical', 'In stock': 'in-stock', 'Low stock': 'low', Critical: 'critical', Paid: 'in-stock', Overdue: 'critical', 'Due soon': 'low' }[value] || 'setup');
 
 const titles = {
   dashboard: ['JOB-WORK OS', 'Overview'], quotes: ['SALES', 'Quotes'], jobs: ['JOB CONTROL', 'Jobs'],
@@ -430,16 +430,21 @@ function updatePurchase(id) {
 }
 
 function receiveMaterials() {
-  if (!purchases.length) {
-    notify('Create a purchase order before recording a receipt.');
+  const eligiblePurchases = purchases.filter((item) => item.status !== 'Cancelled');
+  if (!eligiblePurchases.length) {
+    notify('Create an active purchase order before recording a receipt.');
     return;
   }
-  openModal('<h2 id="modalTitle">Receive material</h2><p>Record a delivery against an existing purchase order.</p><form id="receiveMaterialForm" class="form-grid"><label>Purchase order<select name="purchaseId">' + purchases.map((item) => '<option value="' + safe(item.id) + '">' + safe(item.id + ' · ' + item.supplier + ' · ' + item.material) + '</option>').join('') + '</select></label><label>Quantity received<input required name="quantity" type="number" min="0.01" step="0.01" placeholder="e.g. 500"></label><label>Unit<input required name="unit" placeholder="kg, sheets, rolls…"></label><label>Delivery note / challan<input name="reference" placeholder="Optional reference"></label><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="primary-button" type="submit">Record receipt</button></div></form>');
+  openModal('<h2 id="modalTitle">Receive material</h2><p>Record a delivery against an existing purchase order.</p><form id="receiveMaterialForm" class="form-grid"><label>Purchase order<select name="purchaseId">' + eligiblePurchases.map((item) => '<option value="' + safe(item.id) + '">' + safe(item.id + ' · ' + item.supplier + ' · ' + item.material) + '</option>').join('') + '</select></label><label>Quantity received<input required name="quantity" type="number" min="0.01" step="0.01" placeholder="e.g. 500"></label><label>Unit<input required name="unit" placeholder="kg, sheets, rolls…"></label><label>Receipt status<select name="statusAfterReceipt"><option value="Part received" selected>Part received</option><option value="Received">Received — order complete</option></select></label><label>Delivery note / challan<input name="reference" placeholder="Optional reference"></label><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="primary-button" type="submit">Record receipt</button></div></form>');
   ui('#receiveMaterialForm').addEventListener('submit', (event) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     const purchase = purchases.find((item) => item.id === data.get('purchaseId'));
-    if (!purchase) return;
+    if (!purchase || purchase.status === 'Cancelled') {
+      notify('Cancelled purchase orders cannot receive material.');
+      closeModal();
+      return;
+    }
     const receipt = {
       id: 'MR-' + (101 + receipts.length),
       purchaseId: purchase.id,
@@ -451,7 +456,7 @@ function receiveMaterials() {
       receivedAt: new Date().toISOString()
     };
     receipts.unshift(receipt);
-    if (purchase.status !== 'Cancelled') purchase.status = 'Received';
+    purchase.status = data.get('statusAfterReceipt');
     save();
     closeModal();
     goto('materials');
