@@ -70,6 +70,41 @@
     return 'In stock';
   }
 
+function consumeFromStock(materials, materialSku, rawQuantity, rawUnit) {
+    if (!Array.isArray(materials)) throw new TypeError('Materials must be an array.');
+    const quantity = Number(rawQuantity);
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      throw new Error('Quantity used must be a number greater than zero.');
+    }
+
+    const unitLabel = String(rawUnit == null ? '' : rawUnit).trim().replace(/\s+/g, ' ');
+    const unit = normalizeUnit(unitLabel);
+    if (!unit) throw new Error('Enter a unit such as kg, sheets, or rolls.');
+
+    const material = materials.find((item) => String(item.sku) === String(materialSku));
+    if (!material) throw new Error('Select a material that exists in inventory.');
+
+    const current = parseQuantity(material.onHand);
+    if (!current) throw new Error('Current stock for ' + material.item + ' has an invalid quantity. Fix it before recording consumption.');
+    if (current.unit !== unit) {
+      throw new Error('Unit mismatch for ' + material.item + ': stock is recorded in ' + current.unitLabel + ', but consumption uses ' + unitLabel + '. Use the same unit or correct the stock record first.');
+    }
+    if (quantity > current.quantity + 1e-9) {
+      throw new Error('Insufficient stock for ' + material.item + '. Available: ' + formatQuantity(current.quantity) + ' ' + current.unitLabel + '.');
+    }
+
+    ensureStockMetadata(materials);
+    const previousOnHand = material.onHand;
+    const total = Math.max(0, current.quantity - quantity);
+    const capacity = Number(material.capacity);
+    const stock = Math.max(0, Math.min(100, Math.round((total / capacity) * 100)));
+    material.onHand = formatQuantity(total) + ' ' + current.unitLabel;
+    material.stock = stock;
+    material.status = statusForStock(stock);
+
+    return { material, previousOnHand, usedQuantity: quantity, onHand: material.onHand };
+  }
+
   function categoryForItem(itemName) {
     const name = String(itemName || '').toLowerCase();
     if (/ink|dye|pigment/.test(name)) return 'Ink';
@@ -144,6 +179,7 @@
     parseQuantity,
     ensureStockMetadata,
     receiveIntoStock,
+    consumeFromStock,
     statusForStock,
     formatQuantity
   };

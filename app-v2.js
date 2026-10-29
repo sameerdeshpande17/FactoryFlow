@@ -28,6 +28,8 @@ const deliveries = JSON.parse(localStorage.getItem('ff-deliveries') || 'null') |
 
 const receipts = JSON.parse(localStorage.getItem('ff-receipts') || 'null') || [];
 
+const movements = JSON.parse(localStorage.getItem('ff-movements') || 'null') || [];
+
 const materials = [
   { sku: 'RM-0142', item: 'Kraft paper · 180 GSM', category: 'Paper', location: 'A-12', onHand: '3,840 kg', stock: 82, status: 'In stock' },
   { sku: 'RM-0251', item: 'BOPP film · 25 micron', category: 'Film', location: 'B-04', onHand: '1,260 kg', stock: 56, status: 'In stock' },
@@ -57,6 +59,7 @@ function save(shouldSync = true) {
   localStorage.setItem('ff-jobs', JSON.stringify(jobs));
   localStorage.setItem('ff-deliveries', JSON.stringify(deliveries));
   localStorage.setItem('ff-receipts', JSON.stringify(receipts));
+  localStorage.setItem('ff-movements', JSON.stringify(movements));
   localStorage.setItem('ff-language', app.language);
   ui('#quoteBadge').textContent = quotes.filter((quote) => quote.status === 'Follow up').length || '0';
   if (shouldSync && workspaceReady) syncWorkspace();
@@ -77,7 +80,7 @@ async function syncWorkspace() {
     const response = await fetch('/api/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ quotes, jobs, purchases, materials, deliveries, receipts })
+      body: JSON.stringify({ quotes, jobs, purchases, materials, deliveries, receipts, movements })
     });
     if (!response.ok) throw new Error('Workspace sync failed.');
     setDataStatus('Synced', 'online');
@@ -100,7 +103,7 @@ async function hydrateWorkspace() {
     if (!response.ok) throw new Error('Workspace is unavailable.');
     const payload = await response.json();
     const remote = payload.state || {};
-    const hasRemoteData = ['quotes', 'jobs', 'purchases', 'materials', 'deliveries', 'receipts'].some((key) => Array.isArray(remote[key]) && remote[key].length);
+    const hasRemoteData = ['quotes', 'jobs', 'purchases', 'materials', 'deliveries', 'receipts', 'movements'].some((key) => Array.isArray(remote[key]) && remote[key].length);
     if (hasRemoteData) {
       quotes.splice(0, quotes.length, ...remote.quotes);
       jobs.splice(0, jobs.length, ...remote.jobs);
@@ -108,6 +111,7 @@ async function hydrateWorkspace() {
       materials.splice(0, materials.length, ...remote.materials);
       deliveries.splice(0, deliveries.length, ...(remote.deliveries || []));
       receipts.splice(0, receipts.length, ...(remote.receipts || []));
+      movements.splice(0, movements.length, ...(remote.movements || []));
     }
     window.FactoryFlowInventory.ensureStockMetadata(materials);
     workspaceReady = true;
@@ -162,8 +166,12 @@ function quotesPage() {
 
 function jobCard(job, note, warning) {
   const proof = deliveries.find((delivery) => delivery.jobId === job.id);
-  return '<article class="work-card"><strong>' + job.id + ' · ' + job.item + '</strong><p>' + job.qty.toLocaleString() + ' units · ' + job.customer + '</p><footer><span class="small-avatar">' + job.owner + '</span><span class="due ' + (warning ? 'warn' : '') + '">' + (proof ? '✓ Proof saved' : '◷ ') + note + '</span></footer></article>';
+  const consumeAction = ['In production', 'With worker'].includes(job.status)
+    ? '<button class="text-button" data-consume-job="' + safe(job.id) + '">Record material use →</button>'
+    : '';
+  return '<article class="work-card"><strong>' + job.id + ' · ' + job.item + '</strong><p>' + job.qty.toLocaleString() + ' units · ' + job.customer + '</p><footer><span class="small-avatar">' + job.owner + '</span><span class="due ' + (warning ? 'warn' : '') + '">' + (proof ? '✓ Proof saved' : '◷ ') + note + '</span></footer>' + (consumeAction ? '<footer>' + consumeAction + '</footer>' : '') + '</article>';
 }
+
 function jobsPage() {
   const pending = jobs.find((job) => job.status === 'Material pending') || jobs[0];
   const active = jobs.filter((job) => job.status === 'In production' || job.status === 'With worker');
@@ -184,7 +192,9 @@ function materialsPage() {
   const rows = materials.map((item) => '<tr><td class="order-code">' + item.sku + '</td><td class="item-name">' + item.item + '</td><td>' + item.category + '</td><td>' + item.location + '</td><td>' + item.onHand + '</td><td><div class="stock-bar ' + (item.status === 'Critical' ? 'critical' : item.status === 'Low stock' ? 'warn' : '') + '"><i style="width:' + item.stock + '%"></i></div></td><td>' + status(item.status) + '</td></tr>').join('');
   return head('RAW MATERIAL', 'Material you can trust', 'See stock health early, before a job worker or customer has to wait.', '<button class="primary-button" data-new="purchase">＋ Purchase material</button>') + '<div class="inventory-grid"><article class="inventory-stat"><span>TRACKED MATERIALS</span><strong>48</strong><small>Across 4 storage zones</small></article><article class="inventory-stat"><span>REORDER ALERTS</span><strong>' + low + '</strong><small>Needs a purchase order today</small></article><article class="inventory-stat"><span>STOCK VALUE</span><strong>₹8.42L</strong><small>↑ 3.8% vs. last month</small></article></div><section class="content-card"><div class="toolbar"><strong style="font-size:12px">Stock by material</strong><button class="secondary-button" data-action="receive">＋ Receive material</button></div><div class="table-scroll"><table class="data-table"><thead><tr><th>SKU</th><th>MATERIAL</th><th>CATEGORY</th><th>LOCATION</th><th>ON HAND</th><th>STOCK LEVEL</th><th>STATUS</th></tr></thead><tbody>' + rows + '</tbody></table></div></section>' +
   '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Recent material receipts</strong><span class="subtle">' + receipts.length + ' recorded</span></div>' +
-  (receipts.length ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>RECEIPT</th><th>PURCHASE ORDER</th><th>SUPPLIER / MATERIAL</th><th>QUANTITY</th><th>STOCK AFTER</th><th>REFERENCE</th><th>DATE</th></tr></thead><tbody>' + receipts.slice(0, 10).map((receipt) => '<tr><td class="order-code">' + safe(receipt.id) + '</td><td>' + safe(receipt.purchaseId) + '</td><td><div class="item-name">' + safe(receipt.supplier) + '</div><div class="subtle">' + safe(receipt.material) + '</div></td><td>' + receipt.quantity + ' ' + safe(receipt.unit) + '</td><td>' + safe(receipt.stockAfter || '—') + '</td><td>' + safe(receipt.reference || '—') + '</td><td>' + new Date(receipt.receivedAt).toLocaleDateString('en-IN') + '</td></tr>').join('') + '</tbody></table></div>' : '<div class="empty-state"><h2>No receipts recorded</h2><p>Use “Receive material” to record the next supplier delivery.</p></div>') + '</section>';
+  (receipts.length ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>RECEIPT</th><th>PURCHASE ORDER</th><th>SUPPLIER / MATERIAL</th><th>QUANTITY</th><th>STOCK AFTER</th><th>REFERENCE</th><th>DATE</th></tr></thead><tbody>' + receipts.slice(0, 10).map((receipt) => '<tr><td class="order-code">' + safe(receipt.id) + '</td><td>' + safe(receipt.purchaseId) + '</td><td><div class="item-name">' + safe(receipt.supplier) + '</div><div class="subtle">' + safe(receipt.material) + '</div></td><td>' + receipt.quantity + ' ' + safe(receipt.unit) + '</td><td>' + safe(receipt.stockAfter || '—') + '</td><td>' + safe(receipt.reference || '—') + '</td><td>' + new Date(receipt.receivedAt).toLocaleDateString('en-IN') + '</td></tr>').join('') + '</tbody></table></div>' : '<div class="empty-state"><h2>No receipts recorded</h2><p>Use “Receive material” to record the next supplier delivery.</p></div>') + '</section>' +
+  '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Stock movement history</strong><span class="subtle">' + movements.length + ' movements</span></div>' +
+  (movements.length ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>MOVEMENT</th><th>TYPE</th><th>MATERIAL</th><th>QUANTITY</th><th>JOB / REFERENCE</th><th>STOCK BEFORE</th><th>STOCK AFTER</th><th>DATE</th></tr></thead><tbody>' + movements.slice(0, 20).map((movement) => '<tr><td class="order-code">' + safe(movement.id) + '</td><td>' + status(movement.type) + '</td><td><div class="item-name">' + safe(movement.material) + '</div><div class="subtle">' + safe(movement.materialSku || '') + '</div></td><td><span class="' + (movement.direction === 'OUT' ? 'down' : 'up') + '">' + (movement.direction === 'OUT' ? '−' : '+') + Number(movement.quantity).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' ' + safe(movement.unit) + '</span></td><td>' + safe(movement.jobId || movement.reference || '—') + '</td><td>' + safe(movement.stockBefore || '—') + '</td><td>' + safe(movement.stockAfter || '—') + '</td><td>' + new Date(movement.createdAt).toLocaleDateString('en-IN') + '</td></tr>').join('') + '</tbody></table></div>' : '<div class="empty-state"><h2>No stock movements recorded</h2><p>Receiving material and recording production usage will create an audit trail here.</p></div>') + '</section>';
 }
 
 function workersPage() {
@@ -478,11 +488,79 @@ function receiveMaterials() {
       receivedAt: new Date().toISOString()
     };
     receipts.unshift(receipt);
+    movements.unshift({
+      id: 'MV-' + (101 + movements.length),
+      type: 'Receipt',
+      direction: 'IN',
+      materialSku: stockUpdate.material.sku,
+      material: stockUpdate.material.item,
+      quantity: receipt.quantity,
+      unit: receipt.unit,
+      stockBefore: stockUpdate.previousOnHand || '0 ' + receipt.unit,
+      stockAfter: stockUpdate.material.onHand,
+      jobId: '',
+      reference: receipt.reference || receipt.purchaseId,
+      note: 'Material received from ' + receipt.supplier,
+      createdAt: receipt.receivedAt
+    });
     purchase.status = data.get('statusAfterReceipt');
     save();
     closeModal();
     goto('materials');
     notify('Receipt ' + receipt.id + ' recorded. ' + stockUpdate.material.item + ' stock is now ' + stockUpdate.material.onHand + '.');
+  });
+}
+
+function consumeMaterials(jobId) {
+  const job = jobs.find((item) => item.id === jobId);
+  if (!job || !['In production', 'With worker'].includes(job.status)) {
+    notify('Material consumption can only be recorded for jobs in production or with a job worker.');
+    return;
+  }
+  if (!materials.length) {
+    notify('Add inventory items before recording material consumption.');
+    return;
+  }
+  const materialOptions = materials.map((item) => '<option value="' + safe(item.sku) + '">' + safe(item.sku + ' · ' + item.item + ' · ' + item.onHand) + '</option>').join('');
+  const form = '<h2 id="modalTitle">Record material use</h2><p>Deduct raw material used for ' + safe(job.id + ' · ' + job.item) + '. Stock cannot fall below zero.</p><form id="consumeMaterialForm" class="form-grid"><label>Production job<input value="' + safe(job.id + ' · ' + job.customer) + '" disabled></label><label>Material<select name="materialSku">' + materialOptions + '</select></label><div class="form-row"><label>Quantity used<input required name="quantity" type="number" min="0.01" step="0.01" placeholder="e.g. 25"></label><label>Unit<input required name="unit" placeholder="kg, sheets, rolls…"></label></div><label>Reason / operation<input name="note" placeholder="e.g. Carton cutting run"></label><p id="consumptionError" class="form-error" hidden></p><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="primary-button" type="submit">Deduct from stock</button></div></form>';
+  openModal(form, true);
+  ui('#consumeMaterialForm').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    let stockUpdate;
+    try {
+      stockUpdate = window.FactoryFlowInventory.consumeFromStock(
+        materials,
+        data.get('materialSku'),
+        Number(data.get('quantity')),
+        data.get('unit')
+      );
+    } catch (error) {
+      const errorElement = ui('#consumptionError');
+      errorElement.textContent = error.message;
+      errorElement.hidden = false;
+      return;
+    }
+    const movement = {
+      id: 'MV-' + (101 + movements.length),
+      type: 'Consumption',
+      direction: 'OUT',
+      materialSku: stockUpdate.material.sku,
+      material: stockUpdate.material.item,
+      quantity: stockUpdate.usedQuantity,
+      unit: data.get('unit').trim(),
+      stockBefore: stockUpdate.previousOnHand,
+      stockAfter: stockUpdate.onHand,
+      jobId: job.id,
+      reference: '',
+      note: data.get('note').trim() || 'Material used for production',
+      createdAt: new Date().toISOString()
+    };
+    movements.unshift(movement);
+    save();
+    closeModal();
+    goto('materials');
+    notify(movement.quantity + ' ' + movement.unit + ' of ' + movement.material + ' deducted for ' + job.id + '. Stock now ' + stockUpdate.onHand + '.');
   });
 }
 
@@ -502,6 +580,7 @@ function bind() {
   all('[data-share]').forEach((button) => button.addEventListener('click', () => share(button.dataset.share)));
   all('[data-convert]').forEach((button) => button.addEventListener('click', () => convert(button.dataset.convert)));
   all('[data-proof-job]').forEach((button) => button.addEventListener('click', () => openDeliveryProof(button.dataset.proofJob)));
+  all('[data-consume-job]').forEach((button) => button.addEventListener('click', () => consumeMaterials(button.dataset.consumeJob)));
   all('[data-view-proof]').forEach((button) => button.addEventListener('click', () => viewDeliveryProof(button.dataset.viewProof)));
   all('[data-reminder]').forEach((button) => button.addEventListener('click', () => openReminder(button.dataset.reminder)));
   all('[data-group]').forEach((button) => button.addEventListener('click', () => notify('You joined the ' + button.dataset.group + ' buying group.')));
