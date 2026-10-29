@@ -26,6 +26,7 @@ Opening index.html directly is still supported as a browser-only fallback, but c
 - Purchase-order status and expected-delivery updates
 - Material receipt log linked to purchase orders, persisted with the workspace
 - Automatic stock-on-hand reconciliation when a material receipt is saved, including unit validation and low-stock status updates
+- Job-linked raw-material consumption with insufficient-stock guards, unit validation, and an auditable stock movement history
 - Responsive layout for desktop and mobile screens
 
 ## Suggested next steps
