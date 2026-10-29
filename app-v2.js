@@ -26,6 +26,8 @@ const invoiceRecords = [
 
 const deliveries = JSON.parse(localStorage.getItem('ff-deliveries') || 'null') || [];
 
+const receipts = JSON.parse(localStorage.getItem('ff-receipts') || 'null') || [];
+
 const materials = [
   { sku: 'RM-0142', item: 'Kraft paper · 180 GSM', category: 'Paper', location: 'A-12', onHand: '3,840 kg', stock: 82, status: 'In stock' },
   { sku: 'RM-0251', item: 'BOPP film · 25 micron', category: 'Film', location: 'B-04', onHand: '1,260 kg', stock: 56, status: 'In stock' },
@@ -40,7 +42,7 @@ let syncInFlight = false;
 const ui = (selector) => document.querySelector(selector);
 const all = (selector) => [...document.querySelectorAll(selector)];
 const currency = (value) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(value);
-const stClass = (value) => ({ Sent: 'setup', Viewed: 'on-track', 'Follow up': 'delayed', Accepted: 'running', 'In production': 'running', 'With worker': 'on-track', 'Material pending': 'delayed', 'QC review': 'setup', 'In transit': 'on-track', Confirmed: 'running', 'Part received': 'setup', 'In stock': 'in-stock', 'Low stock': 'low', Critical: 'critical', Paid: 'in-stock', Overdue: 'critical', 'Due soon': 'low' }[value] || 'setup');
+const stClass = (value) => ({ Sent: 'setup', Viewed: 'on-track', 'Follow up': 'delayed', Accepted: 'running', 'In production': 'running', 'With worker': 'on-track', 'Material pending': 'delayed', 'QC review': 'setup', 'In transit': 'on-track', Confirmed: 'running', 'Part received': 'setup', Received: 'in-stock', Draft: 'setup', Cancelled: 'critical', 'In stock': 'in-stock', 'Low stock': 'low', Critical: 'critical', Paid: 'in-stock', Overdue: 'critical', 'Due soon': 'low' }[value] || 'setup');
 
 const titles = {
   dashboard: ['JOB-WORK OS', 'Overview'], quotes: ['SALES', 'Quotes'], jobs: ['JOB CONTROL', 'Jobs'],
@@ -53,6 +55,7 @@ function save(shouldSync = true) {
   localStorage.setItem('ff-quotes', JSON.stringify(quotes));
   localStorage.setItem('ff-jobs', JSON.stringify(jobs));
   localStorage.setItem('ff-deliveries', JSON.stringify(deliveries));
+  localStorage.setItem('ff-receipts', JSON.stringify(receipts));
   localStorage.setItem('ff-language', app.language);
   ui('#quoteBadge').textContent = quotes.filter((quote) => quote.status === 'Follow up').length || '0';
   if (shouldSync && workspaceReady) syncWorkspace();
@@ -73,7 +76,7 @@ async function syncWorkspace() {
     const response = await fetch('/api/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ quotes, jobs, purchases, materials, deliveries })
+      body: JSON.stringify({ quotes, jobs, purchases, materials, deliveries, receipts })
     });
     if (!response.ok) throw new Error('Workspace sync failed.');
     setDataStatus('Synced', 'online');
@@ -96,13 +99,14 @@ async function hydrateWorkspace() {
     if (!response.ok) throw new Error('Workspace is unavailable.');
     const payload = await response.json();
     const remote = payload.state || {};
-    const hasRemoteData = ['quotes', 'jobs', 'purchases', 'materials', 'deliveries'].some((key) => Array.isArray(remote[key]) && remote[key].length);
+    const hasRemoteData = ['quotes', 'jobs', 'purchases', 'materials', 'deliveries', 'receipts'].some((key) => Array.isArray(remote[key]) && remote[key].length);
     if (hasRemoteData) {
       quotes.splice(0, quotes.length, ...remote.quotes);
       jobs.splice(0, jobs.length, ...remote.jobs);
       purchases.splice(0, purchases.length, ...remote.purchases);
       materials.splice(0, materials.length, ...remote.materials);
       deliveries.splice(0, deliveries.length, ...(remote.deliveries || []));
+      receipts.splice(0, receipts.length, ...(remote.receipts || []));
     }
     workspaceReady = true;
     save(hasRemoteData ? false : true);
@@ -127,7 +131,7 @@ function schedule(time, name, detail, percent, warn) {
 
 function dashboard() {
   const hello = app.language === 'hi' ? 'नमस्ते, Sameer' : 'Namaste, Sameer';
-  return head('WEDNESDAY · OCTOBER 28', hello, app.language === 'hi' ? 'आज आपका काम, पैसा और माल एक जगह पर है।' : 'Your factory’s work, money, and material—at a glance.', '<button class="primary-button" data-new="quote">＋ New quote</button>') +
+  return head(new Intl.DateTimeFormat('en-IN', { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date()).toUpperCase(), hello, app.language === 'hi' ? 'आज आपका काम, पैसा और माल एक जगह पर है।' : 'Your factory’s work, money, and material—at a glance.', '<button class="primary-button" data-new="quote">＋ New quote</button>') +
   '<section class="overview-grid"><div><div class="summary-cards">' +
   metric('QUOTE PIPELINE', '₹4.82L', '3 customer decisions pending') +
   metric('LIVE JOBS', '11', '2 due today') +
@@ -169,14 +173,16 @@ function jobsPage() {
 }
 
 function purchasesPage() {
-  const rows = purchases.map((po) => '<tr><td class="order-code">' + po.id + '</td><td class="item-name">' + po.supplier + '</td><td>' + po.material + '</td><td>' + currency(po.amount) + '</td><td>' + po.delivery + '</td><td>' + status(po.status) + '</td><td><button class="table-button" data-action="po-update">Update</button></td></tr>').join('');
+  const rows = purchases.map((po) => '<tr><td class="order-code">' + po.id + '</td><td class="item-name">' + po.supplier + '</td><td>' + po.material + '</td><td>' + currency(po.amount) + '</td><td>' + po.delivery + '</td><td>' + status(po.status) + '</td><td><button class="table-button" data-action="po-update" data-purchase-id="' + safe(po.id) + '">Update</button></td></tr>').join('');
   return head('PURCHASING', 'Purchase orders', 'Keep every raw-material commitment and delivery date visible.', '<button class="primary-button" data-new="purchase">＋ New purchase order</button>') + '<section class="content-card"><div class="toolbar"><strong style="font-size:12px">Open purchase orders</strong><button class="secondary-button" data-go="marketplace">◇ Find suppliers</button></div><div class="table-scroll"><table class="data-table"><thead><tr><th>PO</th><th>SUPPLIER</th><th>MATERIAL</th><th>AMOUNT</th><th>DELIVERY</th><th>STATUS</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div></section>';
 }
 
 function materialsPage() {
   const low = materials.filter((item) => item.status !== 'In stock').length;
   const rows = materials.map((item) => '<tr><td class="order-code">' + item.sku + '</td><td class="item-name">' + item.item + '</td><td>' + item.category + '</td><td>' + item.location + '</td><td>' + item.onHand + '</td><td><div class="stock-bar ' + (item.status === 'Critical' ? 'critical' : item.status === 'Low stock' ? 'warn' : '') + '"><i style="width:' + item.stock + '%"></i></div></td><td>' + status(item.status) + '</td></tr>').join('');
-  return head('RAW MATERIAL', 'Material you can trust', 'See stock health early, before a job worker or customer has to wait.', '<button class="primary-button" data-new="purchase">＋ Purchase material</button>') + '<div class="inventory-grid"><article class="inventory-stat"><span>TRACKED MATERIALS</span><strong>48</strong><small>Across 4 storage zones</small></article><article class="inventory-stat"><span>REORDER ALERTS</span><strong>' + low + '</strong><small>Needs a purchase order today</small></article><article class="inventory-stat"><span>STOCK VALUE</span><strong>₹8.42L</strong><small>↑ 3.8% vs. last month</small></article></div><section class="content-card"><div class="toolbar"><strong style="font-size:12px">Stock by material</strong><button class="secondary-button" data-action="receive">＋ Receive material</button></div><div class="table-scroll"><table class="data-table"><thead><tr><th>SKU</th><th>MATERIAL</th><th>CATEGORY</th><th>LOCATION</th><th>ON HAND</th><th>STOCK LEVEL</th><th>STATUS</th></tr></thead><tbody>' + rows + '</tbody></table></div></section>';
+  return head('RAW MATERIAL', 'Material you can trust', 'See stock health early, before a job worker or customer has to wait.', '<button class="primary-button" data-new="purchase">＋ Purchase material</button>') + '<div class="inventory-grid"><article class="inventory-stat"><span>TRACKED MATERIALS</span><strong>48</strong><small>Across 4 storage zones</small></article><article class="inventory-stat"><span>REORDER ALERTS</span><strong>' + low + '</strong><small>Needs a purchase order today</small></article><article class="inventory-stat"><span>STOCK VALUE</span><strong>₹8.42L</strong><small>↑ 3.8% vs. last month</small></article></div><section class="content-card"><div class="toolbar"><strong style="font-size:12px">Stock by material</strong><button class="secondary-button" data-action="receive">＋ Receive material</button></div><div class="table-scroll"><table class="data-table"><thead><tr><th>SKU</th><th>MATERIAL</th><th>CATEGORY</th><th>LOCATION</th><th>ON HAND</th><th>STOCK LEVEL</th><th>STATUS</th></tr></thead><tbody>' + rows + '</tbody></table></div></section>' +
+  '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Recent material receipts</strong><span class="subtle">' + receipts.length + ' recorded</span></div>' +
+  (receipts.length ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>RECEIPT</th><th>PURCHASE ORDER</th><th>SUPPLIER / MATERIAL</th><th>QUANTITY</th><th>REFERENCE</th><th>DATE</th></tr></thead><tbody>' + receipts.slice(0, 10).map((receipt) => '<tr><td class="order-code">' + safe(receipt.id) + '</td><td>' + safe(receipt.purchaseId) + '</td><td><div class="item-name">' + safe(receipt.supplier) + '</div><div class="subtle">' + safe(receipt.material) + '</div></td><td>' + receipt.quantity + ' ' + safe(receipt.unit) + '</td><td>' + safe(receipt.reference || '—') + '</td><td>' + new Date(receipt.receivedAt).toLocaleDateString('en-IN') + '</td></tr>').join('') + '</tbody></table></div>' : '<div class="empty-state"><h2>No receipts recorded</h2><p>Use “Receive material” to record the next supplier delivery.</p></div>') + '</section>';
 }
 
 function workersPage() {
@@ -374,6 +380,90 @@ function convert(id) {
   jobs.unshift({ id: 'JB-' + (842 + jobs.length), customer: quote.customer, item: quote.scope, qty: quote.qty, worker: 'Unassigned', due: 'To schedule', status: 'Material pending', progress: 0, owner: 'SD' });
   save(); goto('jobs'); notify(quote.id + ' was converted to a live job.');
 }
+
+function downloadCsv(filename, rows) {
+  if (!rows.length) {
+    notify('There is no data to export yet.');
+    return;
+  }
+  const csvCell = (value) => {
+    let text = String(value ?? '');
+    if (/^\s*[=+\-@]/.test(text)) text = "'" + text;
+    return '"' + text.replace(/"/g, '""') + '"';
+  };
+  const csv = '\ufeff' + rows.map((row) => row.map(csvCell).join(',')).join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  notify(filename + ' downloaded.');
+}
+
+function exportQuotes() {
+  const rows = quotes
+    .filter((quote) => app.filter === 'All' || quote.status === app.filter)
+    .map((quote) => [quote.id, quote.customer, quote.scope, quote.qty, quote.value, quote.valid, quote.status, quote.phone || '']);
+  downloadCsv('factoryflow-quotes.csv', [['Quote ID', 'Customer', 'Scope', 'Quantity', 'Base value INR', 'Valid until', 'Status', 'WhatsApp'], ...rows]);
+}
+
+function updatePurchase(id) {
+  const purchase = purchases.find((item) => item.id === id);
+  if (!purchase) return;
+  const statuses = ['Draft', 'Confirmed', 'In transit', 'Part received', 'Received', 'Cancelled'];
+  const options = statuses.map((value) => '<option' + (purchase.status === value ? ' selected' : '') + '>' + value + '</option>').join('');
+  openModal('<h2 id="modalTitle">Update purchase order</h2><p>' + safe(purchase.id) + ' · ' + safe(purchase.supplier) + '</p><form id="purchaseStatusForm" class="form-grid"><label>Order status<select name="status">' + options + '</select></label><label>Expected delivery<input name="delivery" type="text" value="' + safe(purchase.delivery || '') + '" placeholder="e.g. Nov 04 or Today"></label><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="primary-button" type="submit">Save update</button></div></form>');
+  ui('#purchaseStatusForm').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    purchase.status = data.get('status');
+    purchase.delivery = data.get('delivery').trim() || 'To confirm';
+    save();
+    closeModal();
+    render();
+    notify(purchase.id + ' updated to ' + purchase.status + '.');
+  });
+}
+
+function receiveMaterials() {
+  const eligiblePurchases = purchases.filter((item) => item.status !== 'Cancelled');
+  if (!eligiblePurchases.length) {
+    notify('Create an active purchase order before recording a receipt.');
+    return;
+  }
+  openModal('<h2 id="modalTitle">Receive material</h2><p>Record a delivery against an existing purchase order.</p><form id="receiveMaterialForm" class="form-grid"><label>Purchase order<select name="purchaseId">' + eligiblePurchases.map((item) => '<option value="' + safe(item.id) + '">' + safe(item.id + ' · ' + item.supplier + ' · ' + item.material) + '</option>').join('') + '</select></label><label>Quantity received<input required name="quantity" type="number" min="0.01" step="0.01" placeholder="e.g. 500"></label><label>Unit<input required name="unit" placeholder="kg, sheets, rolls…"></label><label>Receipt status<select name="statusAfterReceipt"><option value="Part received" selected>Part received</option><option value="Received">Received — order complete</option></select></label><label>Delivery note / challan<input name="reference" placeholder="Optional reference"></label><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="primary-button" type="submit">Record receipt</button></div></form>');
+  ui('#receiveMaterialForm').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const purchase = purchases.find((item) => item.id === data.get('purchaseId'));
+    if (!purchase || purchase.status === 'Cancelled') {
+      notify('Cancelled purchase orders cannot receive material.');
+      closeModal();
+      return;
+    }
+    const receipt = {
+      id: 'MR-' + (101 + receipts.length),
+      purchaseId: purchase.id,
+      supplier: purchase.supplier,
+      material: purchase.material,
+      quantity: Number(data.get('quantity')),
+      unit: data.get('unit').trim(),
+      reference: data.get('reference').trim(),
+      receivedAt: new Date().toISOString()
+    };
+    receipts.unshift(receipt);
+    purchase.status = data.get('statusAfterReceipt');
+    save();
+    closeModal();
+    goto('materials');
+    notify('Receipt ' + receipt.id + ' recorded for ' + purchase.id + '.');
+  });
+}
+
 function actionMessage(action) {
   return ({ reply: 'WhatsApp reply is ready for Narmada Foods.', export: 'Quote export is ready to download.', proof: 'Delivery-proof form opened. Add a photo or signed challan.', invite: 'Job-worker invitation link copied.', 'po-update': 'Purchase-order update saved.', receive: 'Material receiving form is ready.', invoice: 'GST invoice draft created from the latest delivery proof.', reminders: 'Two payment reminders are ready to send on WhatsApp.', supplier: 'Supplier requirement posted to your cluster.', capital: 'Eligibility check started. Your data stays private.', cluster: 'Cluster selector will open in the next build.', channel: 'WhatsApp is your default customer channel.' }[action] || 'Update saved.');
 }
@@ -393,7 +483,14 @@ function bind() {
   all('[data-view-proof]').forEach((button) => button.addEventListener('click', () => viewDeliveryProof(button.dataset.viewProof)));
   all('[data-reminder]').forEach((button) => button.addEventListener('click', () => openReminder(button.dataset.reminder)));
   all('[data-group]').forEach((button) => button.addEventListener('click', () => notify('You joined the ' + button.dataset.group + ' buying group.')));
-  all('[data-action]').forEach((button) => button.addEventListener('click', () => { if (button.dataset.action === 'language') toggleLanguage(); else notify(actionMessage(button.dataset.action)); }));
+  all('[data-action]').forEach((button) => button.addEventListener('click', () => {
+    const action = button.dataset.action;
+    if (action === 'language') return toggleLanguage();
+    if (action === 'export') return exportQuotes();
+    if (action === 'receive') return receiveMaterials();
+    if (action === 'po-update') return updatePurchase(button.dataset.purchaseId);
+    notify(actionMessage(action));
+  }));
 }
 
 all('.nav-link[data-view]').forEach((button) => button.addEventListener('click', () => goto(button.dataset.view)));
@@ -404,7 +501,7 @@ ui('#notificationButton').addEventListener('click', () => notify('Two material a
 ui('#dateButton').addEventListener('click', () => notify('Showing work scheduled for today.'));
 ui('#languageToggle').addEventListener('click', toggleLanguage);
 ui('#globalSearch').addEventListener('input', () => { if (app.view === 'quotes') ui('#quotesBody').innerHTML = quoteRows(); });
-ui('#todayDate').textContent = new Date(2026, 9, 28).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' });
+ui('#todayDate').textContent = new Date().toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' });
 ui('#languageToggle').textContent = app.language === 'hi' ? 'EN' : 'हिं';
 save(false);
 render();
