@@ -67,6 +67,7 @@ test('health and bootstrap endpoints return the workspace schema', async () => {
   assert.ok(Array.isArray(payload.state.quotes));
   assert.ok(Array.isArray(payload.state.jobs));
   assert.ok(Array.isArray(payload.state.receipts));
+  assert.ok(Array.isArray(payload.state.movements));
 });
 
 test('sync persists quotes and material receipt records', async () => {
@@ -85,6 +86,21 @@ test('sync persists quotes and material receipt records', async () => {
       unit: 'kg',
       reference: 'DC-42',
       receivedAt: '2026-10-29T08:00:00.000Z'
+    }],
+    movements: [{
+      id: 'MV-TEST',
+      type: 'Consumption',
+      direction: 'OUT',
+      materialSku: 'RM-TEST',
+      material: 'Kraft paper',
+      quantity: 20,
+      unit: 'kg',
+      stockBefore: '250 kg',
+      stockAfter: '230 kg',
+      jobId: 'JB-TEST',
+      reference: '',
+      note: 'Production usage',
+      createdAt: '2026-10-29T09:00:00.000Z'
     }]
   };
   const sync = await fetch(baseUrl + '/api/sync', {
@@ -99,6 +115,7 @@ test('sync persists quotes and material receipt records', async () => {
   const stored = await bootstrap.json();
   assert.deepEqual(stored.state.quotes, state.quotes);
   assert.deepEqual(stored.state.receipts, state.receipts);
+  assert.deepEqual(stored.state.movements, state.movements);
   assert.deepEqual(stored.customers, ['Example Customer']);
 });
 
