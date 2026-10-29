@@ -51,7 +51,7 @@ const titles = {
   dashboard: ['JOB-WORK OS', 'Overview'], quotes: ['SALES', 'Quotes'], jobs: ['JOB CONTROL', 'Jobs'],
   purchases: ['PURCHASING', 'Purchase orders'], materials: ['RAW MATERIAL', 'Materials'],
   workers: ['PARTNERS', 'Job workers'], invoices: ['FINANCE', 'GST invoices'],
-  marketplace: ['B2B NETWORK', 'Marketplace'], settings: ['WORKSPACE', 'Settings']
+  marketplace: ['B2B NETWORK', 'Marketplace'], costing: ['FINANCE', 'Job costing'], settings: ['WORKSPACE', 'Settings']
 };
 
 function save(shouldSync = true) {
@@ -169,7 +169,8 @@ function jobCard(job, note, warning) {
   const consumeAction = ['In production', 'With worker'].includes(job.status)
     ? '<button class="text-button" data-consume-job="' + safe(job.id) + '">Record material use →</button>'
     : '';
-  return '<article class="work-card"><strong>' + job.id + ' · ' + job.item + '</strong><p>' + job.qty.toLocaleString() + ' units · ' + job.customer + '</p><footer><span class="small-avatar">' + job.owner + '</span><span class="due ' + (warning ? 'warn' : '') + '">' + (proof ? '✓ Proof saved' : '◷ ') + note + '</span></footer>' + (consumeAction ? '<footer>' + consumeAction + '</footer>' : '') + '</article>';
+  const costAction = '<button class="text-button" data-cost-job="' + safe(job.id) + '">View costing →</button>';
+  return '<article class="work-card"><strong>' + job.id + ' · ' + job.item + '</strong><p>' + job.qty.toLocaleString() + ' units · ' + job.customer + '</p><footer><span class="small-avatar">' + job.owner + '</span><span class="due ' + (warning ? 'warn' : '') + '">' + (proof ? '✓ Proof saved' : '◷ ') + note + '</span></footer>' + (consumeAction ? '<footer>' + consumeAction + '</footer>' : '') + '<footer>' + costAction + '</footer></article>';
 }
 
 function jobsPage() {
@@ -189,12 +190,41 @@ function purchasesPage() {
 
 function materialsPage() {
   const low = materials.filter((item) => item.status !== 'In stock').length;
-  const rows = materials.map((item) => '<tr><td class="order-code">' + item.sku + '</td><td class="item-name">' + item.item + '</td><td>' + item.category + '</td><td>' + item.location + '</td><td>' + item.onHand + '</td><td><div class="stock-bar ' + (item.status === 'Critical' ? 'critical' : item.status === 'Low stock' ? 'warn' : '') + '"><i style="width:' + item.stock + '%"></i></div></td><td>' + status(item.status) + '</td></tr>').join('');
-  return head('RAW MATERIAL', 'Material you can trust', 'See stock health early, before a job worker or customer has to wait.', '<button class="primary-button" data-new="purchase">＋ Purchase material</button>') + '<div class="inventory-grid"><article class="inventory-stat"><span>TRACKED MATERIALS</span><strong>48</strong><small>Across 4 storage zones</small></article><article class="inventory-stat"><span>REORDER ALERTS</span><strong>' + low + '</strong><small>Needs a purchase order today</small></article><article class="inventory-stat"><span>STOCK VALUE</span><strong>₹8.42L</strong><small>↑ 3.8% vs. last month</small></article></div><section class="content-card"><div class="toolbar"><strong style="font-size:12px">Stock by material</strong><button class="secondary-button" data-action="receive">＋ Receive material</button></div><div class="table-scroll"><table class="data-table"><thead><tr><th>SKU</th><th>MATERIAL</th><th>CATEGORY</th><th>LOCATION</th><th>ON HAND</th><th>STOCK LEVEL</th><th>STATUS</th></tr></thead><tbody>' + rows + '</tbody></table></div></section>' +
+  const rows = materials.map((item) => {
+    const parsed = window.FactoryFlowInventory.parseQuantity(item.onHand);
+    const cost = item.unitCost !== null && item.unitCost !== undefined && item.unitCost !== '' && Number.isFinite(Number(item.unitCost))
+      ? currency(Number(item.unitCost)) + ' / ' + (parsed ? parsed.unitLabel : 'unit')
+      : 'Not set';
+    return '<tr><td class="order-code">' + safe(item.sku) + '</td><td class="item-name">' + safe(item.item) + '</td><td>' + safe(item.category) + '</td><td>' + safe(item.location) + '</td><td>' + safe(item.onHand) + '</td><td><div class="stock-bar ' + (item.status === 'Critical' ? 'critical' : item.status === 'Low stock' ? 'warn' : '') + '"><i style="width:' + item.stock + '%"></i></div></td><td>' + status(item.status) + '</td><td>' + cost + '<div><button class="table-button" data-unit-cost="' + safe(item.sku) + '">Set cost</button></div></td></tr>';
+  }).join('');
+  return head('RAW MATERIAL', 'Material you can trust', 'See stock health early, before a job worker or customer has to wait.', '<button class="primary-button" data-new="purchase">＋ Purchase material</button>') + '<div class="inventory-grid"><article class="inventory-stat"><span>TRACKED MATERIALS</span><strong>' + materials.length + '</strong><small>Inventory records</small></article><article class="inventory-stat"><span>REORDER ALERTS</span><strong>' + low + '</strong><small>Needs a purchase order today</small></article><article class="inventory-stat"><span>STOCK MOVEMENTS</span><strong>' + movements.length + '</strong><small>Receipts and production usage</small></article></div><section class="content-card"><div class="toolbar"><strong style="font-size:12px">Stock by material</strong><button class="secondary-button" data-action="receive">＋ Receive material</button></div><div class="table-scroll"><table class="data-table"><thead><tr><th>SKU</th><th>MATERIAL</th><th>CATEGORY</th><th>LOCATION</th><th>ON HAND</th><th>STOCK LEVEL</th><th>STATUS</th><th>UNIT COST</th></tr></thead><tbody>' + rows + '</tbody></table></div></section>' +
   '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Recent material receipts</strong><span class="subtle">' + receipts.length + ' recorded</span></div>' +
   (receipts.length ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>RECEIPT</th><th>PURCHASE ORDER</th><th>SUPPLIER / MATERIAL</th><th>QUANTITY</th><th>STOCK AFTER</th><th>REFERENCE</th><th>DATE</th></tr></thead><tbody>' + receipts.slice(0, 10).map((receipt) => '<tr><td class="order-code">' + safe(receipt.id) + '</td><td>' + safe(receipt.purchaseId) + '</td><td><div class="item-name">' + safe(receipt.supplier) + '</div><div class="subtle">' + safe(receipt.material) + '</div></td><td>' + receipt.quantity + ' ' + safe(receipt.unit) + '</td><td>' + safe(receipt.stockAfter || '—') + '</td><td>' + safe(receipt.reference || '—') + '</td><td>' + new Date(receipt.receivedAt).toLocaleDateString('en-IN') + '</td></tr>').join('') + '</tbody></table></div>' : '<div class="empty-state"><h2>No receipts recorded</h2><p>Use “Receive material” to record the next supplier delivery.</p></div>') + '</section>' +
   '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Stock movement history</strong><span class="subtle">' + movements.length + ' movements</span></div>' +
-  (movements.length ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>MOVEMENT</th><th>TYPE</th><th>MATERIAL</th><th>QUANTITY</th><th>JOB / REFERENCE</th><th>STOCK BEFORE</th><th>STOCK AFTER</th><th>DATE</th></tr></thead><tbody>' + movements.slice(0, 20).map((movement) => '<tr><td class="order-code">' + safe(movement.id) + '</td><td>' + status(movement.type) + '</td><td><div class="item-name">' + safe(movement.material) + '</div><div class="subtle">' + safe(movement.materialSku || '') + '</div></td><td><span class="' + (movement.direction === 'OUT' ? 'down' : 'up') + '">' + (movement.direction === 'OUT' ? '−' : '+') + Number(movement.quantity).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' ' + safe(movement.unit) + '</span></td><td>' + safe(movement.jobId || movement.reference || '—') + '</td><td>' + safe(movement.stockBefore || '—') + '</td><td>' + safe(movement.stockAfter || '—') + '</td><td>' + new Date(movement.createdAt).toLocaleDateString('en-IN') + '</td></tr>').join('') + '</tbody></table></div>' : '<div class="empty-state"><h2>No stock movements recorded</h2><p>Receiving material and recording production usage will create an audit trail here.</p></div>') + '</section>';
+  (movements.length ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>MOVEMENT</th><th>TYPE</th><th>MATERIAL</th><th>QUANTITY</th><th>COST</th><th>JOB / REFERENCE</th><th>STOCK BEFORE</th><th>STOCK AFTER</th><th>DATE</th></tr></thead><tbody>' + movements.slice(0, 20).map((movement) => '<tr><td class="order-code">' + safe(movement.id) + '</td><td>' + safe(movement.type) + '</td><td><div class="item-name">' + safe(movement.material) + '</div><div class="subtle">' + safe(movement.materialSku || '') + '</div></td><td><span class="' + (movement.direction === 'OUT' ? 'down' : 'up') + '">' + (movement.direction === 'OUT' ? '−' : '+') + Number(movement.quantity).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' ' + safe(movement.unit) + '</span></td><td>' + (movement.costAmount !== null && movement.costAmount !== undefined && Number.isFinite(Number(movement.costAmount)) ? currency(Number(movement.costAmount)) : (movement.type === 'Consumption' ? 'Unpriced' : '—')) + '</td><td>' + safe(movement.jobId || movement.reference || '—') + '</td><td>' + safe(movement.stockBefore || '—') + '</td><td>' + safe(movement.stockAfter || '—') + '</td><td>' + new Date(movement.createdAt).toLocaleDateString('en-IN') + '</td></tr>').join('') + '</tbody></table></div>' : '<div class="empty-state"><h2>No stock movements recorded</h2><p>Receiving material and recording production usage will create an audit trail here.</p></div>') + '</section>';
+}
+
+function costingPage() {
+  const rows = jobs.map((job) => ({ job, cost: window.FactoryFlowCosting.calculateJobCost(job, movements) }));
+  const quotedRevenue = rows.reduce((total, row) => total + (row.cost.revenueConfigured ? row.cost.revenue : 0), 0);
+  const knownCosts = rows.reduce((total, row) => total + row.cost.knownCost, 0);
+  const incomplete = rows.filter((row) => !row.cost.complete).length;
+  const body = rows.map(({ job, cost }) => {
+    const materialLabel = currency(cost.materialCost) + (cost.unpricedMovements ? '<div class="subtle">' + cost.unpricedMovements + ' unpriced usage record(s)</div>' : '');
+    const profitLabel = cost.profit === null ? 'Incomplete' : currency(cost.profit);
+    const marginLabel = cost.marginPercent === null ? '—' : cost.marginPercent.toFixed(2) + '%';
+    const statusLabel = cost.complete ? 'Complete' : 'Needs pricing';
+    return '<tr><td class="order-code">' + safe(job.id) + '</td><td><div class="item-name">' + safe(job.item) + '</div><div class="subtle">' + safe(job.customer) + '</div></td><td>' + (cost.revenueConfigured ? currency(cost.revenue) : 'Not set') + '</td><td>' + materialLabel + '</td><td>' + currency(cost.workerCost) + '</td><td>' + currency(cost.otherCost) + '</td><td>' + currency(cost.knownCost) + '<div class="subtle">Known cost</div></td><td><strong>' + profitLabel + '</strong></td><td>' + marginLabel + '<div class="subtle">' + statusLabel + '</div></td><td><button class="table-button" data-cost-job="' + safe(job.id) + '">Edit costs</button></td></tr>';
+  }).join('');
+  return head('FINANCE', 'Job costing & profitability', 'Compare selling value against material consumed, job-worker charges and other direct costs. Incomplete records are flagged instead of guessed.', '') +
+    '<div class="summary-cards">' +
+    metric('JOBS TRACKED', rows.length, 'Jobs in the workspace') +
+    metric('SELLING VALUE', currency(quotedRevenue), 'Revenue entered before GST') +
+    metric('KNOWN COSTS', currency(knownCosts), 'Material, worker and other costs') +
+    metric('INCOMPLETE COSTINGS', incomplete, 'Missing revenue or unpriced usage', incomplete > 0) +
+    '</div><section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Profitability by job</strong><span class="subtle">Material usage is costed using the unit price captured when consumed</span></div>' +
+    (rows.length ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>JOB</th><th>WORK</th><th>SELLING VALUE</th><th>MATERIAL COST</th><th>WORKER CHARGE</th><th>OTHER COST</th><th>KNOWN TOTAL COST</th><th>GROSS PROFIT</th><th>MARGIN</th><th></th></tr></thead><tbody>' + body + '</tbody></table></div>' : '<div class="empty-state"><h2>No jobs available</h2><p>Create a job or convert a quote into a job to begin costing.</p></div>') + '</section>' +
+    '<p class="subtle" style="margin-top:12px">Known total cost includes priced material usage only. A job’s profit and margin remain incomplete if any consumption record has no captured unit cost or if selling value has not been entered. Set unit costs under Materials before recording future usage.</p>';
 }
 
 function workersPage() {
@@ -224,7 +254,7 @@ function render() {
   ui('#pageKicker').textContent = label[0];
   ui('#pageTitle').textContent = label[1];
   all('.nav-link[data-view]').forEach((button) => button.classList.toggle('active', button.dataset.view === app.view));
-  const pages = { dashboard, quotes: quotesPage, jobs: jobsPage, purchases: purchasesPage, materials: materialsPage, workers: workersPage, invoices: invoicesPage, marketplace: marketplacePage, settings: settingsPage };
+  const pages = { dashboard, quotes: quotesPage, jobs: jobsPage, purchases: purchasesPage, materials: materialsPage, workers: workersPage, invoices: invoicesPage, marketplace: marketplacePage, costing: costingPage, settings: settingsPage };
   ui('#view').innerHTML = pages[app.view]();
   bind();
 }
@@ -389,7 +419,7 @@ function convert(id) {
   const quote = quotes.find((item) => item.id === id);
   if (!quote) return;
   quote.status = 'Accepted';
-  jobs.unshift({ id: 'JB-' + (842 + jobs.length), customer: quote.customer, item: quote.scope, qty: quote.qty, worker: 'Unassigned', due: 'To schedule', status: 'Material pending', progress: 0, owner: 'SD' });
+  jobs.unshift({ id: 'JB-' + (842 + jobs.length), customer: quote.customer, item: quote.scope, qty: quote.qty, worker: 'Unassigned', due: 'To schedule', status: 'Material pending', progress: 0, owner: 'SD', sellingValue: quote.value, workerCost: 0, otherCost: 0 });
   save(); goto('jobs'); notify(quote.id + ' was converted to a live job.');
 }
 
@@ -511,6 +541,49 @@ function receiveMaterials() {
   });
 }
 
+function setMaterialUnitCost(materialSku) {
+  const material = materials.find((item) => item.sku === materialSku);
+  if (!material) return;
+  const parsed = window.FactoryFlowInventory.parseQuantity(material.onHand);
+  const unit = parsed ? parsed.unitLabel : 'unit';
+  const value = material.unitCost !== null && material.unitCost !== undefined && material.unitCost !== '' && Number.isFinite(Number(material.unitCost)) ? Number(material.unitCost) : '';
+  openModal('<h2 id="modalTitle">Set material unit cost</h2><p>' + safe(material.sku + ' · ' + material.item) + '</p><p>Enter the cost in rupees per ' + safe(unit) + '. New consumption records will snapshot this price; older unpriced records remain flagged.</p><form id="materialCostForm" class="form-grid"><label>Cost per ' + safe(unit) + ' (₹)<input required name="unitCost" type="number" min="0" step="0.01" value="' + value + '" placeholder="e.g. 42.50"></label><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="primary-button" type="submit">Save unit cost</button></div></form>');
+  ui('#materialCostForm').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const unitCost = Number(data.get('unitCost'));
+    if (!Number.isFinite(unitCost) || unitCost < 0) return;
+    material.unitCost = Math.round(unitCost * 100) / 100;
+    save();
+    closeModal();
+    render();
+    notify('Unit cost saved for ' + material.item + '.');
+  });
+}
+
+function editJobCosts(jobId) {
+  const job = jobs.find((item) => item.id === jobId);
+  if (!job) return;
+  const sellingValue = job.sellingValue === null || job.sellingValue === undefined ? '' : Number(job.sellingValue);
+  const workerCost = job.workerCost === null || job.workerCost === undefined ? 0 : Number(job.workerCost);
+  const otherCost = job.otherCost === null || job.otherCost === undefined ? 0 : Number(job.otherCost);
+  openModal('<h2 id="modalTitle">Job costing · ' + safe(job.id) + '</h2><p>' + safe(job.customer + ' · ' + job.item) + '</p><form id="jobCostForm" class="form-grid"><label>Selling value before GST (₹)<input required name="sellingValue" type="number" min="0" step="0.01" value="' + sellingValue + '" placeholder="Enter agreed job value"></label><label>Job-worker / labour charge (₹)<input required name="workerCost" type="number" min="0" step="0.01" value="' + workerCost + '"></label><label>Other direct costs (₹)<input required name="otherCost" type="number" min="0" step="0.01" value="' + otherCost + '"></label><p class="subtle">Material costs come from the unit cost captured on each consumption entry. For quote-converted jobs, the quoted base value is prefilled as selling value.</p><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="primary-button" type="submit">Save job costs</button></div></form>');
+  ui('#jobCostForm').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const values = ['sellingValue', 'workerCost', 'otherCost'].map((key) => Number(data.get(key)));
+    if (values.some((value) => !Number.isFinite(value) || value < 0)) {
+      notify('Enter valid non-negative costs.');
+      return;
+    }
+    [job.sellingValue, job.workerCost, job.otherCost] = values.map((value) => Math.round(value * 100) / 100);
+    save();
+    closeModal();
+    goto('costing');
+    notify('Cost details saved for ' + job.id + '.');
+  });
+}
+
 function consumeMaterials(jobId) {
   const job = jobs.find((item) => item.id === jobId);
   if (!job || !['In production', 'With worker'].includes(job.status)) {
@@ -549,6 +622,8 @@ function consumeMaterials(jobId) {
       material: stockUpdate.material.item,
       quantity: stockUpdate.usedQuantity,
       unit: data.get('unit').trim(),
+      unitCost: stockUpdate.material.unitCost !== null && stockUpdate.material.unitCost !== undefined && stockUpdate.material.unitCost !== '' && Number.isFinite(Number(stockUpdate.material.unitCost)) ? Number(stockUpdate.material.unitCost) : null,
+      costAmount: stockUpdate.material.unitCost !== null && stockUpdate.material.unitCost !== undefined && stockUpdate.material.unitCost !== '' && Number.isFinite(Number(stockUpdate.material.unitCost)) ? Math.round(Number(stockUpdate.material.unitCost) * stockUpdate.usedQuantity * 100) / 100 : null,
       stockBefore: stockUpdate.previousOnHand,
       stockAfter: stockUpdate.onHand,
       jobId: job.id,
@@ -581,6 +656,8 @@ function bind() {
   all('[data-convert]').forEach((button) => button.addEventListener('click', () => convert(button.dataset.convert)));
   all('[data-proof-job]').forEach((button) => button.addEventListener('click', () => openDeliveryProof(button.dataset.proofJob)));
   all('[data-consume-job]').forEach((button) => button.addEventListener('click', () => consumeMaterials(button.dataset.consumeJob)));
+  all('[data-cost-job]').forEach((button) => button.addEventListener('click', () => editJobCosts(button.dataset.costJob)));
+  all('[data-unit-cost]').forEach((button) => button.addEventListener('click', () => setMaterialUnitCost(button.dataset.unitCost)));
   all('[data-view-proof]').forEach((button) => button.addEventListener('click', () => viewDeliveryProof(button.dataset.viewProof)));
   all('[data-reminder]').forEach((button) => button.addEventListener('click', () => openReminder(button.dataset.reminder)));
   all('[data-group]').forEach((button) => button.addEventListener('click', () => notify('You joined the ' + button.dataset.group + ' buying group.')));
