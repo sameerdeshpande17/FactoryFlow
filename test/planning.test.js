@@ -8,39 +8,17 @@ const jobs = [
   { id: 'JB-3', item: 'Delivered order', customer: 'Old Foods', status: 'Delivered' }
 ];
 const materials = [
-  {
-    sku: 'RM-1',
-    item: 'Kraft paper',
-    onHand: '80 kg',
-    stock: 80,
-    capacity: 100,
-    unitCost: 12
-  },
-  {
-    sku: 'RM-2',
-    item: 'Carton board',
-    onHand: '200 sheets',
-    stock: 70,
-    capacity: 285,
-    unitCost: 4.5
-  }
+  { sku: 'RM-1', item: 'Kraft paper', onHand: '80 kg', stock: 80, capacity: 100, unitCost: 12 },
+  { sku: 'RM-2', item: 'Carton board', onHand: '200 sheets', stock: 70, capacity: 285, unitCost: 4.5 }
 ];
 
 test('upserts one requirement per job and material', () => {
   const requirements = [];
   const first = planning.upsertRequirement(requirements, jobs, materials, {
-    jobId: 'JB-1',
-    materialSku: 'RM-1',
-    quantity: 40,
-    unit: 'kgs',
-    updatedAt: '2026-10-30T10:00:00.000Z'
+    jobId: 'JB-1', materialSku: 'RM-1', quantity: 40, unit: 'kgs', updatedAt: '2026-10-30T10:00:00.000Z'
   });
   const second = planning.upsertRequirement(requirements, jobs, materials, {
-    jobId: 'JB-1',
-    materialSku: 'RM-1',
-    quantity: 55,
-    unit: 'kg',
-    updatedAt: '2026-10-30T11:00:00.000Z'
+    jobId: 'JB-1', materialSku: 'RM-1', quantity: 55, unit: 'kg', updatedAt: '2026-10-30T11:00:00.000Z'
   });
   assert.equal(first.updated, false);
   assert.equal(second.updated, true);
@@ -50,11 +28,11 @@ test('upserts one requirement per job and material', () => {
   assert.equal(requirements[0].unit, 'kg');
 });
 
-test('aggregates all active jobs against shared stock counted once', () => {
+test('aggregates active jobs against shared stock counted once', () => {
   const requirements = [
-    { id: 'RQ-1', jobId: 'JB-1', materialSku: 'RM-1', material: 'Kraft paper', quantity: 60, unit: 'kg' },
-    { id: 'RQ-2', jobId: 'JB-2', materialSku: 'RM-1', material: 'Kraft paper', quantity: 50, unit: 'kg' },
-    { id: 'RQ-3', jobId: 'JB-3', materialSku: 'RM-1', material: 'Kraft paper', quantity: 999, unit: 'kg' }
+    { id: 'RQ-1', jobId: 'JB-1', materialSku: 'RM-1', quantity: 60, unit: 'kg' },
+    { id: 'RQ-2', jobId: 'JB-2', materialSku: 'RM-1', quantity: 50, unit: 'kg' },
+    { id: 'RQ-3', jobId: 'JB-3', materialSku: 'RM-1', quantity: 999, unit: 'kg' }
   ];
   const result = planning.calculatePlan(jobs, requirements, materials);
   assert.equal(result.activeJobCount, 2);
@@ -67,7 +45,7 @@ test('aggregates all active jobs against shared stock counted once', () => {
   assert.equal(result.shortages.length, 1);
 });
 
-test('open purchase order quantity offsets a material shortage', () => {
+test('open purchase-order balance offsets a material shortage', () => {
   const requirements = [
     { id: 'RQ-1', jobId: 'JB-1', materialSku: 'RM-1', quantity: 100, unit: 'kg' }
   ];
@@ -94,7 +72,7 @@ test('cancelled and fully received purchase orders do not count as incoming', ()
   assert.equal(result.byMaterial[0].shortageQty, 20);
 });
 
-test('rejects requirements for inactive jobs, invalid quantities and unit mismatches', () => {
+test('rejects inactive jobs, invalid quantities and incompatible units', () => {
   const requirements = [];
   assert.throws(() => planning.upsertRequirement(requirements, jobs, materials, {
     jobId: 'JB-3', materialSku: 'RM-1', quantity: 10, unit: 'kg'
@@ -108,7 +86,7 @@ test('rejects requirements for inactive jobs, invalid quantities and unit mismat
   assert.equal(requirements.length, 0);
 });
 
-test('reports issues for deleted materials and mismatched legacy requirement units', () => {
+test('reports issues for missing materials and legacy unit mismatches', () => {
   const requirements = [
     { id: 'RQ-1', jobId: 'JB-1', materialSku: 'RM-MISSING', quantity: 5, unit: 'kg' },
     { id: 'RQ-2', jobId: 'JB-2', materialSku: 'RM-2', quantity: 20, unit: 'kg' }
@@ -120,7 +98,7 @@ test('reports issues for deleted materials and mismatched legacy requirement uni
   assert.match(result.issues[1].message, /unit mismatch/i);
 });
 
-test('does not treat a missing material price as zero when estimating shortage cost', () => {
+test('keeps shortage cost unknown when material unit price is missing', () => {
   const noPriceMaterial = [{ sku: 'RM-9', item: 'Ink', onHand: '2 kg', stock: 20 }];
   const requirements = [
     { id: 'RQ-9', jobId: 'JB-1', materialSku: 'RM-9', quantity: 10, unit: 'kg' }
@@ -130,7 +108,7 @@ test('does not treat a missing material price as zero when estimating shortage c
   assert.equal(result.byMaterial[0].estimatedShortageCost, null);
 });
 
-test('counts open purchase orders by material name for older orders without a material SKU', () => {
+test('matches open purchase orders by material name when older orders have no material SKU', () => {
   const requirements = [
     { id: 'RQ-1', jobId: 'JB-1', materialSku: 'RM-1', quantity: 100, unit: 'kg' }
   ];
@@ -140,4 +118,29 @@ test('counts open purchase orders by material name for older orders without a ma
   const result = planning.calculatePlan(jobs, requirements, materials, purchases);
   assert.equal(result.byMaterial[0].incomingQty, 10);
   assert.equal(result.byMaterial[0].shortageQty, 10);
+});
+
+test('ignores over-received and incompatible-unit purchase orders for coverage', () => {
+  const requirements = [
+    { id: 'RQ-1', jobId: 'JB-1', materialSku: 'RM-1', quantity: 100, unit: 'kg' }
+  ];
+  const purchases = [
+    { id: 'PO-1', materialSku: 'RM-1', quantity: 80, receivedQty: 90, unit: 'kg', status: 'Part received' },
+    { id: 'PO-2', materialSku: 'RM-1', quantity: 50, receivedQty: 0, unit: 'sheets', status: 'Confirmed' }
+  ];
+  const result = planning.calculatePlan(jobs, requirements, materials, purchases);
+  assert.equal(result.byMaterial[0].incomingQty, 0);
+  assert.equal(result.byMaterial[0].shortageQty, 20);
+});
+
+test('ignores requirements for closed jobs and keeps a clean empty plan', () => {
+  const result = planning.calculatePlan(
+    [{ id: 'JB-3', item: 'Done', customer: 'Old Foods', status: 'Delivered' }],
+    [{ id: 'RQ-3', jobId: 'JB-3', materialSku: 'RM-1', quantity: 10, unit: 'kg' }],
+    materials
+  );
+  assert.equal(result.activeJobCount, 0);
+  assert.equal(result.requirementCount, 0);
+  assert.deepEqual(result.byMaterial, []);
+  assert.deepEqual(result.shortages, []);
 });
