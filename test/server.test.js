@@ -68,6 +68,7 @@ test('health and bootstrap endpoints return the workspace schema', async () => {
   assert.ok(Array.isArray(payload.state.jobs));
   assert.ok(Array.isArray(payload.state.receipts));
   assert.ok(Array.isArray(payload.state.movements));
+  assert.ok(Array.isArray(payload.state.requirements));
 });
 
 test('sync persists quotes and material receipt records', async () => {
@@ -101,6 +102,14 @@ test('sync persists quotes and material receipt records', async () => {
       reference: '',
       note: 'Production usage',
       createdAt: '2026-10-29T09:00:00.000Z'
+    }],
+    requirements: [{
+      id: 'RQ-TEST',
+      jobId: 'JB-TEST',
+      materialSku: 'RM-TEST',
+      material: 'Kraft paper',
+      quantity: 120,
+      unit: 'kg'
     }]
   };
   const sync = await fetch(baseUrl + '/api/sync', {
@@ -116,6 +125,7 @@ test('sync persists quotes and material receipt records', async () => {
   assert.deepEqual(stored.state.quotes, state.quotes);
   assert.deepEqual(stored.state.receipts, state.receipts);
   assert.deepEqual(stored.state.movements, state.movements);
+  assert.deepEqual(stored.state.requirements, state.requirements);
   assert.deepEqual(stored.customers, ['Example Customer']);
 });
 
