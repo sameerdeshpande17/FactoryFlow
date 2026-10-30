@@ -591,6 +591,12 @@ function receiveMaterials() {
       closeModal();
       return;
     }
+    if (Number(purchase.quantity) > 0 && purchase.unit && window.FactoryFlowInventory.normalizeUnit(data.get('unit')) !== window.FactoryFlowInventory.normalizeUnit(purchase.unit)) {
+      const errorElement = ui('#receiptError');
+      errorElement.textContent = 'This purchase order is for ' + purchase.unit + '. Record the receipt using that unit.';
+      errorElement.hidden = false;
+      return;
+    }
 
     let stockUpdate;
     try {
@@ -623,7 +629,7 @@ function receiveMaterials() {
     };
     receipts.unshift(receipt);
     if (Number.isFinite(Number(purchase.quantity)) && purchase.quantity > 0) {
-      purchase.receivedQty = Math.min(Number(purchase.quantity), Number(purchase.receivedQty || 0) + receipt.quantity);
+      purchase.receivedQty = Number(purchase.receivedQty || 0) + receipt.quantity;
       if (purchase.receivedQty >= Number(purchase.quantity)) purchase.status = 'Received';
     }
     movements.unshift({
