@@ -11,5 +11,40 @@
   "deliveries": [],
   "receipts": [],
   "movements": [],
-  "requirements": []
+  "requirements": [],
+  "workers": [
+    {
+      "id": "WRK-001",
+      "name": "Ravi Cartons",
+      "skill": "Carton conversion",
+      "capacityHoursPerDay": 8,
+      "active": true,
+      "unavailableDates": []
+    },
+    {
+      "id": "WRK-002",
+      "name": "Aman Printworks",
+      "skill": "Flexo printing",
+      "capacityHoursPerDay": 8,
+      "active": true,
+      "unavailableDates": []
+    },
+    {
+      "id": "WRK-003",
+      "name": "Sanket Lamination",
+      "skill": "Film lamination",
+      "capacityHoursPerDay": 8,
+      "active": true,
+      "unavailableDates": []
+    },
+    {
+      "id": "WRK-004",
+      "name": "Disha Finishing",
+      "skill": "Spot UV & finishing",
+      "capacityHoursPerDay": 8,
+      "active": true,
+      "unavailableDates": []
+    }
+  ],
+  "schedules": []
 }
