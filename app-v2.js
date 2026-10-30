@@ -377,6 +377,7 @@ function editWorkerProfile(workerId) {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     const unavailableDates = data.get('unavailableDates').split(',').map((value) => value.trim()).filter(Boolean);
+    const previousName = worker.name;
     try {
       window.FactoryFlowScheduling.updateWorker(workers, worker.id, {
         name: data.get('name'),
@@ -385,6 +386,7 @@ function editWorkerProfile(workerId) {
         active: data.get('active') === 'active',
         unavailableDates
       });
+      jobs.forEach((job) => { if (job.worker === previousName) job.worker = worker.name; });
       schedules.forEach((session) => {
         if (session.workerId === worker.id) session.workerName = worker.name;
       });
