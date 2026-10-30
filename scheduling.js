@@ -58,8 +58,15 @@
       throw new Error(worker.name + ' has only ' + remainingCapacity + ' hours available on this date (daily capacity: ' + capacity + ' hours).');
     }
 
+    if (input.dueDate && !validDate(input.dueDate)) {
+      throw new Error('Choose a valid job deadline.');
+    }
+    const nextId = schedules.reduce((max, item) => {
+      const match = /^SC-(\d+)$/.exec(String(item.id || ''));
+      return match ? Math.max(max, Number(match[1])) : max;
+    }, 100) + 1;
     const session = {
-      id: 'SC-' + (101 + schedules.length),
+      id: 'SC-' + nextId,
       jobId: job.id,
       workerId: worker.id,
       workerName: worker.name,
@@ -70,13 +77,7 @@
     };
     schedules.push(session);
 
-    if (input.dueDate) {
-      if (!validDate(input.dueDate)) {
-        schedules.pop();
-        throw new Error('Choose a valid job deadline.');
-      }
-      job.dueDate = input.dueDate;
-    }
+    if (input.dueDate) job.dueDate = input.dueDate;
     job.worker = worker.name;
     return { session, worker, job, assignedHours: assignedHours + hours, remainingCapacity: Math.max(0, remainingCapacity - hours) };
   }
@@ -105,6 +106,9 @@
       if (!worker) {
         issues.push({ sessionId: session.id, jobId: job.id, message: 'Assigned worker is missing.' });
         return;
+      }
+      if (worker.active === false) {
+        issues.push({ sessionId: session.id, jobId: job.id, message: worker.name + ' is inactive but still has a scheduled session.' });
       }
       const hours = Number(session.hours);
       if (!validDate(session.date) || !Number.isFinite(hours) || hours <= 0) {
@@ -185,10 +189,15 @@
     const name = String(input.name || '').trim();
     const skill = String(input.skill || '').trim();
     if (!name || !skill) throw new Error('Enter both a worker name and skill.');
+    const unavailableDates = Array.isArray(input.unavailableDates) ? input.unavailableDates : [];
+    if (unavailableDates.some((date) => !validDate(date))) {
+      throw new Error('Unavailable dates must use YYYY-MM-DD.');
+    }
     worker.name = name;
     worker.skill = skill;
     worker.capacityHoursPerDay = capacity;
     worker.active = input.active !== false;
+    worker.unavailableDates = [...new Set(unavailableDates)];
     return worker;
   }
 
