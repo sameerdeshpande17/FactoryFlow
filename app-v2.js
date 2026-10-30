@@ -473,7 +473,7 @@ function workersPage() {
   return head('PARTNERS', 'Job-worker capacity', 'Manage worker skills, daily capacity, availability and live production assignments.', '<button class="secondary-button" data-go="schedule">Open production schedule →</button>') +
     '<section class="worker-capacity-grid">' + (workerCards.length ? workerCards.join('') : '<div class="empty-state">No workers configured.</div>') + '</section>' +
     '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Upcoming scheduled work</strong><span class="subtle">' + analysis.sessionCount + ' active session(s)</span></div>' +
-    (recentSessions ? '<div class="schedule-list">' + recentSessions + '</div>' : '<div class="empty-state"><h2>No scheduled sessions</h2><p>Schedule a job to start tracking worker capacity.</p></div>') + '</section>';
+    (recentSessions.length ? '<div class="schedule-list">' + recentSessions + '</div>' : '<div class="empty-state"><h2>No scheduled sessions</h2><p>Schedule a job to start tracking worker capacity.</p></div>') + '</section>';
 }
 
 function invoicesPage() {
