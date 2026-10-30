@@ -6,6 +6,7 @@ on:
       - main
       - feat/automatic-stock-reconciliation
       - feat/production-material-planning
+      - feat/production-scheduling-capacity
   pull_request:
     branches:
       - main
