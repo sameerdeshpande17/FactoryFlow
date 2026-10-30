@@ -63,7 +63,7 @@
     return { requirement, updated: false, previousQuantity: null };
   }
 
-  function calculatePlan(jobs, requirements, materials, purchases) {
+  function calculatePlan(jobs, requirements, materials, purchases, movements) {
     const active = activeJobs(jobs);
     const activeIds = new Set(active.map((job) => job.id));
     const materialBySku = new Map((Array.isArray(materials) ? materials : []).map((item) => [item.sku, item]));
@@ -93,6 +93,22 @@
         return;
       }
 
+      const consumedMovements = (Array.isArray(movements) ? movements : []).filter((movement) =>
+        movement && movement.jobId === job.id && movement.materialSku === material.sku &&
+        (movement.type === 'Consumption' || movement.direction === 'OUT')
+      );
+      let consumedQty = 0;
+      consumedMovements.forEach((movement) => {
+        if (inventory.normalizeUnit(movement.unit) !== stock.unit) {
+          issues.push({ requirementId: requirement.id, jobId: job.id, message: 'Consumption unit mismatch for ' + material.item + ' on ' + job.id + '.' });
+          return;
+        }
+        const used = Number(movement.quantity);
+        if (Number.isFinite(used) && used > 0) consumedQty += used;
+      });
+      consumedQty = Math.round(consumedQty * 10000) / 10000;
+      const remainingQty = Math.max(0, required - consumedQty);
+
       jobRequirements.push({
         id: requirement.id,
         jobId: job.id,
@@ -101,6 +117,8 @@
         materialSku: material.sku,
         material: material.item,
         quantity: required,
+        consumedQty,
+        remainingQty,
         unit: stock.unitLabel
       });
 
@@ -111,6 +129,8 @@
           material: material.item,
           unit: stock.unitLabel,
           requiredQty: 0,
+          plannedQty: 0,
+          consumedQty: 0,
           availableQty: stock.quantity,
           incomingQty: 0,
           unitCost: material.unitCost !== null && material.unitCost !== undefined && material.unitCost !== '' && Number.isFinite(Number(material.unitCost)) && Number(material.unitCost) >= 0 ? Number(material.unitCost) : null,
@@ -119,7 +139,9 @@
         };
         totals.set(material.sku, total);
       }
-      total.requiredQty += required;
+      total.plannedQty += required;
+      total.consumedQty += consumedQty;
+      total.requiredQty += remainingQty;
       if (!total.jobIds.includes(job.id)) {
         total.jobIds.push(job.id);
         total.jobCount += 1;
@@ -156,6 +178,8 @@
         ...item,
         projectedAvailableQty: Math.round(projectedAvailableQty * 10000) / 10000,
         requiredQty: Math.round(item.requiredQty * 10000) / 10000,
+        plannedQty: Math.round(item.plannedQty * 10000) / 10000,
+        consumedQty: Math.round(item.consumedQty * 10000) / 10000,
         shortageQty: Math.round(shortageQty * 10000) / 10000,
         coveragePercent,
         estimatedShortageCost,
