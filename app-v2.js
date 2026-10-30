@@ -32,6 +32,15 @@ const movements = JSON.parse(localStorage.getItem('ff-movements') || 'null') || 
 
 const requirements = JSON.parse(localStorage.getItem('ff-requirements') || 'null') || [];
 
+const defaultWorkers = [
+  { id: 'WRK-001', name: 'Ravi Cartons', skill: 'Carton conversion', capacityHoursPerDay: 8, active: true, unavailableDates: [] },
+  { id: 'WRK-002', name: 'Aman Printworks', skill: 'Flexo printing', capacityHoursPerDay: 8, active: true, unavailableDates: [] },
+  { id: 'WRK-003', name: 'Sanket Lamination', skill: 'Film lamination', capacityHoursPerDay: 8, active: true, unavailableDates: [] },
+  { id: 'WRK-004', name: 'Disha Finishing', skill: 'Spot UV & finishing', capacityHoursPerDay: 8, active: true, unavailableDates: [] }
+];
+const workers = JSON.parse(localStorage.getItem('ff-workers') || 'null') || defaultWorkers;
+const schedules = JSON.parse(localStorage.getItem('ff-schedules') || 'null') || [];
+
 const materials = [
   { sku: 'RM-0142', item: 'Kraft paper · 180 GSM', category: 'Paper', location: 'A-12', onHand: '3,840 kg', stock: 82, status: 'In stock' },
   { sku: 'RM-0251', item: 'BOPP film · 25 micron', category: 'Film', location: 'B-04', onHand: '1,260 kg', stock: 56, status: 'In stock' },
@@ -53,7 +62,7 @@ const titles = {
   dashboard: ['JOB-WORK OS', 'Overview'], quotes: ['SALES', 'Quotes'], jobs: ['JOB CONTROL', 'Jobs'],
   purchases: ['PURCHASING', 'Purchase orders'], materials: ['RAW MATERIAL', 'Materials'],
   workers: ['PARTNERS', 'Job workers'], invoices: ['FINANCE', 'GST invoices'],
-  marketplace: ['B2B NETWORK', 'Marketplace'], planning: ['PRODUCTION', 'Material planning'], costing: ['FINANCE', 'Job costing'], settings: ['WORKSPACE', 'Settings']
+  marketplace: ['B2B NETWORK', 'Marketplace'], planning: ['PRODUCTION', 'Material planning'], schedule: ['PRODUCTION', 'Production schedule'], costing: ['FINANCE', 'Job costing'], settings: ['WORKSPACE', 'Settings']
 };
 
 function save(shouldSync = true) {
@@ -63,6 +72,8 @@ function save(shouldSync = true) {
   localStorage.setItem('ff-receipts', JSON.stringify(receipts));
   localStorage.setItem('ff-movements', JSON.stringify(movements));
   localStorage.setItem('ff-requirements', JSON.stringify(requirements));
+  localStorage.setItem('ff-workers', JSON.stringify(workers));
+  localStorage.setItem('ff-schedules', JSON.stringify(schedules));
   localStorage.setItem('ff-language', app.language);
   ui('#quoteBadge').textContent = quotes.filter((quote) => quote.status === 'Follow up').length || '0';
   if (shouldSync && workspaceReady) syncWorkspace();
@@ -83,7 +94,7 @@ async function syncWorkspace() {
     const response = await fetch('/api/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ quotes, jobs, purchases, materials, deliveries, receipts, movements, requirements })
+      body: JSON.stringify({ quotes, jobs, purchases, materials, deliveries, receipts, movements, requirements, workers, schedules })
     });
     if (!response.ok) throw new Error('Workspace sync failed.');
     setDataStatus('Synced', 'online');
@@ -106,7 +117,7 @@ async function hydrateWorkspace() {
     if (!response.ok) throw new Error('Workspace is unavailable.');
     const payload = await response.json();
     const remote = payload.state || {};
-    const hasRemoteData = ['quotes', 'jobs', 'purchases', 'materials', 'deliveries', 'receipts', 'movements', 'requirements'].some((key) => Array.isArray(remote[key]) && remote[key].length);
+    const hasRemoteData = ['quotes', 'jobs', 'purchases', 'materials', 'deliveries', 'receipts', 'movements', 'requirements', 'workers', 'schedules'].some((key) => Array.isArray(remote[key]) && remote[key].length);
     if (hasRemoteData) {
       quotes.splice(0, quotes.length, ...remote.quotes);
       jobs.splice(0, jobs.length, ...remote.jobs);
@@ -116,6 +127,8 @@ async function hydrateWorkspace() {
       receipts.splice(0, receipts.length, ...(remote.receipts || []));
       movements.splice(0, movements.length, ...(remote.movements || []));
       requirements.splice(0, requirements.length, ...(remote.requirements || []));
+      if (Array.isArray(remote.workers) && remote.workers.length) workers.splice(0, workers.length, ...remote.workers);
+      if (Array.isArray(remote.schedules) && remote.schedules.length) schedules.splice(0, schedules.length, ...remote.schedules);
     }
     window.FactoryFlowInventory.ensureStockMetadata(materials);
     workspaceReady = true;
@@ -175,7 +188,10 @@ function jobCard(job, note, warning) {
     : '';
   const costAction = '<button class="text-button" data-cost-job="' + safe(job.id) + '">View costing →</button>';
   const planningAction = !['Delivered', 'QC review', 'Cancelled'].includes(job.status) ? '<button class="text-button" data-plan-job="' + safe(job.id) + '">Plan materials →</button>' : '';
-  return '<article class="work-card"><strong>' + job.id + ' · ' + job.item + '</strong><p>' + job.qty.toLocaleString() + ' units · ' + job.customer + '</p><footer><span class="small-avatar">' + job.owner + '</span><span class="due ' + (warning ? 'warn' : '') + '">' + (proof ? '✓ Proof saved' : '◷ ') + note + '</span></footer>' + (consumeAction ? '<footer>' + consumeAction + '</footer>' : '') + (planningAction ? '<footer>' + planningAction + '</footer>' : '') + '<footer>' + costAction + '</footer></article>';
+  const scheduleAction = !['Delivered', 'QC review', 'Cancelled'].includes(job.status) ? '<button class="text-button" data-schedule-job="' + safe(job.id) + '">Schedule production →</button>' : '';
+  const plannedSessions = schedules.filter((session) => session.jobId === job.id).length;
+  const scheduleLabel = plannedSessions ? '<div class="subtle">' + plannedSessions + ' production session(s) scheduled</div>' : '';
+  return '<article class="work-card"><strong>' + safe(job.id) + ' · ' + safe(job.item) + '</strong><p>' + Number(job.qty || 0).toLocaleString('en-IN') + ' units · ' + safe(job.customer) + '</p>' + scheduleLabel + '<footer><span class="small-avatar">' + safe(job.owner || '') + '</span><span class="due ' + (warning ? 'warn' : '') + '">' + (proof ? '✓ Proof saved' : '◷ ') + note + '</span></footer>' + (consumeAction ? '<footer>' + consumeAction + '</footer>' : '') + (planningAction ? '<footer>' + planningAction + '</footer>' : '') + (scheduleAction ? '<footer>' + scheduleAction + '</footer>' : '') + '<footer>' + costAction + '</footer></article>';
 }
 
 function jobsPage() {
@@ -305,6 +321,119 @@ function planningPage() {
     '';
 }
 
+function localDateISO(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return year + '-' + month + '-' + day;
+}
+
+function scheduleProduction(jobId) {
+  const job = jobs.find((item) => item.id === jobId);
+  if (!job || ['Delivered', 'QC review', 'Cancelled'].includes(job.status)) {
+    notify('Only active jobs can be scheduled.');
+    return;
+  }
+  const activeWorkers = workers.filter((worker) => worker.active !== false);
+  if (!activeWorkers.length) {
+    notify('Activate a worker before scheduling production.');
+    return;
+  }
+  const preferred = activeWorkers.find((worker) => worker.name === job.worker) || activeWorkers[0];
+  const workerOptions = activeWorkers.map((worker) => '<option value="' + safe(worker.id) + '"' + (preferred.id === worker.id ? ' selected' : '') + '>' + safe(worker.name + ' · ' + worker.skill + ' · ' + worker.capacityHoursPerDay + ' hrs/day') + '</option>').join('');
+  const today = localDateISO();
+  openModal('<h2 id="modalTitle">Schedule production · ' + safe(job.id) + '</h2><p>' + safe(job.customer + ' · ' + job.item) + '</p><form id="scheduleForm" class="form-grid"><label>Job worker<select required name="workerId">' + workerOptions + '</select></label><div class="form-row"><label>Production date<input required name="date" type="date" value="' + today + '"></label><label>Planned hours<input required name="hours" type="number" min="0.25" max="24" step="0.25" value="4"></label></div><label>Target completion date<input name="dueDate" type="date" value="' + safe(job.dueDate || '') + '"></label><label>Operation / notes<input name="note" placeholder="e.g. Printing shift, carton cutting"></label><p class="subtle">Daily worker capacity is checked before saving. Sessions that fall after a job deadline are allowed but flagged as deadline risks.</p><p id="scheduleError" class="form-error" hidden></p><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="primary-button" type="submit">Save production session</button></div></form>');
+  ui('#scheduleForm').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    try {
+      const result = window.FactoryFlowScheduling.scheduleSession(schedules, jobs, workers, {
+        jobId: job.id,
+        workerId: data.get('workerId'),
+        date: data.get('date'),
+        hours: Number(data.get('hours')),
+        dueDate: data.get('dueDate'),
+        note: data.get('note')
+      });
+      if (job.dueDate) job.due = new Date(job.dueDate + 'T00:00:00').toLocaleDateString('en-IN');
+      save();
+      closeModal();
+      goto('schedule');
+      notify(result.session.id + ' scheduled with ' + result.worker.name + '. ' + result.remainingCapacity.toFixed(1) + ' worker hours remain for that day.');
+    } catch (error) {
+      const element = ui('#scheduleError');
+      element.textContent = error.message;
+      element.hidden = false;
+    }
+  });
+}
+
+function editWorkerProfile(workerId) {
+  const worker = workers.find((item) => item.id === workerId);
+  if (!worker) return;
+  const unavailable = (worker.unavailableDates || []).join(', ');
+  openModal('<h2 id="modalTitle">Worker capacity & availability</h2><p>' + safe(worker.name) + ' · ' + safe(worker.skill) + '</p><form id="workerProfileForm" class="form-grid"><label>Worker name<input required name="name" value="' + safe(worker.name) + '"></label><label>Skill / operation<input required name="skill" value="' + safe(worker.skill || '') + '"></label><div class="form-row"><label>Daily capacity (hours)<input required name="capacity" type="number" min="0.25" max="24" step="0.25" value="' + Number(worker.capacityHoursPerDay || 8) + '"></label><label>Worker status<select name="active"><option value="active"' + (worker.active !== false ? ' selected' : '') + '>Active</option><option value="inactive"' + (worker.active === false ? ' selected' : '') + '>Inactive</option></select></label></div><label>Unavailable dates<input name="unavailableDates" value="' + safe(unavailable) + '" placeholder="YYYY-MM-DD, YYYY-MM-DD"></label><p class="subtle">Enter dates separated by commas. A scheduled session on an unavailable date will be flagged and new sessions will be blocked.</p><p id="workerProfileError" class="form-error" hidden></p><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="primary-button" type="submit">Save worker profile</button></div></form>');
+  ui('#workerProfileForm').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const unavailableDates = data.get('unavailableDates').split(',').map((value) => value.trim()).filter(Boolean);
+    try {
+      window.FactoryFlowScheduling.updateWorker(workers, worker.id, {
+        name: data.get('name'),
+        skill: data.get('skill'),
+        capacityHoursPerDay: Number(data.get('capacity')),
+        active: data.get('active') === 'active',
+        unavailableDates
+      });
+      schedules.forEach((session) => {
+        if (session.workerId === worker.id) session.workerName = worker.name;
+      });
+      save();
+      closeModal();
+      goto('workers');
+      notify('Worker profile updated for ' + worker.name + '.');
+    } catch (error) {
+      const element = ui('#workerProfileError');
+      element.textContent = error.message;
+      element.hidden = false;
+    }
+  });
+}
+
+function removeProductionSession(sessionId) {
+  const session = window.FactoryFlowScheduling.removeSession(schedules, sessionId);
+  if (!session) return notify('This production session no longer exists.');
+  save();
+  render();
+  notify(session.id + ' removed from the production schedule.');
+}
+
+function schedulePage() {
+  const analysis = window.FactoryFlowScheduling.analyzeSchedule(jobs, schedules, workers);
+  const upcoming = analysis.sessions.filter((session) => session.date >= localDateISO());
+  const capacityRows = analysis.dailyLoads.map((load) => {
+    const capacity = Math.max(0, Number(load.capacityHours) || 0);
+    const percent = capacity > 0 ? Math.min(100, Math.round(load.assignedHours / capacity * 100)) : 100;
+    const over = load.assignedHours > capacity + 1e-9;
+    return '<tr><td><div class="item-name">' + safe(load.workerName) + '</div><div class="subtle">' + safe(load.date) + '</div></td><td>' + load.assignedHours.toFixed(1) + ' hrs</td><td>' + capacity.toFixed(1) + ' hrs</td><td><div class="capacity-track ' + (over ? 'over' : '') + '"><i style="width:' + percent + '%"></i></div>' + (over ? '<small class="risk-text">' + (load.assignedHours - capacity).toFixed(1) + ' hrs over capacity</small>' : '<small class="subtle">' + Math.max(0, capacity - load.assignedHours).toFixed(1) + ' hrs available</small>') + '</td></tr>';
+  }).join('');
+  const sessionRows = analysis.sessions.map((session) => {
+    const dueRisk = session.deadlineRisk ? '<span class="status critical">After deadline</span>' : '<span class="status on-track">On plan</span>';
+    const unavailable = session.workerUnavailable ? '<div class="risk-text">Worker marked unavailable</div>' : '';
+    return '<tr><td><strong>' + safe(session.date) + '</strong>' + (session.note ? '<div class="subtle">' + safe(session.note) + '</div>' : '') + '</td><td class="order-code">' + safe(session.jobId) + '<div class="subtle">' + safe(session.customer) + ' · ' + safe(session.job) + '</div></td><td>' + safe(session.workerName) + '</td><td>' + Number(session.hours).toFixed(1) + ' hrs</td><td>' + dueRisk + unavailable + '</td><td><button class="table-button" data-remove-session="' + safe(session.id) + '">Remove</button></td></tr>';
+  }).join('');
+  const conflictItems = analysis.capacityConflicts.map((item) => '<li>' + safe(item.message + ' Assigned ' + item.assignedHours.toFixed(1) + ' / ' + item.capacityHours.toFixed(1) + ' hrs.') + '</li>');
+  const riskItems = analysis.deadlineRisks.map((item) => '<li>' + safe(item.jobId + ': scheduled ' + item.scheduledDate + ' after deadline ' + item.dueDate + '.') + '</li>');
+  const issueItems = analysis.issues.map((item) => '<li>' + safe(item.message) + '</li>');
+  return head('PRODUCTION', 'Production schedule', 'Schedule work by day and worker, validate daily capacity, and flag sessions that threaten job deadlines.', '<button class="primary-button" data-schedule-create>＋ Schedule a job</button>') +
+    '<div class="inventory-grid"><article class="inventory-stat"><span>ACTIVE JOBS</span><strong>' + analysis.activeJobCount + '</strong><small>Eligible for production scheduling</small></article><article class="inventory-stat"><span>UPCOMING SESSIONS</span><strong>' + upcoming.length + '</strong><small>Today and future sessions</small></article><article class="inventory-stat"><span>CAPACITY CONFLICTS</span><strong>' + analysis.capacityConflicts.length + '</strong><small>Worker days over allocated hours</small></article><article class="inventory-stat"><span>DEADLINE RISKS</span><strong>' + analysis.deadlineRisks.length + '</strong><small>Sessions after target completion</small></article></div>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Production sessions</strong><span class="subtle">' + analysis.sessionCount + ' active session(s)</span></div>' +
+    (sessionRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>DATE / OPERATION</th><th>JOB</th><th>WORKER</th><th>PLANNED</th><th>DEADLINE</th><th></th></tr></thead><tbody>' + sessionRows + '</tbody></table></div>' : '<div class="empty-state"><h2>No production sessions scheduled</h2><p>Schedule an active job to start building the production queue.</p></div>') + '</section>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Worker capacity by day</strong><span class="subtle">Hours assigned vs daily capacity</span></div>' +
+    (capacityRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>WORKER / DATE</th><th>ASSIGNED</th><th>CAPACITY</th><th>UTILISATION</th></tr></thead><tbody>' + capacityRows + '</tbody></table></div>' : '<div class="empty-state"><p>Capacity utilisation will appear when sessions are scheduled.</p></div>') + '</section>' +
+    ((analysis.capacityConflicts.length || analysis.deadlineRisks.length || analysis.issues.length) ? '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Scheduling alerts</strong></div><ul>' + conflictItems.concat(riskItems, issueItems).join('') + '</ul></section>' : '');
+}
+
 function costingPage() {
   const rows = jobs.map((job) => ({ job, cost: window.FactoryFlowCosting.calculateJobCost(job, movements) }));
   const quotedRevenue = rows.reduce((total, row) => total + (row.cost.revenueConfigured ? row.cost.revenue : 0), 0);
@@ -329,9 +458,22 @@ function costingPage() {
 }
 
 function workersPage() {
-  const people = [['Ravi Cartons', 'Carton conversion · 72% capacity', 'RK', ''], ['Aman Printworks', 'Flexo printing · 44% capacity', 'AP', 'alt'], ['Sanket Lamination', 'Film lamination · Available', 'SL', 'gold'], ['Disha Finishing', 'Spot UV & finishing · 61% capacity', 'DF', '']];
-  const list = people.map((person) => '<div class="team-person"><span class="person-avatar ' + person[3] + '">' + person[2] + '</span><span class="person-info"><strong>' + person[0] + ' <span class="verified">✓ verified</span></strong><small>' + person[1] + '</small></span><span class="status on-track">Verified</span></div>').join('');
-  return head('PARTNERS', 'Your job-worker network', 'Assignments, rate visibility, and delivery proof without endless follow-ups.', '<button class="primary-button" data-action="invite">＋ Invite worker</button>') + '<section class="team-grid"><div class="panel"><header class="panel-header"><h2>Available job workers</h2><button class="text-button" data-go="marketplace">Discover suppliers →</button></header><div class="team-list">' + list + '</div></div><div class="panel"><header class="panel-header"><h2>Active assignments</h2><span class="status running">3 live</span></header><div class="schedule-list">' + schedule('JB-841', 'Ravi Cartons', '12,000 cartons · due today', 68) + schedule('JB-838', 'Aman Printworks', '8,000 pouches · due tomorrow', 42) + schedule('JB-835', 'Ravi Cartons', 'Waiting for black ink', 15, true) + '</div><div class="panel callout" style="margin:18px -1px -1px"><h2 style="font-size:14px;margin-top:0">Proof makes payment easy</h2><p style="margin-bottom:12px">Capture a delivery photo or signed challan and share it instantly.</p><button class="secondary-button" data-proof-job="JB-831">Add delivery proof</button></div></div></section>';
+  const analysis = window.FactoryFlowScheduling.analyzeSchedule(jobs, schedules, workers);
+  const today = localDateISO();
+  const todayLoads = new Map(analysis.dailyLoads.filter((load) => load.date === today).map((load) => [load.workerId, load]));
+  const list = workers.map((worker) => {
+    const load = todayLoads.get(worker.id);
+    const assigned = load ? load.assignedHours : 0;
+    const capacity = Number(worker.capacityHoursPerDay) || 0;
+    const percent = capacity > 0 ? Math.min(100, Math.round(assigned / capacity * 100)) : 0;
+    const unavailable = (worker.unavailableDates || []).length;
+    return '<article class="worker-capacity-card"><div class="worker-card-head"><span class="person-avatar">' + safe(worker.name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase()) + '</span><div class="person-info"><strong>' + safe(worker.name) + '</strong><small>' + safe(worker.skill || 'General production') + '</small></div><span class="status ' + (worker.active === false ? 'critical' : 'on-track') + '">' + (worker.active === false ? 'Inactive' : 'Active') + '</span></div><div class="capacity-meta"><span>Today’s assigned load</span><strong>' + assigned.toFixed(1) + ' / ' + capacity.toFixed(1) + ' hrs</strong></div><div class="capacity-track"><i style="width:' + percent + '%"></i></div><div class="worker-card-foot"><span>' + unavailable + ' unavailable date(s)</span><button class="table-button" data-edit-worker="' + safe(worker.id) + '">Edit profile</button></div></article>';
+  }).join('');
+  const recentSessions = analysis.sessions.slice(0, 6).map((session) => '<div class="schedule-item"><div class="schedule-time">' + safe(session.date) + '</div><div class="schedule-copy"><strong>' + safe(session.jobId) + ' · ' + safe(session.workerName) + '</strong><small>' + safe(session.job) + ' · ' + Number(session.hours).toFixed(1) + ' hours</small></div><span class="status ' + (session.deadlineRisk || session.workerUnavailable ? 'critical' : 'on-track') + '">' + (session.deadlineRisk ? 'Deadline risk' : session.workerUnavailable ? 'Unavailable' : 'Planned') + '</span></div>').join('');
+  return head('PARTNERS', 'Job-worker capacity', 'Manage worker skills, daily capacity, availability and live production assignments.', '<button class="secondary-button" data-go="schedule">Open production schedule →</button>') +
+    '<section class="worker-capacity-grid">' + (list ? list : '<div class="empty-state">No workers configured.</div>') + '</section>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Upcoming scheduled work</strong><span class="subtle">' + analysis.sessionCount + ' active session(s)</span></div>' +
+    (recentSessions ? '<div class="schedule-list">' + recentSessions + '</div>' : '<div class="empty-state"><h2>No scheduled sessions</h2><p>Schedule a job to start tracking worker capacity.</p></div>') + '</section>';
 }
 
 function invoicesPage() {
@@ -355,7 +497,7 @@ function render() {
   ui('#pageKicker').textContent = label[0];
   ui('#pageTitle').textContent = label[1];
   all('.nav-link[data-view]').forEach((button) => button.classList.toggle('active', button.dataset.view === app.view));
-  const pages = { dashboard, quotes: quotesPage, jobs: jobsPage, purchases: purchasesPage, materials: materialsPage, workers: workersPage, invoices: invoicesPage, marketplace: marketplacePage, planning: planningPage, costing: costingPage, settings: settingsPage };
+  const pages = { dashboard, quotes: quotesPage, jobs: jobsPage, purchases: purchasesPage, materials: materialsPage, workers: workersPage, invoices: invoicesPage, marketplace: marketplacePage, planning: planningPage, schedule: schedulePage, costing: costingPage, settings: settingsPage };
   ui('#view').innerHTML = pages[app.view]();
   bind();
 }
@@ -392,14 +534,32 @@ function newQuote() {
   });
 }
 function newJob() {
-  openModal('<h2 id="modalTitle">Create job</h2><p>Turn an accepted quote into a trackable production job.</p><form id="jobForm" class="form-grid"><label>Customer<input required name="customer" placeholder="Customer name"></label><label>Work description<input required name="item" placeholder="e.g. Corrugated carton · 5-ply"></label><div class="form-row"><label>Quantity<input required name="qty" type="number" min="1" placeholder="0"></label><label>Job worker<select name="worker"><option>Ravi Cartons</option><option>Aman Printworks</option><option>Sanket Lamination</option></select></label></div><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="primary-button" type="submit">Create job</button></div></form>');
+  const activeWorkers = workers.filter((worker) => worker.active !== false);
+  if (!activeWorkers.length) {
+    notify('Activate a job worker before creating a production job.');
+    return;
+  }
+  const options = activeWorkers.map((worker) => '<option value="' + safe(worker.id) + '">' + safe(worker.name + ' · ' + worker.skill) + '</option>').join('');
+  openModal('<h2 id="modalTitle">Create job</h2><p>Turn an accepted quote into a trackable production job.</p><form id="jobForm" class="form-grid"><label>Customer<input required name="customer" placeholder="Customer name"></label><label>Work description<input required name="item" placeholder="e.g. Corrugated carton · 5-ply"></label><div class="form-row"><label>Quantity<input required name="qty" type="number" min="1" placeholder="0"></label><label>Initial worker<select name="workerId">' + options + '</select></label></div><label>Target completion date (optional)<input name="dueDate" type="date"></label><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="primary-button" type="submit">Create job</button></div></form>');
   ui('#jobForm').addEventListener('submit', (event) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    jobs.unshift({ id: 'JB-' + (842 + jobs.length), customer: data.get('customer'), item: data.get('item'), qty: Number(data.get('qty')), worker: data.get('worker'), due: 'To schedule', status: 'With worker', progress: 0, owner: 'RK' });
-    save(); closeModal(); goto('jobs'); notify('Job is assigned to ' + data.get('worker') + '.');
+    const worker = workers.find((item) => item.id === data.get('workerId'));
+    if (!worker || worker.active === false) {
+      notify('Choose an active job worker.');
+      return;
+    }
+    const dueDate = data.get('dueDate');
+    if (dueDate && !window.FactoryFlowScheduling.validDate(dueDate)) {
+      notify('Choose a valid target completion date.');
+      return;
+    }
+    const job = { id: 'JB-' + (842 + jobs.length), customer: data.get('customer').trim(), item: data.get('item').trim(), qty: Number(data.get('qty')), worker: worker.name, due: dueDate ? new Date(dueDate + 'T00:00:00').toLocaleDateString('en-IN') : 'To schedule', dueDate: dueDate || '', status: 'With worker', progress: 0, owner: 'RK' };
+    jobs.unshift(job);
+    save(); closeModal(); goto('jobs'); notify('Job created and assigned to ' + worker.name + '. Schedule its production sessions next.');
   });
 }
+
 function newPurchase() {
   openModal('<h2 id="modalTitle">New purchase order</h2><p>Record the raw-material commitment and keep the job promise safe.</p><form id="purchaseForm" class="form-grid"><label>Supplier<input required name="supplier" placeholder="Supplier name"></label><label>Material<input required name="material" placeholder="e.g. Kraft paper · 180 GSM"></label><div class="form-row"><label>Order quantity (optional)<input name="quantity" type="number" min="0.01" step="0.01" placeholder="e.g. 500"></label><label>Unit (optional)<input name="unit" placeholder="kg, sheets, rolls…"></label></div><div class="form-row"><label>Amount (₹)<input required name="amount" type="number" min="1" placeholder="0"></label><label>Expected delivery<input required name="delivery" type="date"></label></div><p class="subtle">Add both quantity and unit to include this order in material planning and track partial receipts. Leave both blank for an amount-only purchase order.</p><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="primary-button" type="submit">Create PO</button></div></form>');
   ui('#purchaseForm').addEventListener('submit', (event) => {
@@ -789,6 +949,15 @@ function bind() {
   all('[data-consume-job]').forEach((button) => button.addEventListener('click', () => consumeMaterials(button.dataset.consumeJob)));
   all('[data-cost-job]').forEach((button) => button.addEventListener('click', () => editJobCosts(button.dataset.costJob)));
   all('[data-plan-job]').forEach((button) => button.addEventListener('click', () => planJobMaterials(button.dataset.planJob, button.dataset.planSku || null)));
+  all('[data-schedule-job]').forEach((button) => button.addEventListener('click', () => scheduleProduction(button.dataset.scheduleJob)));
+  all('[data-edit-worker]').forEach((button) => button.addEventListener('click', () => editWorkerProfile(button.dataset.editWorker)));
+  all('[data-remove-session]').forEach((button) => button.addEventListener('click', () => removeProductionSession(button.dataset.removeSession)));
+  all('[data-schedule-create]').forEach((button) => button.addEventListener('click', () => {
+    const active = window.FactoryFlowScheduling.activeJobs(jobs);
+    if (!active.length) return notify('Create an active production job before scheduling.');
+    openModal('<h2 id="modalTitle">Choose a job to schedule</h2><form id="scheduleJobPicker" class="form-grid"><label>Production job<select name="jobId">' + active.map((job) => '<option value="' + safe(job.id) + '">' + safe(job.id + ' · ' + job.customer + ' · ' + job.item) + '</option>').join('') + '</select></label><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button class="primary-button" type="submit">Continue</button></div></form>');
+    ui('#scheduleJobPicker').addEventListener('submit', (event) => { event.preventDefault(); const jobId = new FormData(event.currentTarget).get('jobId'); closeModal(); scheduleProduction(jobId); });
+  }));
   all('[data-shortage-po]').forEach((button) => button.addEventListener('click', () => createShortagePurchaseOrder(button.dataset.shortagePo)));
   all('[data-plan-create]').forEach((button) => button.addEventListener('click', () => {
     const active = window.FactoryFlowPlanning.activeJobs(jobs);
