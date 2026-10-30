@@ -189,7 +189,7 @@ function jobsPage() {
 }
 
 function purchasesPage() {
-  const rows = purchases.map((po) => '<tr><td class="order-code">' + po.id + (po.planningGenerated ? '<div class="subtle">Shortage plan</div>' : '') + '</td><td class="item-name">' + safe(po.supplier) + '</td><td>' + safe(po.material) + (po.quantity ? '<div class="subtle">' + Number(po.quantity).toLocaleString('en-IN') + ' ' + safe(po.unit) + '</div>' : '') + '</td><td>' + currency(po.amount) + '</td><td>' + safe(po.delivery) + '</td><td>' + status(po.status) + '</td><td><button class="table-button" data-action="po-update" data-purchase-id="' + safe(po.id) + '">Update</button></td></tr>').join('');
+  const rows = purchases.map((po) => '<tr><td class="order-code">' + po.id + (po.planningGenerated ? '<div class="subtle">Shortage plan</div>' : '') + '</td><td class="item-name">' + safe(po.supplier) + '</td><td>' + safe(po.material) + (po.quantity ? '<div class="subtle">' + Number(po.quantity).toLocaleString('en-IN') + ' ' + safe(po.unit) + '</div>' : '') + '</td><td>' + (po.amount === null || po.amount === undefined ? 'Not estimated' : currency(po.amount)) + '</td><td>' + safe(po.delivery) + '</td><td>' + status(po.status) + '</td><td><button class="table-button" data-action="po-update" data-purchase-id="' + safe(po.id) + '">Update</button></td></tr>').join('');
   return head('PURCHASING', 'Purchase orders', 'Keep every raw-material commitment and delivery date visible.', '<button class="primary-button" data-new="purchase">＋ New purchase order</button>') + '<section class="content-card"><div class="toolbar"><strong style="font-size:12px">Open purchase orders</strong><button class="secondary-button" data-go="marketplace">◇ Find suppliers</button></div><div class="table-scroll"><table class="data-table"><thead><tr><th>PO</th><th>SUPPLIER</th><th>MATERIAL</th><th>AMOUNT</th><th>DELIVERY</th><th>STATUS</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div></section>';
 }
 
@@ -209,7 +209,7 @@ function materialsPage() {
   (movements.length ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>MOVEMENT</th><th>TYPE</th><th>MATERIAL</th><th>QUANTITY</th><th>COST</th><th>JOB / REFERENCE</th><th>STOCK BEFORE</th><th>STOCK AFTER</th><th>DATE</th></tr></thead><tbody>' + movements.slice(0, 20).map((movement) => '<tr><td class="order-code">' + safe(movement.id) + '</td><td>' + safe(movement.type) + '</td><td><div class="item-name">' + safe(movement.material) + '</div><div class="subtle">' + safe(movement.materialSku || '') + '</div></td><td><span class="' + (movement.direction === 'OUT' ? 'down' : 'up') + '">' + (movement.direction === 'OUT' ? '−' : '+') + Number(movement.quantity).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' ' + safe(movement.unit) + '</span></td><td>' + (movement.costAmount !== null && movement.costAmount !== undefined && Number.isFinite(Number(movement.costAmount)) ? currency(Number(movement.costAmount)) : (movement.type === 'Consumption' ? 'Unpriced' : '—')) + '</td><td>' + safe(movement.jobId || movement.reference || '—') + '</td><td>' + safe(movement.stockBefore || '—') + '</td><td>' + safe(movement.stockAfter || '—') + '</td><td>' + new Date(movement.createdAt).toLocaleDateString('en-IN') + '</td></tr>').join('') + '</tbody></table></div>' : '<div class="empty-state"><h2>No stock movements recorded</h2><p>Receiving material and recording production usage will create an audit trail here.</p></div>') + '</section>';
 }
 
-function planJobMaterials(jobId) {
+function planJobMaterials(jobId, materialSku) {
   const job = jobs.find((item) => item.id === jobId);
   if (!job || ['Delivered', 'QC review', 'Cancelled'].includes(job.status)) {
     notify('Material requirements can only be planned for active jobs.');
@@ -220,12 +220,9 @@ function planJobMaterials(jobId) {
     return;
   }
   const existing = requirements.filter((item) => item.jobId === job.id);
-  const options = materials.map((material) => {
-    const parsed = window.FactoryFlowInventory.parseQuantity(material.onHand);
-    return '<option value="' + safe(material.sku) + '">' + safe(material.sku + ' · ' + material.item + ' · ' + material.onHand) + '</option>';
-  }).join('');
-  const currentRequirement = existing[0];
-  const form = '<h2 id="modalTitle">Plan job materials · ' + safe(job.id) + '</h2><p>' + safe(job.customer + ' · ' + job.item) + '</p><form id="requirementForm" class="form-grid"><label>Material<select required name="materialSku">' + options + '</select></label><label>Required quantity<input required name="quantity" type="number" min="0.01" step="0.01" placeholder="e.g. 250"></label><label>Unit<input required name="unit" placeholder="kg, sheets, rolls…"></label><p class="subtle">One material requirement is stored per job and material. Saving the same material again updates that job’s requirement; it does not create a duplicate.</p><p id="requirementError" class="form-error" hidden></p><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="primary-button" type="submit">Save requirement</button></div></form>';
+  const options = materials.map((material) => '<option value="' + safe(material.sku) + '"' + (currentRequirement && currentRequirement.materialSku === material.sku ? ' selected' : '') + '>' + safe(material.sku + ' · ' + material.item + ' · ' + material.onHand) + '</option>').join('');
+  const currentRequirement = existing.find((item) => !materialSku || item.materialSku === materialSku);
+  const form = '<h2 id="modalTitle">Plan job materials · ' + safe(job.id) + '</h2><p>' + safe(job.customer + ' · ' + job.item) + '</p><form id="requirementForm" class="form-grid"><label>Material<select required name="materialSku">' + options + '</select></label><label>Required quantity<input required name="quantity" type="number" min="0.01" step="0.01" value="' + (currentRequirement ? safe(currentRequirement.quantity) : '') + '" placeholder="e.g. 250"></label><label>Unit<input required name="unit" value="' + (currentRequirement ? safe(currentRequirement.unit) : '') + '" placeholder="kg, sheets, rolls…"></label><p class="subtle">One material requirement is stored per job and material. Saving the same material again updates that job’s requirement; it does not create a duplicate.</p><p id="requirementError" class="form-error" hidden></p><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="primary-button" type="submit">Save requirement</button></div></form>';
   openModal(form, true);
   ui('#requirementForm').addEventListener('submit', (event) => {
     event.preventDefault();
@@ -258,17 +255,7 @@ function createShortagePurchaseOrder(materialSku) {
   }
   const material = materials.find((item) => item.sku === materialSku);
   if (!material) return;
-  const existingDraft = purchases.find((purchase) =>
-    purchase.planningGenerated &&
-    purchase.materialSku === materialSku &&
-    ['Draft', 'Confirmed', 'In transit', 'Part received'].includes(purchase.status) &&
-    Number(purchase.quantity) - Number(purchase.receivedQty || 0) > 0
-  );
-  if (existingDraft) {
-    notify('An open shortage purchase order already exists: ' + existingDraft.id + '.');
-    return;
-  }
-  const amount = shortage.unitCost === null ? 0 : Math.round(shortage.shortageQty * shortage.unitCost * 100) / 100;
+  const amount = shortage.unitCost === null ? null : Math.round(shortage.shortageQty * shortage.unitCost * 100) / 100;
   const po = {
     id: 'PO-' + (492 + purchases.length),
     supplier: 'Supplier to assign',
@@ -299,7 +286,7 @@ function planningPage() {
     return '<tr><td><div class="item-name">' + safe(item.material) + '</div><div class="subtle">' + safe(item.materialSku) + '</div></td><td>' + Number(item.requiredQty).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' ' + safe(item.unit) + '</td><td>' + Number(item.availableQty).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' ' + safe(item.unit) + '</td><td>' + Number(item.incomingQty || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' ' + safe(item.unit) + '</td><td><strong>' + Number(item.shortageQty).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' ' + safe(item.unit) + '</strong></td><td>' + item.coveragePercent.toFixed(1) + '%</td><td>' + costLabel + '</td><td>' + action + '</td></tr>';
   }).join('');
   const requirementRows = plan.jobRequirements.map((item) =>
-    '<tr><td class="order-code">' + safe(item.jobId) + '</td><td>' + safe(item.customer) + '<div class="subtle">' + safe(item.job) + '</div></td><td>' + safe(item.material) + '<div class="subtle">' + safe(item.materialSku) + '</div></td><td>' + Number(item.quantity).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' ' + safe(item.unit) + '</td><td><button class="table-button" data-plan-job="' + safe(item.jobId) + '">Edit plan</button></td></tr>'
+    '<tr><td class="order-code">' + safe(item.jobId) + '</td><td>' + safe(item.customer) + '<div class="subtle">' + safe(item.job) + '</div></td><td>' + safe(item.material) + '<div class="subtle">' + safe(item.materialSku) + '</div></td><td>' + Number(item.quantity).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' ' + safe(item.unit) + '</td><td><button class="table-button" data-plan-job="' + safe(item.jobId) + '" data-plan-sku="' + safe(item.materialSku) + '">Edit plan</button></td></tr>'
   ).join('');
   const active = window.FactoryFlowPlanning.activeJobs(jobs);
   const jobOptions = active.map((job) => '<option value="' + safe(job.id) + '">' + safe(job.id + ' · ' + job.customer + ' · ' + job.item) + '</option>').join('');
@@ -568,11 +555,14 @@ function updatePurchase(id) {
   if (!purchase) return;
   const statuses = ['Draft', 'Confirmed', 'In transit', 'Part received', 'Received', 'Cancelled'];
   const options = statuses.map((value) => '<option' + (purchase.status === value ? ' selected' : '') + '>' + value + '</option>').join('');
-  openModal('<h2 id="modalTitle">Update purchase order</h2><p>' + safe(purchase.id) + ' · ' + safe(purchase.supplier) + '</p><form id="purchaseStatusForm" class="form-grid"><label>Order status<select name="status">' + options + '</select></label><label>Expected delivery<input name="delivery" type="text" value="' + safe(purchase.delivery || '') + '" placeholder="e.g. Nov 04 or Today"></label><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="primary-button" type="submit">Save update</button></div></form>');
+  openModal('<h2 id="modalTitle">Update purchase order</h2><p>' + safe(purchase.id) + ' · ' + safe(purchase.material) + '</p><form id="purchaseStatusForm" class="form-grid"><label>Supplier<input name="supplier" value="' + safe(purchase.supplier || '') + '" placeholder="Supplier to assign"></label><label>Order status<select name="status">' + options + '</select></label><label>Purchase amount (₹)<input name="amount" type="number" min="0" step="0.01" value="' + (purchase.amount === null || purchase.amount === undefined ? '' : Number(purchase.amount)) + '" placeholder="Enter supplier quote"></label><label>Expected delivery<input name="delivery" type="text" value="' + safe(purchase.delivery || '') + '" placeholder="e.g. Nov 04 or Today"></label><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="primary-button" type="submit">Save update</button></div></form>');
   ui('#purchaseStatusForm').addEventListener('submit', (event) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     purchase.status = data.get('status');
+    purchase.supplier = data.get('supplier').trim() || 'Supplier to assign';
+    const amountText = data.get('amount').trim();
+    purchase.amount = amountText === '' ? null : Number(amountText);
     purchase.delivery = data.get('delivery').trim() || 'To confirm';
     save();
     closeModal();
@@ -771,7 +761,7 @@ function bind() {
   all('[data-proof-job]').forEach((button) => button.addEventListener('click', () => openDeliveryProof(button.dataset.proofJob)));
   all('[data-consume-job]').forEach((button) => button.addEventListener('click', () => consumeMaterials(button.dataset.consumeJob)));
   all('[data-cost-job]').forEach((button) => button.addEventListener('click', () => editJobCosts(button.dataset.costJob)));
-  all('[data-plan-job]').forEach((button) => button.addEventListener('click', () => planJobMaterials(button.dataset.planJob)));
+  all('[data-plan-job]').forEach((button) => button.addEventListener('click', () => planJobMaterials(button.dataset.planJob, button.dataset.planSku || null)));
   all('[data-shortage-po]').forEach((button) => button.addEventListener('click', () => createShortagePurchaseOrder(button.dataset.shortagePo)));
   all('[data-plan-create]').forEach((button) => button.addEventListener('click', () => {
     const active = window.FactoryFlowPlanning.activeJobs(jobs);
