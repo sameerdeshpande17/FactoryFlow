@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - feat/automatic-stock-reconciliation
+      - feat/production-material-planning
   pull_request:
     branches:
       - main
