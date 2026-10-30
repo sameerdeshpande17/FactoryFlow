@@ -220,8 +220,8 @@ function planJobMaterials(jobId, materialSku) {
     return;
   }
   const existing = requirements.filter((item) => item.jobId === job.id);
-  const options = materials.map((material) => '<option value="' + safe(material.sku) + '"' + (currentRequirement && currentRequirement.materialSku === material.sku ? ' selected' : '') + '>' + safe(material.sku + ' · ' + material.item + ' · ' + material.onHand) + '</option>').join('');
   const currentRequirement = existing.find((item) => !materialSku || item.materialSku === materialSku);
+  const options = materials.map((material) => '<option value="' + safe(material.sku) + '"' + (currentRequirement && currentRequirement.materialSku === material.sku ? ' selected' : '') + '>' + safe(material.sku + ' · ' + material.item + ' · ' + material.onHand) + '</option>').join('');
   const form = '<h2 id="modalTitle">Plan job materials · ' + safe(job.id) + '</h2><p>' + safe(job.customer + ' · ' + job.item) + '</p><form id="requirementForm" class="form-grid"><label>Material<select required name="materialSku">' + options + '</select></label><label>Required quantity<input required name="quantity" type="number" min="0.01" step="0.01" value="' + (currentRequirement ? safe(currentRequirement.quantity) : '') + '" placeholder="e.g. 250"></label><label>Unit<input required name="unit" value="' + (currentRequirement ? safe(currentRequirement.unit) : '') + '" placeholder="kg, sheets, rolls…"></label><p class="subtle">One material requirement is stored per job and material. Saving the same material again updates that job’s requirement; it does not create a duplicate.</p><p id="requirementError" class="form-error" hidden></p><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="primary-button" type="submit">Save requirement</button></div></form>';
   openModal(form, true);
   ui('#requirementForm').addEventListener('submit', (event) => {
@@ -288,8 +288,6 @@ function planningPage() {
   const requirementRows = plan.jobRequirements.map((item) =>
     '<tr><td class="order-code">' + safe(item.jobId) + '</td><td>' + safe(item.customer) + '<div class="subtle">' + safe(item.job) + '</div></td><td>' + safe(item.material) + '<div class="subtle">' + safe(item.materialSku) + '</div></td><td>' + Number(item.quantity).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' ' + safe(item.unit) + '</td><td><button class="table-button" data-plan-job="' + safe(item.jobId) + '" data-plan-sku="' + safe(item.materialSku) + '">Edit plan</button></td></tr>'
   ).join('');
-  const active = window.FactoryFlowPlanning.activeJobs(jobs);
-  const jobOptions = active.map((job) => '<option value="' + safe(job.id) + '">' + safe(job.id + ' · ' + job.customer + ' · ' + job.item) + '</option>').join('');
   const issueRows = plan.issues.map((issue) => '<li>' + safe(issue.jobId + ': ' + issue.message) + '</li>').join('');
   return head('PRODUCTION', 'Material planning', 'Plan material requirements by job and check combined demand against stock and open purchase orders.', '<button class="primary-button" data-plan-create>Select job to plan</button>') +
     '<div class="inventory-grid"><article class="inventory-stat"><span>ACTIVE JOBS</span><strong>' + plan.activeJobCount + '</strong><small>Included in material demand</small></article><article class="inventory-stat"><span>REQUIREMENTS</span><strong>' + plan.requirementCount + '</strong><small>Job material lines</small></article><article class="inventory-stat"><span>MATERIAL SHORTAGES</span><strong>' + plan.shortages.length + '</strong><small>After available stock and open POs</small></article></div>' +
@@ -298,7 +296,7 @@ function planningPage() {
     '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Requirements by job</strong><span class="subtle">' + plan.jobRequirements.length + ' active lines</span></div>' +
     (requirementRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>JOB</th><th>CUSTOMER / WORK</th><th>MATERIAL</th><th>REQUIRED</th><th></th></tr></thead><tbody>' + requirementRows + '</tbody></table></div>' : '<div class="empty-state"><h2>No active job requirements</h2><p>Open a job and select “Plan materials” to add the bill of materials.</p></div>') + '</section>' +
     (plan.issues.length ? '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong>Planning issues</strong></div><ul>' + issueRows + '</ul></section>' : '') +
-    '<div id="planningJobPicker" hidden><select id="planningJobSelect">' + jobOptions + '</select></div>';
+    '';
 }
 
 function costingPage() {
