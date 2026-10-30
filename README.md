@@ -29,6 +29,7 @@ Opening index.html directly is still supported as a browser-only fallback, but c
 - Job-linked raw-material consumption with insufficient-stock guards, unit validation, and an auditable stock movement history
 - Job profitability view with selling value, historical material consumption cost, job-worker charges, other direct costs, gross profit, and margin
 - Material unit-cost setup with cost snapshots on future consumption records; incomplete historic costs remain visibly flagged
+- Production material planning by job, aggregated demand across active jobs, on-hand and incoming purchase-order coverage, and draft purchase orders for shortages
 - Responsive layout for desktop and mobile screens
 
 ## Suggested next steps
