@@ -127,7 +127,7 @@
     });
 
     (Array.isArray(purchases) ? purchases : []).forEach((purchase) => {
-      if (!purchase || !['Draft', 'Confirmed', 'In transit', 'Part received'].includes(purchase.status)) return;
+      if (!purchase || !['Confirmed', 'In transit', 'Part received'].includes(purchase.status)) return;
       const material = (Array.isArray(materials) ? materials : []).find((item) =>
         item.sku === purchase.materialSku ||
         (item.item && purchase.material && item.item.trim().toLocaleLowerCase() === purchase.material.trim().toLocaleLowerCase())
