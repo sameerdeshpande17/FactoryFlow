@@ -461,7 +461,7 @@ function workersPage() {
   const analysis = window.FactoryFlowScheduling.analyzeSchedule(jobs, schedules, workers);
   const today = localDateISO();
   const todayLoads = new Map(analysis.dailyLoads.filter((load) => load.date === today).map((load) => [load.workerId, load]));
-  const list = workers.map((worker) => {
+  const workerCards = workers.map((worker) => {
     const load = todayLoads.get(worker.id);
     const assigned = load ? load.assignedHours : 0;
     const capacity = Number(worker.capacityHoursPerDay) || 0;
@@ -469,9 +469,9 @@ function workersPage() {
     const unavailable = (worker.unavailableDates || []).length;
     return '<article class="worker-capacity-card"><div class="worker-card-head"><span class="person-avatar">' + safe(worker.name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase()) + '</span><div class="person-info"><strong>' + safe(worker.name) + '</strong><small>' + safe(worker.skill || 'General production') + '</small></div><span class="status ' + (worker.active === false ? 'critical' : 'on-track') + '">' + (worker.active === false ? 'Inactive' : 'Active') + '</span></div><div class="capacity-meta"><span>Today’s assigned load</span><strong>' + assigned.toFixed(1) + ' / ' + capacity.toFixed(1) + ' hrs</strong></div><div class="capacity-track"><i style="width:' + percent + '%"></i></div><div class="worker-card-foot"><span>' + unavailable + ' unavailable date(s)</span><button class="table-button" data-edit-worker="' + safe(worker.id) + '">Edit profile</button></div></article>';
   }).join('');
-  const recentSessions = analysis.sessions.slice(0, 6).map((session) => '<div class="schedule-item"><div class="schedule-time">' + safe(session.date) + '</div><div class="schedule-copy"><strong>' + safe(session.jobId) + ' · ' + safe(session.workerName) + '</strong><small>' + safe(session.job) + ' · ' + Number(session.hours).toFixed(1) + ' hours</small></div><span class="status ' + (session.deadlineRisk || session.workerUnavailable ? 'critical' : 'on-track') + '">' + (session.deadlineRisk ? 'Deadline risk' : session.workerUnavailable ? 'Unavailable' : 'Planned') + '</span></div>').join('');
+  const recentSessions = analysis.sessions.filter((session) => session.date >= today).slice(0, 6).map((session) => '<div class="schedule-item"><div class="schedule-time">' + safe(session.date) + '</div><div class="schedule-copy"><strong>' + safe(session.jobId) + ' · ' + safe(session.workerName) + '</strong><small>' + safe(session.job) + ' · ' + Number(session.hours).toFixed(1) + ' hours</small></div><span class="status ' + (session.deadlineRisk || session.workerUnavailable ? 'critical' : 'on-track') + '">' + (session.deadlineRisk ? 'Deadline risk' : session.workerUnavailable ? 'Unavailable' : 'Planned') + '</span></div>').join('');
   return head('PARTNERS', 'Job-worker capacity', 'Manage worker skills, daily capacity, availability and live production assignments.', '<button class="secondary-button" data-go="schedule">Open production schedule →</button>') +
-    '<section class="worker-capacity-grid">' + (list ? list : '<div class="empty-state">No workers configured.</div>') + '</section>' +
+    '<section class="worker-capacity-grid">' + (workerCards.length ? workerCards.join('') : '<div class="empty-state">No workers configured.</div>') + '</section>' +
     '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Upcoming scheduled work</strong><span class="subtle">' + analysis.sessionCount + ' active session(s)</span></div>' +
     (recentSessions ? '<div class="schedule-list">' + recentSessions + '</div>' : '<div class="empty-state"><h2>No scheduled sessions</h2><p>Schedule a job to start tracking worker capacity.</p></div>') + '</section>';
 }
