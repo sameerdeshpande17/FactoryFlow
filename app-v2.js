@@ -401,12 +401,29 @@ function newJob() {
   });
 }
 function newPurchase() {
-  openModal('<h2 id="modalTitle">New purchase order</h2><p>Record the raw-material commitment and keep the job promise safe.</p><form id="purchaseForm" class="form-grid"><label>Supplier<input required name="supplier" placeholder="Supplier name"></label><label>Material<input required name="material" placeholder="e.g. Kraft paper · 180 GSM"></label><div class="form-row"><label>Amount (₹)<input required name="amount" type="number" min="1" placeholder="0"></label><label>Expected delivery<input required name="delivery" type="date"></label></div><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="primary-button" type="submit">Create PO</button></div></form>');
+  openModal('<h2 id="modalTitle">New purchase order</h2><p>Record the raw-material commitment and keep the job promise safe.</p><form id="purchaseForm" class="form-grid"><label>Supplier<input required name="supplier" placeholder="Supplier name"></label><label>Material<input required name="material" placeholder="e.g. Kraft paper · 180 GSM"></label><div class="form-row"><label>Order quantity (optional)<input name="quantity" type="number" min="0.01" step="0.01" placeholder="e.g. 500"></label><label>Unit (optional)<input name="unit" placeholder="kg, sheets, rolls…"></label></div><div class="form-row"><label>Amount (₹)<input required name="amount" type="number" min="1" placeholder="0"></label><label>Expected delivery<input required name="delivery" type="date"></label></div><p class="subtle">Add both quantity and unit to include this order in material planning and track partial receipts. Leave both blank for an amount-only purchase order.</p><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="primary-button" type="submit">Create PO</button></div></form>');
   ui('#purchaseForm').addEventListener('submit', (event) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     const delivery = data.get('delivery') ? new Date(data.get('delivery') + 'T00:00:00').toLocaleDateString('en-IN', { month: 'short', day: 'numeric' }) : 'To confirm';
-    purchases.unshift({ id: 'PO-' + (492 + purchases.length), supplier: data.get('supplier'), material: data.get('material'), amount: Number(data.get('amount')), delivery, status: 'Confirmed' });
+    const quantityText = data.get('quantity').trim();
+    const unitText = data.get('unit').trim();
+    if (Boolean(quantityText) !== Boolean(unitText)) {
+      notify('Enter both order quantity and unit, or leave both blank.');
+      return;
+    }
+    const purchase = { id: 'PO-' + (492 + purchases.length), supplier: data.get('supplier').trim(), material: data.get('material').trim(), amount: Number(data.get('amount')), delivery, status: 'Confirmed' };
+    if (quantityText && unitText) {
+      const quantity = Number(quantityText);
+      if (!Number.isFinite(quantity) || quantity <= 0) {
+        notify('Enter a valid order quantity.');
+        return;
+      }
+      purchase.quantity = quantity;
+      purchase.unit = unitText;
+      purchase.receivedQty = 0;
+    }
+    purchases.unshift(purchase);
     save(); closeModal(); goto('purchases'); notify('Purchase order is ready to send to the supplier.');
   });
 }
