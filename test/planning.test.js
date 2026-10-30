@@ -144,3 +144,16 @@ test('ignores requirements for closed jobs and keeps a clean empty plan', () => 
   assert.deepEqual(result.byMaterial, []);
   assert.deepEqual(result.shortages, []);
 });
+
+
+test('draft purchase orders do not count as confirmed incoming supply', () => {
+  const requirements = [
+    { id: 'RQ-1', jobId: 'JB-1', materialSku: 'RM-1', quantity: 100, unit: 'kg' }
+  ];
+  const purchases = [
+    { id: 'PO-DRAFT', materialSku: 'RM-1', quantity: 40, receivedQty: 0, unit: 'kg', status: 'Draft' }
+  ];
+  const result = planning.calculatePlan(jobs, requirements, materials, purchases);
+  assert.equal(result.byMaterial[0].incomingQty, 0);
+  assert.equal(result.byMaterial[0].shortageQty, 20);
+});
