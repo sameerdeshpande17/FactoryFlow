@@ -61,12 +61,8 @@
     if (input.dueDate && !validDate(input.dueDate)) {
       throw new Error('Choose a valid job deadline.');
     }
-    const nextId = schedules.reduce((max, item) => {
-      const match = /^SC-(\d+)$/.exec(String(item.id || ''));
-      return match ? Math.max(max, Number(match[1])) : max;
-    }, 100) + 1;
     const session = {
-      id: 'SC-' + nextId,
+      id: 'SC-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8),
       jobId: job.id,
       workerId: worker.id,
       workerName: worker.name,
