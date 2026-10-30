@@ -113,7 +113,7 @@
           requiredQty: 0,
           availableQty: stock.quantity,
           incomingQty: 0,
-          unitCost: inventory.optionalMoney(material.unitCost),
+          unitCost: material.unitCost !== null && material.unitCost !== undefined && material.unitCost !== '' && Number.isFinite(Number(material.unitCost)) && Number(material.unitCost) >= 0 ? Number(material.unitCost) : null,
           jobCount: 0,
           jobIds: []
         };
