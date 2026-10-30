@@ -44,7 +44,7 @@ test('schedules a production session and assigns the selected worker to the job'
     dueDate: '2026-11-03',
     note: 'Carton cutting'
   });
-  assert.equal(result.session.id, 'SC-101');
+  assert.match(result.session.id, /^SC-\d+-[a-z0-9]{6}$/);
   assert.equal(result.session.jobId, 'JB-1');
   assert.equal(result.session.workerName, 'Ravi Cartons');
   assert.equal(result.remainingCapacity, 4);
@@ -107,7 +107,8 @@ test('generates unique session IDs after a session is removed', () => {
   const second = scheduling.scheduleSession(schedules, jobs, workers, {
     jobId: 'JB-2', workerId: 'WRK-1', date: '2026-11-01', hours: 2
   });
-  assert.equal(second.session.id, 'SC-102');
+  assert.match(second.session.id, /^SC-\d+-[a-z0-9]{6}$/);
+  assert.notEqual(second.session.id, first.session.id);
 });
 
 test('analyses daily capacity and reports capacity conflicts in legacy schedules', () => {
