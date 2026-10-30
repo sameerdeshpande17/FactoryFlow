@@ -255,6 +255,11 @@ function createShortagePurchaseOrder(materialSku) {
   }
   const material = materials.find((item) => item.sku === materialSku);
   if (!material) return;
+  const existingDraft = purchases.find((purchase) => purchase.planningGenerated && purchase.materialSku === materialSku && purchase.status === 'Draft');
+  if (existingDraft) {
+    notify('A draft shortage purchase order already exists: ' + existingDraft.id + '. Confirm it or update its supplier before creating another.');
+    return;
+  }
   const amount = shortage.unitCost === null ? null : Math.round(shortage.shortageQty * shortage.unitCost * 100) / 100;
   const po = {
     id: 'PO-' + (492 + purchases.length),
@@ -280,8 +285,9 @@ function planningPage() {
   const plan = window.FactoryFlowPlanning.calculatePlan(jobs, requirements, materials, purchases);
   const shortageRows = plan.byMaterial.map((item) => {
     const costLabel = item.estimatedShortageCost === null ? 'Set unit cost for estimate' : currency(item.estimatedShortageCost);
+    const hasDraft = purchases.some((purchase) => purchase.planningGenerated && purchase.materialSku === item.materialSku && purchase.status === 'Draft');
     const action = item.shortageQty > 0
-      ? '<button class="table-button" data-shortage-po="' + safe(item.materialSku) + '">Create draft PO</button>'
+      ? (hasDraft ? '<span class="status setup">Draft PO · confirm to count</span>' : '<button class="table-button" data-shortage-po="' + safe(item.materialSku) + '">Create draft PO</button>')
       : '<span class="status on-track">Covered</span>';
     return '<tr><td><div class="item-name">' + safe(item.material) + '</div><div class="subtle">' + safe(item.materialSku) + '</div></td><td>' + Number(item.requiredQty).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' ' + safe(item.unit) + '</td><td>' + Number(item.availableQty).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' ' + safe(item.unit) + '</td><td>' + Number(item.incomingQty || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' ' + safe(item.unit) + '</td><td><strong>' + Number(item.shortageQty).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' ' + safe(item.unit) + '</strong></td><td>' + item.coveragePercent.toFixed(1) + '%</td><td>' + costLabel + '</td><td>' + action + '</td></tr>';
   }).join('');
