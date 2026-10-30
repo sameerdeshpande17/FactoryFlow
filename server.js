@@ -34,7 +34,9 @@ function readStore() {
     deliveries: list(stored.deliveries),
     receipts: list(stored.receipts),
     movements: list(stored.movements),
-    requirements: list(stored.requirements)
+    requirements: list(stored.requirements),
+    workers: list(stored.workers),
+    schedules: list(stored.schedules)
   };
 }
 
@@ -106,7 +108,9 @@ async function handleApi(request, response, pathname) {
         deliveries: list(body.deliveries),
         receipts: list(body.receipts),
         movements: list(body.movements),
-        requirements: list(body.requirements)
+        requirements: list(body.requirements),
+        workers: list(body.workers),
+        schedules: list(body.schedules)
       };
       writeStore(next);
       return sendJson(response, 200, { ok: true, updatedAt: new Date().toISOString(), customers: customerDirectory(next) });
