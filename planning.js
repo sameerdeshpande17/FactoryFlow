@@ -63,7 +63,7 @@
     return { requirement, updated: false, previousQuantity: null };
   }
 
-  function calculatePlan(jobs, requirements, materials) {
+  function calculatePlan(jobs, requirements, materials, purchases) {
     const active = activeJobs(jobs);
     const activeIds = new Set(active.map((job) => job.id));
     const materialBySku = new Map((Array.isArray(materials) ? materials : []).map((item) => [item.sku, item]));
@@ -112,6 +112,7 @@
           unit: stock.unitLabel,
           requiredQty: 0,
           availableQty: stock.quantity,
+          incomingQty: 0,
           unitCost: inventory.optionalMoney(material.unitCost),
           jobCount: 0,
           jobIds: []
@@ -125,16 +126,35 @@
       }
     });
 
+    (Array.isArray(purchases) ? purchases : []).forEach((purchase) => {
+      if (!purchase || !['Draft', 'Confirmed', 'In transit', 'Part received'].includes(purchase.status)) return;
+      const material = (Array.isArray(materials) ? materials : []).find((item) =>
+        item.sku === purchase.materialSku ||
+        (item.item && purchase.material && item.item.trim().toLocaleLowerCase() === purchase.material.trim().toLocaleLowerCase())
+      );
+      if (!material) return;
+      const ordered = Number(purchase.quantity);
+      if (!Number.isFinite(ordered) || ordered <= 0) return;
+      const received = Number(purchase.receivedQty || 0);
+      const openQuantity = Math.max(0, ordered - (Number.isFinite(received) ? received : 0));
+      const stock = inventory.parseQuantity(material.onHand);
+      if (!stock || inventory.normalizeUnit(purchase.unit) !== stock.unit) return;
+      const total = totals.get(material.sku);
+      if (total) total.incomingQty += openQuantity;
+    });
+
     const byMaterial = [...totals.values()].map((item) => {
-      const shortageQty = Math.max(0, item.requiredQty - item.availableQty);
+      const projectedAvailableQty = item.availableQty + item.incomingQty;
+      const shortageQty = Math.max(0, item.requiredQty - projectedAvailableQty);
       const coveragePercent = item.requiredQty > 0
-        ? Math.min(100, Math.round((item.availableQty / item.requiredQty) * 10000) / 100)
+        ? Math.min(100, Math.round((projectedAvailableQty / item.requiredQty) * 10000) / 100)
         : 100;
       const estimatedShortageCost = item.unitCost === null
         ? null
         : Math.round(shortageQty * item.unitCost * 100) / 100;
       return {
         ...item,
+        projectedAvailableQty: Math.round(projectedAvailableQty * 10000) / 10000,
         requiredQty: Math.round(item.requiredQty * 10000) / 10000,
         shortageQty: Math.round(shortageQty * 10000) / 10000,
         coveragePercent,
