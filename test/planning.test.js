@@ -157,3 +157,39 @@ test('draft purchase orders do not count as confirmed incoming supply', () => {
   assert.equal(result.byMaterial[0].incomingQty, 0);
   assert.equal(result.byMaterial[0].shortageQty, 20);
 });
+
+
+test('reduces a job material requirement by consumption already recorded for that job', () => {
+  const requirements = [
+    { id: 'RQ-1', jobId: 'JB-1', materialSku: 'RM-1', quantity: 100, unit: 'kg' }
+  ];
+  const reducedMaterials = [
+    { sku: 'RM-1', item: 'Kraft paper', onHand: '40 kg', stock: 40, capacity: 100, unitCost: 12 }
+  ];
+  const movements = [
+    { id: 'MV-1', jobId: 'JB-1', materialSku: 'RM-1', type: 'Consumption', direction: 'OUT', quantity: 30, unit: 'kg' },
+    { id: 'MV-2', jobId: 'JB-2', materialSku: 'RM-1', type: 'Consumption', direction: 'OUT', quantity: 15, unit: 'kg' },
+    { id: 'MV-3', jobId: '', materialSku: 'RM-1', type: 'Receipt', direction: 'IN', quantity: 100, unit: 'kg' }
+  ];
+  const result = planning.calculatePlan(jobs, requirements, reducedMaterials, [], movements);
+  assert.equal(result.jobRequirements[0].quantity, 100);
+  assert.equal(result.jobRequirements[0].consumedQty, 30);
+  assert.equal(result.jobRequirements[0].remainingQty, 70);
+  assert.equal(result.byMaterial[0].plannedQty, 100);
+  assert.equal(result.byMaterial[0].consumedQty, 30);
+  assert.equal(result.byMaterial[0].requiredQty, 70);
+  assert.equal(result.byMaterial[0].shortageQty, 30);
+});
+
+test('flags consumption movement unit mismatches rather than subtracting them', () => {
+  const requirements = [
+    { id: 'RQ-1', jobId: 'JB-1', materialSku: 'RM-1', quantity: 100, unit: 'kg' }
+  ];
+  const movements = [
+    { id: 'MV-1', jobId: 'JB-1', materialSku: 'RM-1', type: 'Consumption', direction: 'OUT', quantity: 20, unit: 'sheets' }
+  ];
+  const result = planning.calculatePlan(jobs, requirements, materials, [], movements);
+  assert.equal(result.jobRequirements[0].consumedQty, 0);
+  assert.equal(result.byMaterial[0].requiredQty, 100);
+  assert.ok(result.issues.some((issue) => /consumption unit mismatch/i.test(issue.message)));
+});
