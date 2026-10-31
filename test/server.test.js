@@ -74,6 +74,7 @@ test('health and bootstrap endpoints return the workspace schema', async () => {
   assert.ok(Array.isArray(payload.state.productionLogs));
   assert.ok(Array.isArray(payload.state.qcInspections));
   assert.ok(Array.isArray(payload.state.reworkLogs));
+  assert.ok(Array.isArray(payload.state.downtimeLogs));
 });
 
 test('sync persists quotes and material receipt records', async () => {
@@ -161,6 +162,16 @@ test('sync persists quotes and material receipt records', async () => {
       reworkedQty: 2,
       recoveredQty: 2,
       scrappedQty: 0
+    }],
+    downtimeLogs: [{
+      id: 'DT-TEST',
+      jobId: 'JB-TEST',
+      machineName: 'Flexo 1',
+      startAt: '2026-10-31T08:00',
+      endAt: '2026-10-31T09:30',
+      durationMinutes: 90,
+      reason: 'Breakdown',
+      reportedBy: 'Test Operator'
     }]
   };
   const sync = await fetch(baseUrl + '/api/sync', {
@@ -182,6 +193,7 @@ test('sync persists quotes and material receipt records', async () => {
   assert.deepEqual(stored.state.productionLogs, state.productionLogs);
   assert.deepEqual(stored.state.qcInspections, state.qcInspections);
   assert.deepEqual(stored.state.reworkLogs, state.reworkLogs);
+  assert.deepEqual(stored.state.downtimeLogs, state.downtimeLogs);
   assert.deepEqual(stored.customers, ['Example Customer']);
 });
 

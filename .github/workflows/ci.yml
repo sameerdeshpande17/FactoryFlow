@@ -8,6 +8,7 @@ on:
       - feat/production-material-planning
       - feat/production-scheduling-capacity
       - feat/production-execution-quality-control
+      - feat/production-analytics-performance
   pull_request:
     branches:
       - main

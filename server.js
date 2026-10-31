@@ -39,7 +39,8 @@ function readStore() {
     schedules: list(stored.schedules),
     productionLogs: list(stored.productionLogs),
     qcInspections: list(stored.qcInspections),
-    reworkLogs: list(stored.reworkLogs)
+    reworkLogs: list(stored.reworkLogs),
+    downtimeLogs: list(stored.downtimeLogs)
   };
 }
 
@@ -116,7 +117,8 @@ async function handleApi(request, response, pathname) {
         schedules: list(body.schedules),
         productionLogs: list(body.productionLogs),
         qcInspections: list(body.qcInspections),
-        reworkLogs: list(body.reworkLogs)
+        reworkLogs: list(body.reworkLogs),
+        downtimeLogs: list(body.downtimeLogs)
       };
       writeStore(next);
       return sendJson(response, 200, { ok: true, updatedAt: new Date().toISOString(), customers: customerDirectory(next) });

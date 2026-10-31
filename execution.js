@@ -58,7 +58,7 @@
       }, { producedQty: 0, goodQty: 0, rejectedQty: 0 });
   }
 
-  function recordProduction(productionLogs, jobs, workers, input) {
+  function recordProduction(productionLogs, jobs, workers, input, scheduleRecords = []) {
     if (!Array.isArray(productionLogs)) throw new TypeError('Production records must be an array.');
     const job = getJob(jobs, input.jobId);
     const worker = (Array.isArray(workers) ? workers : []).find((item) => item.id === input.workerId);
@@ -74,6 +74,20 @@
 
     const shift = String(input.shift || '').trim();
     if (!shift) throw new Error('Choose or enter a production shift.');
+    let actualHours = null;
+    if (input.actualHours !== undefined && input.actualHours !== null && input.actualHours !== '') {
+      actualHours = Number(input.actualHours);
+      if (!Number.isFinite(actualHours) || actualHours <= 0 || actualHours > 24) {
+        throw new Error('Actual production hours must be greater than zero and no more than 24.');
+      }
+    }
+    const scheduleId = String(input.scheduleId || '').trim();
+    if (scheduleId) {
+      const scheduled = (Array.isArray(scheduleRecords) ? scheduleRecords : []).find((item) => item.id === scheduleId);
+      if (!scheduled || scheduled.jobId !== job.id || scheduled.workerId !== worker.id || scheduled.date !== input.productionDate) {
+        throw new Error('Choose a scheduled session for this job and worker.');
+      }
+    }
 
     const record = {
       id: nextId(productionLogs, 'PR'),
@@ -82,6 +96,8 @@
       workerName: worker.name,
       productionDate: input.productionDate,
       shift,
+      actualHours,
+      scheduleId,
       producedQty,
       goodQty,
       rejectedQty,
