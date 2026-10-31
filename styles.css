@@ -119,3 +119,23 @@ button { cursor: pointer; }
 .execution-actions .table-button { white-space: nowrap; }
 .execution-actions .table-button:disabled { cursor: not-allowed; opacity: .45; }
 .execution-metric-note { color: var(--muted); font-size: 9px; line-height: 1.4; }
+
+
+.analytics-filter { display: grid; grid-template-columns: repeat(3,minmax(130px,1fr)) auto; align-items: end; gap: 12px; margin-top: 16px; padding: 15px; }
+.analytics-filter label { display: grid; gap: 6px; color: var(--muted); font-size: 10px; font-weight: 700; }
+.analytics-filter input, .analytics-filter select { width: 100%; min-width: 0; border: 1px solid var(--line); border-radius: 7px; padding: 9px 10px; background: var(--surface); color: var(--ink); font: inherit; }
+.analytics-filter-actions { display: flex; gap: 7px; flex-wrap: wrap; }
+.analytics-kpis { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 12px; margin-top: 16px; }
+.analytics-kpi { min-width: 0; padding: 15px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); display: grid; gap: 7px; }
+.analytics-kpi span, .analytics-plan-grid small { color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: .07em; }
+.analytics-kpi strong { color: var(--ink); font-size: 21px; font-weight: 750; overflow-wrap: anywhere; }
+.analytics-kpi small { color: var(--muted); font-size: 10px; line-height: 1.4; }
+.analytics-bar { width: 100%; max-width: 110px; height: 5px; margin-top: 6px; background: #edf1ed; border-radius: 99px; overflow: hidden; }
+.analytics-bar i { display: block; height: 100%; border-radius: inherit; background: var(--green); }
+.analytics-two-col { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 14px; margin-top: 18px; }
+.analytics-plan-grid { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 16px; padding: 16px; }
+.analytics-plan-grid > div { display: grid; gap: 5px; }
+.analytics-plan-grid strong { color: var(--ink); font-size: 16px; overflow-wrap: anywhere; }
+.analytics-two-col .content-card { min-width: 0; }
+@media (max-width: 900px) { .analytics-filter { grid-template-columns: repeat(2,minmax(0,1fr)); } .analytics-kpis { grid-template-columns: repeat(2,minmax(0,1fr)); } .analytics-two-col { grid-template-columns: 1fr; } }
+@media (max-width: 560px) { .analytics-filter { grid-template-columns: 1fr; } .analytics-kpis { grid-template-columns: 1fr 1fr; } }
