@@ -7,7 +7,6 @@ on:
       - feat/automatic-stock-reconciliation
       - feat/production-material-planning
       - feat/production-scheduling-capacity
-      - feat/production-execution-quality-control
   pull_request:
     branches:
       - main

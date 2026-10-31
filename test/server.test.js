@@ -71,9 +71,6 @@ test('health and bootstrap endpoints return the workspace schema', async () => {
   assert.ok(Array.isArray(payload.state.requirements));
   assert.ok(Array.isArray(payload.state.workers));
   assert.ok(Array.isArray(payload.state.schedules));
-  assert.ok(Array.isArray(payload.state.productionLogs));
-  assert.ok(Array.isArray(payload.state.qcInspections));
-  assert.ok(Array.isArray(payload.state.reworkLogs));
 });
 
 test('sync persists quotes and material receipt records', async () => {
@@ -132,35 +129,6 @@ test('sync persists quotes and material receipt records', async () => {
       date: '2026-10-31',
       hours: 4,
       note: 'Printing shift'
-    }],
-    productionLogs: [{
-      id: 'PR-TEST',
-      jobId: 'JB-TEST',
-      workerId: 'WRK-TEST',
-      workerName: 'Test Worker',
-      productionDate: '2026-10-31',
-      shift: 'Day',
-      producedQty: 100,
-      goodQty: 98,
-      rejectedQty: 2
-    }],
-    qcInspections: [{
-      id: 'QC-TEST',
-      jobId: 'JB-TEST',
-      inspectionType: 'Initial',
-      inspectedQty: 100,
-      passedQty: 98,
-      failedQty: 2,
-      disposition: 'Rework',
-      inspector: 'Test Inspector'
-    }],
-    reworkLogs: [{
-      id: 'RW-TEST',
-      jobId: 'JB-TEST',
-      qcInspectionId: 'QC-TEST',
-      reworkedQty: 2,
-      recoveredQty: 2,
-      scrappedQty: 0
     }]
   };
   const sync = await fetch(baseUrl + '/api/sync', {
@@ -179,9 +147,6 @@ test('sync persists quotes and material receipt records', async () => {
   assert.deepEqual(stored.state.requirements, state.requirements);
   assert.deepEqual(stored.state.workers, state.workers);
   assert.deepEqual(stored.state.schedules, state.schedules);
-  assert.deepEqual(stored.state.productionLogs, state.productionLogs);
-  assert.deepEqual(stored.state.qcInspections, state.qcInspections);
-  assert.deepEqual(stored.state.reworkLogs, state.reworkLogs);
   assert.deepEqual(stored.customers, ['Example Customer']);
 });
 

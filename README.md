@@ -32,8 +32,6 @@ Opening index.html directly is still supported as a browser-only fallback, but c
 - Production material planning by job, aggregating demand across active jobs and deducting material already consumed by each job before comparing remaining needs with on-hand stock and committed purchase orders
 - Draft shortage purchase orders, supplier and amount assignment, incoming-order coverage after confirmation, and partial receipt tracking
 - Production scheduling by job and worker, daily capacity checks, worker availability dates, scheduled production queue, and deadline-risk alerts
-- Production output logs with worker, shift, planned date, produced/good/rejected quantities, and job progress reconciliation
-- QC inspections, defect dispositions, rework and reinspection tracking, and a controlled release-for-delivery gate
 - Responsive layout for desktop and mobile screens
 
 ## Suggested next steps
