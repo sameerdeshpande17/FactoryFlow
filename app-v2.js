@@ -44,6 +44,8 @@ const schedules = JSON.parse(localStorage.getItem('ff-schedules') || 'null') || 
 const productionLogs = JSON.parse(localStorage.getItem('ff-production-logs') || 'null') || [];
 const qcInspections = JSON.parse(localStorage.getItem('ff-qc-inspections') || 'null') || [];
 const reworkLogs = JSON.parse(localStorage.getItem('ff-rework-logs') || 'null') || [];
+const downtimeLogs = JSON.parse(localStorage.getItem('ff-downtime-logs') || 'null') || [];
+const analyticsFilters = JSON.parse(localStorage.getItem('ff-analytics-filters') || 'null') || { fromDate: '', toDate: '', groupBy: 'day' };
 
 const materials = [
   { sku: 'RM-0142', item: 'Kraft paper · 180 GSM', category: 'Paper', location: 'A-12', onHand: '3,840 kg', stock: 82, status: 'In stock' },
@@ -66,7 +68,7 @@ const titles = {
   dashboard: ['JOB-WORK OS', 'Overview'], quotes: ['SALES', 'Quotes'], jobs: ['JOB CONTROL', 'Jobs'],
   purchases: ['PURCHASING', 'Purchase orders'], materials: ['RAW MATERIAL', 'Materials'],
   workers: ['PARTNERS', 'Job workers'], invoices: ['FINANCE', 'GST invoices'],
-  marketplace: ['B2B NETWORK', 'Marketplace'], planning: ['PRODUCTION', 'Material planning'], schedule: ['PRODUCTION', 'Production schedule'], execution: ['PRODUCTION', 'Production execution & QC'], costing: ['FINANCE', 'Job costing'], settings: ['WORKSPACE', 'Settings']
+  marketplace: ['B2B NETWORK', 'Marketplace'], planning: ['PRODUCTION', 'Material planning'], schedule: ['PRODUCTION', 'Production schedule'], execution: ['PRODUCTION', 'Production execution & QC'], analytics: ['MANAGEMENT', 'Production analytics'], costing: ['FINANCE', 'Job costing'], settings: ['WORKSPACE', 'Settings']
 };
 
 function save(shouldSync = true) {
@@ -81,6 +83,8 @@ function save(shouldSync = true) {
   localStorage.setItem('ff-production-logs', JSON.stringify(productionLogs));
   localStorage.setItem('ff-qc-inspections', JSON.stringify(qcInspections));
   localStorage.setItem('ff-rework-logs', JSON.stringify(reworkLogs));
+  localStorage.setItem('ff-downtime-logs', JSON.stringify(downtimeLogs));
+  localStorage.setItem('ff-analytics-filters', JSON.stringify(analyticsFilters));
   localStorage.setItem('ff-language', app.language);
   ui('#quoteBadge').textContent = quotes.filter((quote) => quote.status === 'Follow up').length || '0';
   if (shouldSync && workspaceReady) syncWorkspace();
@@ -101,7 +105,7 @@ async function syncWorkspace() {
     const response = await fetch('/api/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ quotes, jobs, purchases, materials, deliveries, receipts, movements, requirements, workers, schedules, productionLogs, qcInspections, reworkLogs })
+      body: JSON.stringify({ quotes, jobs, purchases, materials, deliveries, receipts, movements, requirements, workers, schedules, productionLogs, qcInspections, reworkLogs, downtimeLogs })
     });
     if (!response.ok) throw new Error('Workspace sync failed.');
     setDataStatus('Synced', 'online');
@@ -124,7 +128,7 @@ async function hydrateWorkspace() {
     if (!response.ok) throw new Error('Workspace is unavailable.');
     const payload = await response.json();
     const remote = payload.state || {};
-    const hasRemoteData = ['quotes', 'jobs', 'purchases', 'materials', 'deliveries', 'receipts', 'movements', 'requirements', 'workers', 'schedules', 'productionLogs', 'qcInspections', 'reworkLogs'].some((key) => Array.isArray(remote[key]) && remote[key].length);
+    const hasRemoteData = ['quotes', 'jobs', 'purchases', 'materials', 'deliveries', 'receipts', 'movements', 'requirements', 'workers', 'schedules', 'productionLogs', 'qcInspections', 'reworkLogs', 'downtimeLogs'].some((key) => Array.isArray(remote[key]) && remote[key].length);
     if (hasRemoteData) {
       quotes.splice(0, quotes.length, ...remote.quotes);
       jobs.splice(0, jobs.length, ...remote.jobs);
@@ -139,6 +143,7 @@ async function hydrateWorkspace() {
       if (Array.isArray(remote.productionLogs)) productionLogs.splice(0, productionLogs.length, ...remote.productionLogs);
       if (Array.isArray(remote.qcInspections)) qcInspections.splice(0, qcInspections.length, ...remote.qcInspections);
       if (Array.isArray(remote.reworkLogs)) reworkLogs.splice(0, reworkLogs.length, ...remote.reworkLogs);
+      if (Array.isArray(remote.downtimeLogs)) downtimeLogs.splice(0, downtimeLogs.length, ...remote.downtimeLogs);
     }
     window.FactoryFlowInventory.ensureStockMetadata(materials);
     workspaceReady = true;
@@ -365,8 +370,13 @@ function recordProductionOutput(jobId) {
   }
   const preferred = activeWorkers.find((worker) => worker.name === job.worker) || activeWorkers[0];
   const workerOptions = activeWorkers.map((worker) => '<option value="' + safe(worker.id) + '"' + (worker.id === preferred.id ? ' selected' : '') + '>' + safe(worker.name + ' · ' + worker.skill) + '</option>').join('');
+  const scheduledSessions = schedules.filter((session) => session.jobId === job.id);
+  const sessionOptions = '<option value="">Not linked to a scheduled session</option>' + scheduledSessions.map((session) => {
+    const worker = workers.find((item) => item.id === session.workerId);
+    return '<option value="' + safe(session.id) + '">' + safe(session.date + ' · ' + (worker ? worker.name : session.workerName) + ' · ' + Number(session.hours).toFixed(1) + ' planned hrs') + '</option>';
+  }).join('');
   const date = localDateISO();
-  openModal('<h2 id="modalTitle">Record production output · ' + safe(job.id) + '</h2><p>' + safe(job.customer + ' · ' + job.item + ' · target ' + Number(job.qty).toLocaleString('en-IN')) + '</p><form id="productionEntryForm" class="form-grid"><label>Worker<select name="workerId" required>' + workerOptions + '</select></label><div class="form-row"><label>Production date<input required type="date" name="productionDate" value="' + date + '"></label><label>Shift<select name="shift"><option>Day</option><option>Evening</option><option>Night</option></select></label></div><label>Total produced units<input required type="number" min="1" step="1" name="producedQty" placeholder="e.g. 2500"></label><div class="form-row"><label>Good units<input required type="number" min="0" step="1" name="goodQty" value="0"></label><label>Rejected units<input required type="number" min="0" step="1" name="rejectedQty" value="0"></label></div><label>Production notes<input name="notes" placeholder="Machine, batch or shift notes"></label><p class="subtle">Good units + rejected units must equal total produced units. Record actual shift output, not the job target.</p><p id="productionError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save production entry</button></div></form>');
+  openModal('<h2 id="modalTitle">Record production output · ' + safe(job.id) + '</h2><p>' + safe(job.customer + ' · ' + job.item + ' · target ' + Number(job.qty).toLocaleString('en-IN')) + '</p><form id="productionEntryForm" class="form-grid"><label>Worker<select name="workerId" required>' + workerOptions + '</select></label><label>Scheduled session (optional)<select name="scheduleId">' + sessionOptions + '</select></label><div class="form-row"><label>Production date<input required type="date" name="productionDate" value="' + date + '"></label><label>Shift<select name="shift"><option>Day</option><option>Evening</option><option>Night</option></select></label></div><div class="form-row"><label>Total produced units<input required type="number" min="1" step="1" name="producedQty" placeholder="e.g. 2500"></label><label>Actual hours worked<input required type="number" min="0.25" max="24" step="0.25" name="actualHours" placeholder="e.g. 7.5"></label></div><div class="form-row"><label>Good units<input required type="number" min="0" step="1" name="goodQty" value="0"></label><label>Rejected units<input required type="number" min="0" step="1" name="rejectedQty" value="0"></label></div><label>Production notes<input name="notes" placeholder="Machine, batch or shift notes"></label><p class="subtle">Good + rejected units must equal total produced. Actual hours are used for productivity reporting; only enter hours actually worked.</p><p id="productionError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save production entry</button></div></form>');
   ui('#productionEntryForm').addEventListener('submit', (event) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -374,13 +384,15 @@ function recordProductionOutput(jobId) {
       const result = window.FactoryFlowExecution.recordProduction(productionLogs, jobs, workers, {
         jobId: job.id,
         workerId: data.get('workerId'),
+        scheduleId: data.get('scheduleId'),
         productionDate: data.get('productionDate'),
         shift: data.get('shift'),
         producedQty: Number(data.get('producedQty')),
+        actualHours: Number(data.get('actualHours')),
         goodQty: Number(data.get('goodQty')),
         rejectedQty: Number(data.get('rejectedQty')),
         notes: data.get('notes')
-      });
+      }, schedules);
       save();
       closeModal();
       goto('execution');
@@ -642,6 +654,125 @@ function schedulePage() {
     ((analysis.capacityConflicts.length || analysis.deadlineRisks.length || analysis.issues.length) ? '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Scheduling alerts</strong></div><ul>' + conflictItems.concat(riskItems, issueItems).join('') + '</ul></section>' : '');
 }
 
+function currentAnalytics() {
+  return window.FactoryFlowAnalytics.buildAnalytics({
+    productionLogs,
+    qcInspections,
+    reworkLogs,
+    schedules,
+    jobs,
+    deliveries,
+    downtimeLogs,
+    fromDate: analyticsFilters.fromDate,
+    toDate: analyticsFilters.toDate,
+    groupBy: analyticsFilters.groupBy
+  });
+}
+
+function formatHours(value) {
+  return Number(value || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' hrs';
+}
+
+function analyticsPage() {
+  const data = currentAnalytics();
+  const trendMax = Math.max(1, ...data.productionTrend.map((point) => point.producedQty));
+  const trendRows = data.productionTrend.map((point) => {
+    const width = Math.max(1, Math.round(point.producedQty / trendMax * 100));
+    return '<tr><td class="order-code">' + safe(point.period) + '</td><td><strong>' + Number(point.producedQty).toLocaleString('en-IN') + '</strong><div class="analytics-bar"><i style="width:' + width + '%"></i></div></td><td>' + Number(point.goodQty).toLocaleString('en-IN') + '</td><td>' + Number(point.rejectedQty).toLocaleString('en-IN') + '</td><td>' + formatHours(point.actualHours) + '</td><td>' + (point.unitsPerActualHour === null ? 'Not available' : Number(point.unitsPerActualHour).toLocaleString('en-IN') + ' units/hr') + '</td></tr>';
+  }).join('');
+  const workerRows = data.workers.map((worker) =>
+    '<tr><td><div class="item-name">' + safe(worker.workerName) + '</div><div class="subtle">' + safe(worker.workerId || 'No worker ID') + '</div></td><td>' + Number(worker.producedQty).toLocaleString('en-IN') + '</td><td>' + Number(worker.goodQty).toLocaleString('en-IN') + '</td><td>' + Number(worker.rejectedQty).toLocaleString('en-IN') + '</td><td>' + formatHours(worker.actualHours) + '</td><td>' + (worker.unitsPerActualHour === null ? 'Not available' : Number(worker.unitsPerActualHour).toLocaleString('en-IN')) + '</td><td>' + (worker.goodYieldPercent === null ? '—' : worker.goodYieldPercent.toFixed(2) + '%') + '</td><td>' + worker.entriesWithoutActualHours + ' legacy / unreported</td></tr>'
+  ).join('');
+  const jobRows = data.jobPerformance.map((job) =>
+    '<tr><td class="order-code">' + safe(job.jobId) + '</td><td>' + safe(job.customer) + '<div class="subtle">' + safe(job.item) + '</div></td><td>' + Number(job.periodProducedQty).toLocaleString('en-IN') + '</td><td>' + Number(job.producedQty).toLocaleString('en-IN') + ' / ' + Number(job.targetQty).toLocaleString('en-IN') + '</td><td>' + (job.completionPercent === null ? '—' : job.completionPercent.toFixed(1) + '%') + '</td><td>' + (job.unitsPerHour === null ? 'Not available' : Number(job.unitsPerHour).toLocaleString('en-IN') + ' units/hr') + '</td></tr>'
+  ).join('');
+  const machineRows = data.downtime.machineDowntime.map((item) =>
+    '<tr><td>' + safe(item.machineName) + '</td><td>' + Number(item.minutes).toLocaleString('en-IN') + ' min</td><td>' + formatHours(item.hours) + '</td></tr>'
+  ).join('');
+  const reasonRows = data.downtime.reasons.map((item) =>
+    '<tr><td>' + safe(item.reason) + '</td><td>' + Number(item.minutes).toLocaleString('en-IN') + ' min</td><td>' + formatHours(item.hours) + '</td></tr>'
+  ).join('');
+  const downtimeRows = downtimeLogs.slice().sort((a, b) => String(b.startAt).localeCompare(String(a.startAt))).slice(0, 12).map((item) =>
+    '<tr><td class="order-code">' + safe(item.id) + '</td><td>' + safe(item.machineName) + '</td><td>' + safe(item.startAt.replace('T', ' ')) + '</td><td>' + safe(item.endAt.replace('T', ' ')) + '</td><td>' + formatHours(Number(item.durationMinutes) / 60) + '</td><td>' + safe(item.reason) + '</td><td>' + safe(item.jobId || '—') + '</td><td>' + safe(item.reportedBy) + '</td></tr>'
+  ).join('');
+  const onTimeLabel = data.onTimeDelivery.onTimePercent === null ? 'Not enough dated deliveries' : data.onTimeDelivery.onTimePercent.toFixed(1) + '%';
+  const actualHoursNote = data.totals.entriesWithoutActualHours + ' production entries have no actual hours recorded';
+  const planVariance = data.planVsActual.linkedSessions
+    ? (data.planVsActual.varianceHours > 0 ? '+' : '') + data.planVsActual.varianceHours.toFixed(2) + ' hrs (' + (data.planVsActual.variancePercent > 0 ? '+' : '') + data.planVsActual.variancePercent.toFixed(1) + '%)'
+    : 'No linked actuals yet';
+  return head('MANAGEMENT', 'Production analytics', 'Measure recorded output, quality, worker productivity, schedule variance and machine downtime. Filters apply to dated operational records.', '<button class="secondary-button" data-export-analytics>↓ Export CSV</button> <button class="primary-button" data-new-downtime>＋ Log downtime</button>') +
+    '<form id="analyticsFilterForm" class="analytics-filter content-card"><label>From date<input type="date" name="fromDate" value="' + safe(analyticsFilters.fromDate) + '"></label><label>To date<input type="date" name="toDate" value="' + safe(analyticsFilters.toDate) + '"></label><label>Trend interval<select name="groupBy"><option value="day"' + (analyticsFilters.groupBy === 'day' ? ' selected' : '') + '>Daily</option><option value="week"' + (analyticsFilters.groupBy === 'week' ? ' selected' : '') + '>Weekly</option><option value="month"' + (analyticsFilters.groupBy === 'month' ? ' selected' : '') + '>Monthly</option></select></label><div class="analytics-filter-actions"><button class="primary-button" type="submit">Apply filters</button><button class="secondary-button" type="button" data-reset-analytics>Reset</button></div></form>' +
+    '<div class="analytics-kpis"><article class="analytics-kpi"><span>UNITS PRODUCED</span><strong>' + data.totals.producedQty.toLocaleString('en-IN') + '</strong><small>' + data.recordCounts.productionEntries + ' production entries</small></article><article class="analytics-kpi"><span>GOOD YIELD</span><strong>' + (data.totals.productionYieldPercent === null ? '—' : data.totals.productionYieldPercent.toFixed(1) + '%') + '</strong><small>Good units / produced units</small></article><article class="analytics-kpi"><span>QC PASS RATE</span><strong>' + (data.quality.passRatePercent === null ? '—' : data.quality.passRatePercent.toFixed(1) + '%') + '</strong><small>' + data.quality.inspectedQty.toLocaleString('en-IN') + ' units inspected</small></article><article class="analytics-kpi"><span>ACTUAL HOURS</span><strong>' + formatHours(data.totals.actualHours) + '</strong><small>' + data.totals.entriesWithoutActualHours + ' entries missing actual hours</small></article><article class="analytics-kpi"><span>MACHINE DOWNTIME</span><strong>' + formatHours(data.downtime.totalHours) + '</strong><small>' + data.downtime.records + ' downtime records</small></article><article class="analytics-kpi"><span>ON-TIME DELIVERY</span><strong>' + onTimeLabel + '</strong><small>' + data.onTimeDelivery.onTimeJobs + ' / ' + data.onTimeDelivery.eligibleJobs + ' eligible delivered jobs</small></article></div>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Production trend</strong><span class="subtle">' + safe(data.range.groupBy) + ' totals</span></div>' +
+    (trendRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>PERIOD</th><th>PRODUCED</th><th>GOOD</th><th>REJECTED</th><th>ACTUAL HOURS</th><th>THROUGHPUT</th></tr></thead><tbody>' + trendRows + '</tbody></table></div>' : '<div class="empty-state">No production records in this date range.</div>') + '</section>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Worker productivity</strong><span class="subtle">Output per recorded actual hour; not inferred from scheduled hours</span></div>' +
+    (workerRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>WORKER</th><th>PRODUCED</th><th>GOOD</th><th>REJECTED</th><th>ACTUAL HOURS</th><th>UNITS / HR</th><th>GOOD YIELD</th><th>DATA GAPS</th></tr></thead><tbody>' + workerRows + '</tbody></table></div>' : '<div class="empty-state">No worker production entries in this date range.</div>') + '</section>' +
+    '<div class="analytics-two-col"><section class="content-card"><div class="toolbar"><strong style="font-size:12px">Planned vs actual hours</strong></div><div class="analytics-plan-grid"><div><small>LINKED SESSIONS</small><strong>' + data.planVsActual.linkedSessions + ' / ' + data.planVsActual.scheduledSessions + '</strong></div><div><small>PLANNED HOURS</small><strong>' + formatHours(data.planVsActual.plannedHours) + '</strong></div><div><small>ACTUAL HOURS</small><strong>' + formatHours(data.planVsActual.actualHours) + '</strong></div><div><small>VARIANCE</small><strong>' + planVariance + '</strong></div></div><p class="subtle">Only production records explicitly linked to a scheduled session are compared. ' + data.planVsActual.unlinkedProductionEntries + ' production entries have no matching scheduled session in this report.</p></section><section class="content-card"><div class="toolbar"><strong style="font-size:12px">Quality & rework</strong></div><div class="analytics-plan-grid"><div><small>QC FAIL RATE</small><strong>' + (data.quality.failRatePercent === null ? '—' : data.quality.failRatePercent.toFixed(1) + '%') + '</strong></div><div><small>REWORKED</small><strong>' + data.rework.reworkedQty.toLocaleString('en-IN') + '</strong></div><div><small>RECOVERED</small><strong>' + data.rework.recoveredQty.toLocaleString('en-IN') + '</strong></div><div><small>SCRAPPED</small><strong>' + data.rework.scrappedQty.toLocaleString('en-IN') + '</strong></div></div><p class="subtle">' + actualHoursNote + '.</p></section></div>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Job performance</strong><span class="subtle">Lifetime completion with period output</span></div>' +
+    (jobRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>JOB</th><th>CUSTOMER / WORK</th><th>PERIOD OUTPUT</th><th>LIFETIME OUTPUT / TARGET</th><th>COMPLETION</th><th>UNITS / HR</th></tr></thead><tbody>' + jobRows + '</tbody></table></div>' : '<div class="empty-state">No job production in this date range.</div>') + '</section>' +
+    '<div class="analytics-two-col"><section class="content-card"><div class="toolbar"><strong style="font-size:12px">Downtime by machine</strong></div>' +
+    (machineRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>MACHINE / WORKSTATION</th><th>DOWNTIME</th><th>TOTAL</th></tr></thead><tbody>' + machineRows + '</tbody></table></div>' : '<div class="empty-state">No downtime entries in this date range.</div>') + '</section><section class="content-card"><div class="toolbar"><strong style="font-size:12px">Downtime by reason</strong></div>' +
+    (reasonRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>REASON</th><th>DOWNTIME</th><th>TOTAL</th></tr></thead><tbody>' + reasonRows + '</tbody></table></div>' : '<div class="empty-state">No downtime reasons recorded.</div>') + '</section></div>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Downtime log</strong><button class="table-button" data-new-downtime>＋ Add record</button></div>' +
+    (downtimeRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>RECORD</th><th>MACHINE</th><th>START</th><th>END</th><th>DURATION</th><th>REASON</th><th>JOB</th><th>REPORTED BY</th></tr></thead><tbody>' + downtimeRows + '</tbody></table></div>' : '<div class="empty-state">No downtime records yet. Log machine or workstation stops to measure lost time.</div>') + '</section>';
+}
+
+function localDateTimeValue(date) {
+  const pad = (value) => String(value).padStart(2, '0');
+  return date.getFullYear() + '-' + pad(date.getMonth() + 1) + '-' + pad(date.getDate()) + 'T' + pad(date.getHours()) + ':' + pad(date.getMinutes());
+}
+
+function createDowntimeRecord() {
+  const now = new Date();
+  const end = new Date(now.getTime() + 60 * 60 * 1000);
+  const jobOptions = '<option value="">Not linked to a job</option>' + jobs.map((job) => '<option value="' + safe(job.id) + '">' + safe(job.id + ' · ' + job.customer + ' · ' + job.item) + '</option>').join('');
+  openModal('<h2 id="modalTitle">Log machine downtime</h2><p>Record an actual machine or workstation stop. Duration is calculated from the start and end time.</p><form id="downtimeForm" class="form-grid"><label>Machine / workstation<input required name="machineName" placeholder="e.g. Flexo press 1"></label><div class="form-row"><label>Start time<input required type="datetime-local" name="startAt" value="' + localDateTimeValue(now) + '"></label><label>End time<input required type="datetime-local" name="endAt" value="' + localDateTimeValue(end) + '"></label></div><label>Reason<select required name="reason"><option value="">Select reason</option><option>Breakdown</option><option>Planned maintenance</option><option>Material shortage</option><option>Power outage</option><option>Changeover / setup</option><option>Quality issue</option><option>Operator unavailable</option><option>Other</option></select></label><label>Related job (optional)<select name="jobId">' + jobOptions + '</select></label><label>Reported by<input required name="reportedBy" placeholder="Name of operator / supervisor"></label><label>Notes<input name="notes" placeholder="Cause, action taken or maintenance reference"></label><p id="downtimeError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save downtime record</button></div></form>');
+  ui('#downtimeForm').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    try {
+      const record = window.FactoryFlowAnalytics.recordDowntime(downtimeLogs, jobs, {
+        machineName: data.get('machineName'),
+        startAt: data.get('startAt'),
+        endAt: data.get('endAt'),
+        reason: data.get('reason'),
+        jobId: data.get('jobId'),
+        reportedBy: data.get('reportedBy'),
+        notes: data.get('notes')
+      });
+      save();
+      closeModal();
+      goto('analytics');
+      notify(record.id + ' saved · ' + record.durationMinutes + ' minutes of downtime.');
+    } catch (error) {
+      const element = ui('#downtimeError');
+      element.textContent = error.message;
+      element.hidden = false;
+    }
+  });
+}
+
+function exportAnalyticsCsv() {
+  const data = currentAnalytics();
+  const rows = [
+    ['Section', 'Metric', 'Period / Entity', 'Value', 'Unit', 'Notes'],
+    ['Production', 'Produced quantity', '', data.totals.producedQty, 'units', 'Filtered by production date'],
+    ['Production', 'Good quantity', '', data.totals.goodQty, 'units', 'Worker reported'],
+    ['Production', 'Rejected quantity', '', data.totals.rejectedQty, 'units', 'Worker reported'],
+    ['Production', 'Actual hours', '', data.totals.actualHours, 'hours', data.totals.entriesWithoutActualHours + ' entries missing actual hours'],
+    ['Quality', 'QC pass rate', '', data.quality.passRatePercent === null ? '' : data.quality.passRatePercent, '%', data.quality.inspectedQty + ' units inspected'],
+    ['Quality', 'QC fail rate', '', data.quality.failRatePercent === null ? '' : data.quality.failRatePercent, '%', 'Inspection-level rate'],
+    ['Rework', 'Reworked quantity', '', data.rework.reworkedQty, 'units', 'Filtered by rework completion date'],
+    ['Downtime', 'Total duration', '', data.downtime.totalHours, 'hours', data.downtime.records + ' records']
+  ];
+  data.productionTrend.forEach((point) => rows.push(['Trend', 'Produced quantity', point.period, point.producedQty, 'units', 'Good: ' + point.goodQty + '; rejected: ' + point.rejectedQty + '; actual hours: ' + point.actualHours]));
+  data.workers.forEach((worker) => rows.push(['Worker', worker.workerName, '', worker.producedQty, 'units', 'Actual hours: ' + worker.actualHours + '; units/hour: ' + (worker.unitsPerActualHour === null ? 'not available' : worker.unitsPerActualHour)]));
+  data.downtime.machineDowntime.forEach((item) => rows.push(['Machine downtime', item.machineName, '', item.minutes, 'minutes', item.hours + ' hours']));
+  data.downtime.reasons.forEach((item) => rows.push(['Downtime reason', item.reason, '', item.minutes, 'minutes', item.hours + ' hours']));
+  data.jobPerformance.forEach((job) => rows.push(['Job', job.jobId, job.customer, job.producedQty, 'units', 'Target: ' + job.targetQty + '; completion: ' + (job.completionPercent === null ? 'not available' : job.completionPercent + '%')]));
+  downloadCsv('factoryflow-production-analytics.csv', rows);
+}
+
 function costingPage() {
   const rows = jobs.map((job) => ({ job, cost: window.FactoryFlowCosting.calculateJobCost(job, movements) }));
   const quotedRevenue = rows.reduce((total, row) => total + (row.cost.revenueConfigured ? row.cost.revenue : 0), 0);
@@ -705,7 +836,7 @@ function render() {
   ui('#pageKicker').textContent = label[0];
   ui('#pageTitle').textContent = label[1];
   all('.nav-link[data-view]').forEach((button) => button.classList.toggle('active', button.dataset.view === app.view));
-  const pages = { dashboard, quotes: quotesPage, jobs: jobsPage, purchases: purchasesPage, materials: materialsPage, workers: workersPage, invoices: invoicesPage, marketplace: marketplacePage, planning: planningPage, schedule: schedulePage, execution: executionPage, costing: costingPage, settings: settingsPage };
+  const pages = { dashboard, quotes: quotesPage, jobs: jobsPage, purchases: purchasesPage, materials: materialsPage, workers: workersPage, invoices: invoicesPage, marketplace: marketplacePage, planning: planningPage, schedule: schedulePage, execution: executionPage, analytics: analyticsPage, costing: costingPage, settings: settingsPage };
   ui('#view').innerHTML = pages[app.view]();
   bind();
 }
@@ -1166,6 +1297,35 @@ function bind() {
   all('[data-share]').forEach((button) => button.addEventListener('click', () => share(button.dataset.share)));
   all('[data-convert]').forEach((button) => button.addEventListener('click', () => convert(button.dataset.convert)));
   all('[data-proof-job]').forEach((button) => button.addEventListener('click', () => openDeliveryProof(button.dataset.proofJob)));
+  all('[data-new-downtime]').forEach((button) => button.addEventListener('click', createDowntimeRecord));
+  all('[data-export-analytics]').forEach((button) => button.addEventListener('click', exportAnalyticsCsv));
+  all('[data-reset-analytics]').forEach((button) => button.addEventListener('click', () => {
+    analyticsFilters.fromDate = '';
+    analyticsFilters.toDate = '';
+    analyticsFilters.groupBy = 'day';
+    save();
+    render();
+  }));
+  const analyticsForm = ui('#analyticsFilterForm');
+  if (analyticsForm) analyticsForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const fromDate = data.get('fromDate');
+    const toDate = data.get('toDate');
+    if ((fromDate && !window.FactoryFlowAnalytics.validDate(fromDate)) || (toDate && !window.FactoryFlowAnalytics.validDate(toDate))) {
+      notify('Choose valid date filters.');
+      return;
+    }
+    if (fromDate && toDate && fromDate > toDate) {
+      notify('From date must be on or before to date.');
+      return;
+    }
+    analyticsFilters.fromDate = fromDate;
+    analyticsFilters.toDate = toDate;
+    analyticsFilters.groupBy = data.get('groupBy');
+    save();
+    render();
+  });
   all('[data-consume-job]').forEach((button) => button.addEventListener('click', () => consumeMaterials(button.dataset.consumeJob)));
   all('[data-cost-job]').forEach((button) => button.addEventListener('click', () => editJobCosts(button.dataset.costJob)));
   all('[data-plan-job]').forEach((button) => button.addEventListener('click', () => planJobMaterials(button.dataset.planJob, button.dataset.planSku || null)));
