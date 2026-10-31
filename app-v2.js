@@ -41,6 +41,10 @@ const defaultWorkers = [
 const workers = JSON.parse(localStorage.getItem('ff-workers') || 'null') || defaultWorkers;
 const schedules = JSON.parse(localStorage.getItem('ff-schedules') || 'null') || [];
 
+const productionLogs = JSON.parse(localStorage.getItem('ff-production-logs') || 'null') || [];
+const qcInspections = JSON.parse(localStorage.getItem('ff-qc-inspections') || 'null') || [];
+const reworkLogs = JSON.parse(localStorage.getItem('ff-rework-logs') || 'null') || [];
+
 const materials = [
   { sku: 'RM-0142', item: 'Kraft paper · 180 GSM', category: 'Paper', location: 'A-12', onHand: '3,840 kg', stock: 82, status: 'In stock' },
   { sku: 'RM-0251', item: 'BOPP film · 25 micron', category: 'Film', location: 'B-04', onHand: '1,260 kg', stock: 56, status: 'In stock' },
@@ -62,7 +66,7 @@ const titles = {
   dashboard: ['JOB-WORK OS', 'Overview'], quotes: ['SALES', 'Quotes'], jobs: ['JOB CONTROL', 'Jobs'],
   purchases: ['PURCHASING', 'Purchase orders'], materials: ['RAW MATERIAL', 'Materials'],
   workers: ['PARTNERS', 'Job workers'], invoices: ['FINANCE', 'GST invoices'],
-  marketplace: ['B2B NETWORK', 'Marketplace'], planning: ['PRODUCTION', 'Material planning'], schedule: ['PRODUCTION', 'Production schedule'], costing: ['FINANCE', 'Job costing'], settings: ['WORKSPACE', 'Settings']
+  marketplace: ['B2B NETWORK', 'Marketplace'], planning: ['PRODUCTION', 'Material planning'], schedule: ['PRODUCTION', 'Production schedule'], execution: ['PRODUCTION', 'Production execution & QC'], costing: ['FINANCE', 'Job costing'], settings: ['WORKSPACE', 'Settings']
 };
 
 function save(shouldSync = true) {
@@ -74,6 +78,9 @@ function save(shouldSync = true) {
   localStorage.setItem('ff-requirements', JSON.stringify(requirements));
   localStorage.setItem('ff-workers', JSON.stringify(workers));
   localStorage.setItem('ff-schedules', JSON.stringify(schedules));
+  localStorage.setItem('ff-production-logs', JSON.stringify(productionLogs));
+  localStorage.setItem('ff-qc-inspections', JSON.stringify(qcInspections));
+  localStorage.setItem('ff-rework-logs', JSON.stringify(reworkLogs));
   localStorage.setItem('ff-language', app.language);
   ui('#quoteBadge').textContent = quotes.filter((quote) => quote.status === 'Follow up').length || '0';
   if (shouldSync && workspaceReady) syncWorkspace();
@@ -94,7 +101,7 @@ async function syncWorkspace() {
     const response = await fetch('/api/sync', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ quotes, jobs, purchases, materials, deliveries, receipts, movements, requirements, workers, schedules })
+      body: JSON.stringify({ quotes, jobs, purchases, materials, deliveries, receipts, movements, requirements, workers, schedules, productionLogs, qcInspections, reworkLogs })
     });
     if (!response.ok) throw new Error('Workspace sync failed.');
     setDataStatus('Synced', 'online');
@@ -117,7 +124,7 @@ async function hydrateWorkspace() {
     if (!response.ok) throw new Error('Workspace is unavailable.');
     const payload = await response.json();
     const remote = payload.state || {};
-    const hasRemoteData = ['quotes', 'jobs', 'purchases', 'materials', 'deliveries', 'receipts', 'movements', 'requirements', 'workers', 'schedules'].some((key) => Array.isArray(remote[key]) && remote[key].length);
+    const hasRemoteData = ['quotes', 'jobs', 'purchases', 'materials', 'deliveries', 'receipts', 'movements', 'requirements', 'workers', 'schedules', 'productionLogs', 'qcInspections', 'reworkLogs'].some((key) => Array.isArray(remote[key]) && remote[key].length);
     if (hasRemoteData) {
       quotes.splice(0, quotes.length, ...remote.quotes);
       jobs.splice(0, jobs.length, ...remote.jobs);
@@ -129,6 +136,9 @@ async function hydrateWorkspace() {
       requirements.splice(0, requirements.length, ...(remote.requirements || []));
       if (Array.isArray(remote.workers) && remote.workers.length) workers.splice(0, workers.length, ...remote.workers);
       if (Array.isArray(remote.schedules) && remote.schedules.length) schedules.splice(0, schedules.length, ...remote.schedules);
+      if (Array.isArray(remote.productionLogs)) productionLogs.splice(0, productionLogs.length, ...remote.productionLogs);
+      if (Array.isArray(remote.qcInspections)) qcInspections.splice(0, qcInspections.length, ...remote.qcInspections);
+      if (Array.isArray(remote.reworkLogs)) reworkLogs.splice(0, reworkLogs.length, ...remote.reworkLogs);
     }
     window.FactoryFlowInventory.ensureStockMetadata(materials);
     workspaceReady = true;
@@ -189,19 +199,20 @@ function jobCard(job, note, warning) {
   const costAction = '<button class="text-button" data-cost-job="' + safe(job.id) + '">View costing →</button>';
   const planningAction = !['Delivered', 'QC review', 'Cancelled'].includes(job.status) ? '<button class="text-button" data-plan-job="' + safe(job.id) + '">Plan materials →</button>' : '';
   const scheduleAction = !['Delivered', 'QC review', 'Cancelled'].includes(job.status) ? '<button class="text-button" data-schedule-job="' + safe(job.id) + '">Schedule production →</button>' : '';
+  const executionAction = !['Delivered', 'Cancelled'].includes(job.status) ? '<button class="text-button" data-execution-job="' + safe(job.id) + '">Record output / QC →</button>' : '';
   const plannedSessions = schedules.filter((session) => session.jobId === job.id).length;
   const scheduleLabel = plannedSessions ? '<div class="subtle">' + plannedSessions + ' production session(s) scheduled</div>' : '';
-  return '<article class="work-card"><strong>' + safe(job.id) + ' · ' + safe(job.item) + '</strong><p>' + Number(job.qty || 0).toLocaleString('en-IN') + ' units · ' + safe(job.customer) + '</p>' + scheduleLabel + '<footer><span class="small-avatar">' + safe(job.owner || '') + '</span><span class="due ' + (warning ? 'warn' : '') + '">' + (proof ? '✓ Proof saved' : '◷ ') + note + '</span></footer>' + (consumeAction ? '<footer>' + consumeAction + '</footer>' : '') + (planningAction ? '<footer>' + planningAction + '</footer>' : '') + (scheduleAction ? '<footer>' + scheduleAction + '</footer>' : '') + '<footer>' + costAction + '</footer></article>';
+  return '<article class="work-card"><strong>' + safe(job.id) + ' · ' + safe(job.item) + '</strong><p>' + Number(job.qty || 0).toLocaleString('en-IN') + ' units · ' + safe(job.customer) + '</p>' + scheduleLabel + '<footer><span class="small-avatar">' + safe(job.owner || '') + '</span><span class="due ' + (warning ? 'warn' : '') + '">' + (proof ? '✓ Proof saved' : '◷ ') + note + '</span></footer>' + (consumeAction ? '<footer>' + consumeAction + '</footer>' : '') + (planningAction ? '<footer>' + planningAction + '</footer>' : '') + (scheduleAction ? '<footer>' + scheduleAction + '</footer>' : '') + (executionAction ? '<footer>' + executionAction + '</footer>' : '') + '<footer>' + costAction + '</footer></article>';
 }
 
 function jobsPage() {
   const pending = jobs.find((job) => job.status === 'Material pending') || jobs[0];
   const active = jobs.filter((job) => job.status === 'In production' || job.status === 'With worker');
-  const qc = jobs.find((job) => job.status === 'QC review') || jobs[0];
-  const proof = deliveries.find((delivery) => delivery.jobId === qc.id);
-  const proofAction = proof ? '<button class="text-button" data-view-proof="' + qc.id + '">View proof →</button>' : '<button class="text-button" data-proof-job="' + qc.id + '">Add proof →</button>';
+  const qc = jobs.find((job) => job.readyForDelivery) || jobs.find((job) => job.status === 'QC review') || jobs[0];
+  const proof = qc ? deliveries.find((delivery) => delivery.jobId === qc.id) : null;
+  const proofAction = !qc ? '' : proof ? '<button class="text-button" data-view-proof="' + qc.id + '">View proof →</button>' : qc.readyForDelivery ? '<button class="text-button" data-proof-job="' + qc.id + '">Add proof →</button>' : '<button class="text-button" data-go="execution">Complete production & QC →</button>';
   return head('JOB CONTROL', 'Jobs in motion', 'Assign job workers, track progress, and capture proof before delivery.', '<button class="primary-button" data-new="job">＋ Create job</button>') +
-  '<section class="kanban"><div class="kanban-column"><div class="kanban-title">READY TO ASSIGN <span class="kanban-count">1</span></div>' + jobCard(pending, 'Material pending', true) + '<article class="work-card"><strong>Assign a verified worker</strong><p>Match capacity, rate, and delivery promise in one place.</p><footer><button class="text-button" data-go="workers">Find workers →</button></footer></article></div><div class="kanban-column"><div class="kanban-title">WITH JOB WORKER <span class="kanban-count">' + active.length + '</span></div>' + active.map((job) => jobCard(job, job.due)).join('') + '</div><div class="kanban-column"><div class="kanban-title">DELIVERY & QC <span class="kanban-count">1</span></div>' + jobCard(qc, proof ? ' · ' + proof.receivedBy : 'Proof needed') + '<article class="work-card"><strong>' + (proof ? 'Delivery proof captured' : 'Capture delivery proof') + '</strong><p>' + (proof ? 'Saved for ' + safe(proof.receivedBy) + '. Keep this with the GST invoice.' : 'Attach a signed challan or delivery photo, then issue the invoice.') + '</p><footer><span class="status ' + (proof ? 'on-track' : 'setup') + '">' + (proof ? 'Saved' : 'Ready') + '</span>' + proofAction + '</footer></article></div></section>';
+  '<section class="kanban"><div class="kanban-column"><div class="kanban-title">READY TO ASSIGN <span class="kanban-count">1</span></div>' + jobCard(pending, 'Material pending', true) + '<article class="work-card"><strong>Assign a verified worker</strong><p>Match capacity, rate, and delivery promise in one place.</p><footer><button class="text-button" data-go="workers">Find workers →</button></footer></article></div><div class="kanban-column"><div class="kanban-title">WITH JOB WORKER <span class="kanban-count">' + active.length + '</span></div>' + active.map((job) => jobCard(job, job.due)).join('') + '</div><div class="kanban-column"><div class="kanban-title">DELIVERY & QC <span class="kanban-count">1</span></div>' + jobCard(qc, proof ? ' · ' + proof.receivedBy : 'Proof needed') + '<article class="work-card"><strong>' + (proof ? 'Delivery proof captured' : qc && qc.readyForDelivery ? 'Capture delivery proof' : 'Production & QC clearance required') + '</strong><p>' + (proof ? 'Saved for ' + safe(proof.receivedBy) + '. Keep this with the GST invoice.' : qc && qc.readyForDelivery ? 'Attach a signed challan or delivery photo, then issue the invoice.' : 'Record production output, complete QC and clear all rework before attaching delivery proof.') + '</p><footer><span class="status ' + (proof ? 'on-track' : 'setup') + '">' + (proof ? 'Saved' : 'Ready') + '</span>' + proofAction + '</footer></article></div></section>';
 }
 
 function purchasesPage() {
@@ -326,6 +337,192 @@ function localDateISO(date = new Date()) {
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   return year + '-' + month + '-' + day;
+}
+
+function executionSummary(job) {
+  return window.FactoryFlowExecution.summarizeJob(job, productionLogs, qcInspections, reworkLogs);
+}
+
+function recordProductionOutput(jobId) {
+  const job = jobs.find((item) => item.id === jobId);
+  if (!job || ['Delivered', 'Cancelled'].includes(job.status)) {
+    notify('Production output can only be recorded for an open job.');
+    return;
+  }
+  const activeWorkers = workers.filter((worker) => worker.active !== false);
+  if (!activeWorkers.length) {
+    notify('Activate a worker before recording production output.');
+    return;
+  }
+  const preferred = activeWorkers.find((worker) => worker.name === job.worker) || activeWorkers[0];
+  const workerOptions = activeWorkers.map((worker) => '<option value="' + safe(worker.id) + '"' + (worker.id === preferred.id ? ' selected' : '') + '>' + safe(worker.name + ' · ' + worker.skill) + '</option>').join('');
+  const date = localDateISO();
+  openModal('<h2 id="modalTitle">Record production output · ' + safe(job.id) + '</h2><p>' + safe(job.customer + ' · ' + job.item + ' · target ' + Number(job.qty).toLocaleString('en-IN')) + '</p><form id="productionEntryForm" class="form-grid"><label>Worker<select name="workerId" required>' + workerOptions + '</select></label><div class="form-row"><label>Production date<input required type="date" name="productionDate" value="' + date + '"></label><label>Shift<select name="shift"><option>Day</option><option>Evening</option><option>Night</option></select></label></div><label>Total produced units<input required type="number" min="1" step="1" name="producedQty" placeholder="e.g. 2500"></label><div class="form-row"><label>Good units<input required type="number" min="0" step="1" name="goodQty" value="0"></label><label>Rejected units<input required type="number" min="0" step="1" name="rejectedQty" value="0"></label></div><label>Production notes<input name="notes" placeholder="Machine, batch or shift notes"></label><p class="subtle">Good units + rejected units must equal total produced units. Record actual shift output, not the job target.</p><p id="productionError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save production entry</button></div></form>');
+  ui('#productionEntryForm').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    try {
+      const result = window.FactoryFlowExecution.recordProduction(productionLogs, jobs, workers, {
+        jobId: job.id,
+        workerId: data.get('workerId'),
+        productionDate: data.get('productionDate'),
+        shift: data.get('shift'),
+        producedQty: Number(data.get('producedQty')),
+        goodQty: Number(data.get('goodQty')),
+        rejectedQty: Number(data.get('rejectedQty')),
+        notes: data.get('notes')
+      });
+      save();
+      closeModal();
+      goto('execution');
+      notify(result.record.id + ' saved. ' + result.totals.producedQty.toLocaleString('en-IN') + ' of ' + result.target.toLocaleString('en-IN') + ' units produced.');
+    } catch (error) {
+      const element = ui('#productionError');
+      element.textContent = error.message;
+      element.hidden = false;
+    }
+  });
+}
+
+function inspectProduction(jobId) {
+  const job = jobs.find((item) => item.id === jobId);
+  if (!job || ['Delivered', 'Cancelled'].includes(job.status)) {
+    notify('QC can only be recorded for an open job.');
+    return;
+  }
+  const totals = window.FactoryFlowExecution.productionTotals(productionLogs, job.id);
+  if (!totals.producedQty) {
+    notify('Record production output before performing QC.');
+    return;
+  }
+  const reworkSources = qcInspections.filter((inspection) => inspection.jobId === job.id && inspection.disposition === 'Rework');
+  const sourceOptions = reworkSources.map((inspection) => {
+    const worked = reworkLogs.filter((record) => record.qcInspectionId === inspection.id).reduce((sum, record) => sum + Number(record.recoveredQty || 0), 0);
+    const inspected = qcInspections.filter((item) => item.inspectionType === 'Reinspection' && item.sourceInspectionId === inspection.id).reduce((sum, item) => sum + Number(item.inspectedQty || 0), 0);
+    return '<option value="' + safe(inspection.id) + '">' + safe(inspection.id + ' · ' + Math.max(0, worked - inspected) + ' recovered unit(s) pending') + '</option>';
+  }).join('');
+  openModal('<h2 id="modalTitle">Quality inspection · ' + safe(job.id) + '</h2><p>' + safe(job.customer + ' · ' + job.item) + ' · produced ' + totals.producedQty.toLocaleString('en-IN') + ' units</p><form id="qcInspectionForm" class="form-grid"><label>Inspection type<select name="inspectionType"><option value="Initial">Initial inspection</option>' + (sourceOptions ? '<option value="Reinspection">Reinspect recovered units</option>' : '') + '</select></label><label id="reinspectionSourceLabel" hidden>Source rework inspection<select name="sourceInspectionId">' + sourceOptions + '</select></label><label>Inspector<input required name="inspector" placeholder="Inspector name"></label><div class="form-row"><label>Inspected quantity<input required name="inspectedQty" type="number" min="1" step="1" placeholder="e.g. 500"></label><label>Passed quantity<input required name="passedQty" type="number" min="0" step="1" value="0"></label></div><label>Failed quantity<input required name="failedQty" type="number" min="0" step="1" value="0"></label><label>Failed-unit disposition<select name="disposition"><option value="Rework">Send for rework</option><option value="Reject">Reject / scrap</option></select></label><label>Defect category<select name="defectCategory"><option>Print defect</option><option>Dimension / size</option><option>Lamination / adhesion</option><option>Material damage</option><option>Finishing defect</option><option>Other</option></select></label><label>Inspection notes<input name="notes" placeholder="Sampling method, defect details or observations"></label><p class="subtle">Passed + failed must equal inspected quantity. Initial QC can cover each produced unit once. Reinspection can only cover units recovered from a completed rework entry.</p><p id="qcError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save inspection</button></div></form>');
+  const typeSelect = ui('#qcInspectionForm [name="inspectionType"]');
+  const sourceLabel = ui('#reinspectionSourceLabel');
+  const sourceSelect = ui('#qcInspectionForm [name="sourceInspectionId"]');
+  const updateSourceVisibility = () => {
+    const reinspection = typeSelect.value === 'Reinspection';
+    sourceLabel.hidden = !reinspection;
+    sourceSelect.required = reinspection;
+  };
+  typeSelect.addEventListener('change', updateSourceVisibility);
+  updateSourceVisibility();
+  ui('#qcInspectionForm').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    try {
+      const result = window.FactoryFlowExecution.recordInspection(qcInspections, productionLogs, reworkLogs, jobs, {
+        jobId: job.id,
+        inspectionType: data.get('inspectionType'),
+        sourceInspectionId: data.get('sourceInspectionId'),
+        inspectedQty: Number(data.get('inspectedQty')),
+        passedQty: Number(data.get('passedQty')),
+        failedQty: Number(data.get('failedQty')),
+        disposition: data.get('disposition'),
+        defectCategory: data.get('defectCategory'),
+        inspector: data.get('inspector'),
+        notes: data.get('notes')
+      });
+      save();
+      closeModal();
+      goto('execution');
+      notify(result.record.id + ' saved. QC disposition: ' + result.disposition + '.');
+    } catch (error) {
+      const element = ui('#qcError');
+      element.textContent = error.message;
+      element.hidden = false;
+    }
+  });
+}
+
+function recordRework(jobId) {
+  const job = jobs.find((item) => item.id === jobId);
+  if (!job || ['Delivered', 'Cancelled'].includes(job.status)) return notify('Choose an open production job.');
+  const options = qcInspections.filter((inspection) => inspection.jobId === job.id && inspection.disposition === 'Rework').map((inspection) => {
+    const totals = reworkLogs.filter((record) => record.qcInspectionId === inspection.id).reduce((sum, record) => {
+      sum.reworked += Number(record.reworkedQty || 0);
+      sum.recovered += Number(record.recoveredQty || 0);
+      sum.scrapped += Number(record.scrappedQty || 0);
+      return sum;
+    }, { reworked: 0, recovered: 0, scrapped: 0 });
+    const pending = Math.max(0, Number(inspection.failedQty) - totals.reworked);
+    return pending > 0 ? '<option value="' + safe(inspection.id) + '">' + safe(inspection.id + ' · ' + pending + ' pending defect unit(s)') + '</option>' : '';
+  }).filter(Boolean).join('');
+  if (!options) return notify('There are no pending rework units for this job.');
+  openModal('<h2 id="modalTitle">Record rework · ' + safe(job.id) + '</h2><p>Record reworked units and separate recovered units from scrapped units.</p><form id="reworkForm" class="form-grid"><label>QC inspection<select required name="qcInspectionId">' + options + '</select></label><label>Total units reworked<input required name="reworkedQty" type="number" min="1" step="1" placeholder="e.g. 40"></label><div class="form-row"><label>Recovered units<input required name="recoveredQty" type="number" min="0" step="1" value="0"></label><label>Scrapped units<input required name="scrappedQty" type="number" min="0" step="1" value="0"></label></div><label>Rework notes<input name="notes" placeholder="Corrective action or machine adjustment"></label><p class="subtle">Recovered + scrapped must equal total reworked. Recovered units must be reinspected before the job can be released.</p><p id="reworkError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save rework result</button></div></form>');
+  ui('#reworkForm').addEventListener('submit', (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    try {
+      const result = window.FactoryFlowExecution.recordRework(reworkLogs, qcInspections, jobs, {
+        qcInspectionId: data.get('qcInspectionId'),
+        reworkedQty: Number(data.get('reworkedQty')),
+        recoveredQty: Number(data.get('recoveredQty')),
+        scrappedQty: Number(data.get('scrappedQty')),
+        notes: data.get('notes')
+      });
+      save();
+      closeModal();
+      goto('execution');
+      notify(result.record.id + ' saved. ' + result.record.recoveredQty + ' recovered unit(s) await reinspection.');
+    } catch (error) {
+      const element = ui('#reworkError');
+      element.textContent = error.message;
+      element.hidden = false;
+    }
+  });
+}
+
+function releaseJobForDelivery(jobId) {
+  try {
+    const result = window.FactoryFlowExecution.releaseForDelivery(jobs, productionLogs, qcInspections, reworkLogs, jobId);
+    save();
+    render();
+    notify(jobId + ' passed production/QC release checks. Delivery proof can now be recorded.');
+    return result;
+  } catch (error) {
+    notify(error.message);
+    return null;
+  }
+}
+
+function executionPage() {
+  const openJobs = window.FactoryFlowExecution.activeJobs(jobs);
+  const summaries = openJobs.map((job) => ({ job, summary: executionSummary(job) }));
+  const totalProduced = summaries.reduce((sum, item) => sum + item.summary.producedQty, 0);
+  const totalGood = summaries.reduce((sum, item) => sum + item.summary.goodQty, 0);
+  const totalRejected = summaries.reduce((sum, item) => sum + item.summary.rejectedQty, 0);
+  const pendingRework = summaries.reduce((sum, item) => sum + item.summary.pendingReworkQty, 0);
+  const rows = summaries.map(({ job, summary }) => {
+    const releaseAction = summary.readyForDelivery
+      ? '<button class="table-button" data-delivery-proof="' + safe(job.id) + '">Add delivery proof</button>'
+      : '<button class="table-button" data-release-job="' + safe(job.id) + '">Release check</button>';
+    return '<tr><td class="order-code">' + safe(job.id) + '<div class="subtle">' + safe(job.customer) + '</div></td><td><div class="item-name">' + safe(job.item) + '</div><div class="subtle">Target ' + summary.targetQty.toLocaleString('en-IN') + '</div></td><td>' + summary.producedQty.toLocaleString('en-IN') + '<div class="subtle">' + summary.productionProgress + '% produced</div></td><td>' + summary.goodQty.toLocaleString('en-IN') + '</td><td>' + summary.rejectedQty.toLocaleString('en-IN') + '</td><td>' + summary.acceptedQty.toLocaleString('en-IN') + '</td><td>' + summary.pendingReworkQty.toLocaleString('en-IN') + '</td><td><div class="execution-actions"><button class="table-button" data-production-job="' + safe(job.id) + '">Record output</button><button class="table-button" data-qc-job="' + safe(job.id) + '">Inspect</button>' + (summary.pendingReworkQty > 0 ? '<button class="table-button" data-rework-job="' + safe(job.id) + '">Rework</button>' : '') + releaseAction + '</div></td></tr>';
+  }).join('');
+  const productionRows = productionLogs.slice().reverse().slice(0, 12).map((entry) =>
+    '<tr><td class="order-code">' + safe(entry.id) + '</td><td>' + safe(entry.jobId) + '</td><td>' + safe(entry.workerName) + '</td><td>' + safe(entry.productionDate) + ' · ' + safe(entry.shift) + '</td><td>' + Number(entry.producedQty).toLocaleString('en-IN') + '</td><td>' + Number(entry.goodQty).toLocaleString('en-IN') + '</td><td>' + Number(entry.rejectedQty).toLocaleString('en-IN') + '</td></tr>'
+  ).join('');
+  const qcRows = qcInspections.slice().reverse().slice(0, 12).map((inspection) =>
+    '<tr><td class="order-code">' + safe(inspection.id) + '</td><td>' + safe(inspection.jobId) + '</td><td>' + safe(inspection.inspectionType) + '</td><td>' + Number(inspection.inspectedQty).toLocaleString('en-IN') + '</td><td>' + Number(inspection.passedQty).toLocaleString('en-IN') + '</td><td>' + Number(inspection.failedQty).toLocaleString('en-IN') + '</td><td>' + safe(inspection.disposition) + '<div class="subtle">' + safe(inspection.defectCategory || '—') + '</div></td><td>' + safe(inspection.inspector) + '</td></tr>'
+  ).join('');
+  const reworkRows = reworkLogs.slice().reverse().slice(0, 12).map((record) =>
+    '<tr><td class="order-code">' + safe(record.id) + '</td><td>' + safe(record.jobId) + '</td><td>' + safe(record.qcInspectionId) + '</td><td>' + Number(record.reworkedQty).toLocaleString('en-IN') + '</td><td>' + Number(record.recoveredQty).toLocaleString('en-IN') + '</td><td>' + Number(record.scrappedQty).toLocaleString('en-IN') + '</td><td>' + safe(record.notes || '—') + '</td></tr>'
+  ).join('');
+  return head('PRODUCTION', 'Production execution & QC', 'Record actual output, inspect finished units, resolve defects and release only jobs that meet production and quality requirements.', '') +
+    '<div class="inventory-grid"><article class="inventory-stat"><span>OPEN JOBS</span><strong>' + openJobs.length + '</strong><small>Active production jobs</small></article><article class="inventory-stat"><span>UNITS PRODUCED</span><strong>' + totalProduced.toLocaleString('en-IN') + '</strong><small>Across open jobs</small></article><article class="inventory-stat"><span>GOOD UNITS REPORTED</span><strong>' + totalGood.toLocaleString('en-IN') + '</strong><small>Worker-reported output</small></article><article class="inventory-stat"><span>REJECTED AT PRODUCTION</span><strong>' + totalRejected.toLocaleString('en-IN') + '</strong><small>Worker-reported rejects</small></article><article class="inventory-stat"><span>PENDING REWORK</span><strong>' + pendingRework.toLocaleString('en-IN') + '</strong><small>Units awaiting corrective work</small></article></div>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Job execution status</strong><span class="subtle">QC accepted quantity is counted separately from worker-reported good output</span></div>' +
+    (rows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>JOB</th><th>WORK</th><th>PRODUCED</th><th>GOOD REPORTED</th><th>REJECTED</th><th>QC PASSED</th><th>REWORK PENDING</th><th>ACTIONS</th></tr></thead><tbody>' + rows + '</tbody></table></div>' : '<div class="empty-state"><h2>No open production jobs</h2><p>Create a job to start recording output and inspections.</p></div>') + '</section>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Production output history</strong><span class="subtle">' + productionLogs.length + ' entries</span></div>' +
+    (productionRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>ENTRY</th><th>JOB</th><th>WORKER</th><th>DATE / SHIFT</th><th>PRODUCED</th><th>GOOD</th><th>REJECTED</th></tr></thead><tbody>' + productionRows + '</tbody></table></div>' : '<div class="empty-state">No production output recorded yet.</div>') + '</section>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Quality inspection history</strong><span class="subtle">' + qcInspections.length + ' inspections</span></div>' +
+    (qcRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>QC ID</th><th>JOB</th><th>TYPE</th><th>INSPECTED</th><th>PASSED</th><th>FAILED</th><th>DISPOSITION / DEFECT</th><th>INSPECTOR</th></tr></thead><tbody>' + qcRows + '</tbody></table></div>' : '<div class="empty-state">No QC inspections recorded yet.</div>') + '</section>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Rework history</strong><span class="subtle">' + reworkLogs.length + ' records</span></div>' +
+    (reworkRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>REWORK ID</th><th>JOB</th><th>QC SOURCE</th><th>REWORKED</th><th>RECOVERED</th><th>SCRAPPED</th><th>CORRECTIVE ACTION</th></tr></thead><tbody>' + reworkRows + '</tbody></table></div>' : '<div class="empty-state">No rework records recorded yet.</div>') + '</section>';
 }
 
 function scheduleProduction(jobId) {
@@ -499,7 +696,7 @@ function render() {
   ui('#pageKicker').textContent = label[0];
   ui('#pageTitle').textContent = label[1];
   all('.nav-link[data-view]').forEach((button) => button.classList.toggle('active', button.dataset.view === app.view));
-  const pages = { dashboard, quotes: quotesPage, jobs: jobsPage, purchases: purchasesPage, materials: materialsPage, workers: workersPage, invoices: invoicesPage, marketplace: marketplacePage, planning: planningPage, schedule: schedulePage, costing: costingPage, settings: settingsPage };
+  const pages = { dashboard, quotes: quotesPage, jobs: jobsPage, purchases: purchasesPage, materials: materialsPage, workers: workersPage, invoices: invoicesPage, marketplace: marketplacePage, planning: planningPage, schedule: schedulePage, execution: executionPage, costing: costingPage, settings: settingsPage };
   ui('#view').innerHTML = pages[app.view]();
   bind();
 }
@@ -599,8 +796,13 @@ function fileAsDataUrl(file) {
   });
 }
 function openDeliveryProof(jobId) {
-  const selectedJob = jobs.find((job) => job.id === jobId) || jobs[0];
+  const selectedJob = jobs.find((job) => job.id === jobId);
   if (!selectedJob) return;
+  if (!selectedJob.readyForDelivery && selectedJob.status !== 'Delivered') {
+    notify('Complete production output, QC inspection and all rework before adding delivery proof.');
+    goto('execution');
+    return;
+  }
   const jobOptions = jobs.map((job) => '<option value="' + safe(job.id) + '"' + (job.id === selectedJob.id ? ' selected' : '') + '>' + safe(job.id + ' · ' + job.customer + ' · ' + job.item) + '</option>').join('');
   const today = new Date().toISOString().slice(0, 10);
   const form = '<h2 id="modalTitle">Capture delivery proof</h2><p>Record who received the delivery and attach a signed challan or photo. Files stay in this local workspace.</p><form id="proofForm" class="form-grid"><label>Job<select name="jobId">' + jobOptions + '</select></label><div class="form-row"><label>Delivered on<input required name="deliveredAt" type="date" value="' + today + '"></label><label>Received by<input required name="receivedBy" placeholder="Recipient name"></label></div><label>Challan or reference number<input name="challan" placeholder="e.g. DC-2084"></label><label>Delivery photo or signed challan<input name="attachment" type="file" accept="image/jpeg,image/png,image/webp,application/pdf"></label><small class="upload-hint">Optional JPG, PNG, WebP, or PDF up to 1 MB.</small><label>Notes<input name="notes" placeholder="e.g. 12 cartons received in good condition"></label><p id="proofError" class="form-error" hidden></p><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="primary-button" type="submit">Save proof</button></div></form>';
@@ -637,6 +839,7 @@ function openDeliveryProof(jobId) {
     const existing = deliveries.findIndex((item) => item.jobId === job.id);
     if (existing >= 0) deliveries.splice(existing, 1, delivery); else deliveries.unshift(delivery);
     job.status = 'Delivered';
+    job.readyForDelivery = true;
     job.due = 'Delivered ' + new Date(delivery.deliveredAt + 'T12:00:00').toLocaleDateString('en-IN', { month: 'short', day: 'numeric' });
     job.progress = 100;
     save(); closeModal(); goto('jobs'); notify('Delivery proof saved for ' + job.id + '.');
@@ -952,6 +1155,12 @@ function bind() {
   all('[data-cost-job]').forEach((button) => button.addEventListener('click', () => editJobCosts(button.dataset.costJob)));
   all('[data-plan-job]').forEach((button) => button.addEventListener('click', () => planJobMaterials(button.dataset.planJob, button.dataset.planSku || null)));
   all('[data-schedule-job]').forEach((button) => button.addEventListener('click', () => scheduleProduction(button.dataset.scheduleJob)));
+  all('[data-execution-job]').forEach((button) => button.addEventListener('click', () => goto('execution')));
+  all('[data-production-job]').forEach((button) => button.addEventListener('click', () => recordProductionOutput(button.dataset.productionJob)));
+  all('[data-qc-job]').forEach((button) => button.addEventListener('click', () => inspectProduction(button.dataset.qcJob)));
+  all('[data-rework-job]').forEach((button) => button.addEventListener('click', () => recordRework(button.dataset.reworkJob)));
+  all('[data-release-job]').forEach((button) => button.addEventListener('click', () => releaseJobForDelivery(button.dataset.releaseJob)));
+  all('[data-delivery-proof]').forEach((button) => button.addEventListener('click', () => openDeliveryProof(button.dataset.deliveryProof)));
   all('[data-edit-worker]').forEach((button) => button.addEventListener('click', () => editWorkerProfile(button.dataset.editWorker)));
   all('[data-remove-session]').forEach((button) => button.addEventListener('click', () => removeProductionSession(button.dataset.removeSession)));
   all('[data-schedule-create]').forEach((button) => button.addEventListener('click', () => {
