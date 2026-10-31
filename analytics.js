@@ -198,10 +198,15 @@
       .map(([reason, minutes]) => ({ reason, minutes, hours: round(minutes / 60) }))
       .sort((a, b) => b.minutes - a.minutes);
 
-    const deliveredJobs = jobs.filter((job) => job && job.status === 'Delivered');
-    const eligibleDeliveryJobs = deliveredJobs.filter((job) => validDate(job.dueDate));
+    const deliveries = Array.isArray(input.deliveries) ? input.deliveries : [];
+    const eligibleDeliveryJobs = jobs.filter((job) => {
+      if (!job || job.status !== 'Delivered' || !validDate(job.dueDate)) return false;
+      const delivery = deliveries.find((item) => item.jobId === job.id);
+      const deliveredDate = delivery ? dateOnly(delivery.deliveredAt) : '';
+      return deliveredDate && inRange(deliveredDate, fromDate, toDate);
+    });
     const onTimeDeliveries = eligibleDeliveryJobs.filter((job) => {
-      const delivery = (Array.isArray(input.deliveries) ? input.deliveries : []).find((item) => item.jobId === job.id);
+      const delivery = deliveries.find((item) => item.jobId === job.id);
       const deliveredDate = delivery ? dateOnly(delivery.deliveredAt) : '';
       return deliveredDate && deliveredDate <= job.dueDate;
     });
@@ -215,21 +220,22 @@
     const jobPerformance = [...new Set(production.map((entry) => entry.jobId))].map((jobId) => {
       const job = jobById.get(jobId);
       const entries = production.filter((entry) => entry.jobId === jobId);
-      const producedQty = entries.reduce((sum, entry) => sum + (Number(entry.producedQty) || 0), 0);
-      const goodQty = entries.reduce((sum, entry) => sum + (Number(entry.goodQty) || 0), 0);
+      const allEntries = productionLogs.filter((entry) => entry.jobId === jobId);
+      const periodProducedQty = entries.reduce((sum, entry) => sum + (Number(entry.producedQty) || 0), 0);
+      const producedQty = allEntries.reduce((sum, entry) => sum + (Number(entry.producedQty) || 0), 0);
+      const goodQty = allEntries.reduce((sum, entry) => sum + (Number(entry.goodQty) || 0), 0);
       const targetQty = Number(job && job.qty) || 0;
+      const actualHours = allEntries.reduce((sum, entry) => sum + (Number(entry.actualHours) > 0 ? Number(entry.actualHours) : 0), 0);
       return {
         jobId,
         customer: job ? job.customer : 'Unknown',
         item: job ? job.item : 'Unknown',
         targetQty,
+        periodProducedQty,
         producedQty,
         goodQty,
         completionPercent: targetQty > 0 ? Math.min(100, round(producedQty / targetQty * 100)) : null,
-        unitsPerHour: (() => {
-          const hours = entries.reduce((sum, entry) => sum + (Number(entry.actualHours) > 0 ? Number(entry.actualHours) : 0), 0);
-          return hours > 0 ? round(producedQty / hours) : null;
-        })()
+        unitsPerHour: actualHours > 0 ? round(producedQty / actualHours) : null
       };
     }).sort((a, b) => b.producedQty - a.producedQty);
 
