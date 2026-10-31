@@ -49,5 +49,6 @@
   "schedules": [],
   "productionLogs": [],
   "qcInspections": [],
-  "reworkLogs": []
+  "reworkLogs": [],
+  "downtimeLogs": []
 }
