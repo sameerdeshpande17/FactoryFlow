@@ -803,8 +803,9 @@ function openDeliveryProof(jobId) {
     goto('execution');
     return;
   }
-  const jobOptions = jobs.map((job) => '<option value="' + safe(job.id) + '"' + (job.id === selectedJob.id ? ' selected' : '') + '>' + safe(job.id + ' · ' + job.customer + ' · ' + job.item) + '</option>').join('');
-  const today = new Date().toISOString().slice(0, 10);
+  const eligibleJobs = jobs.filter((job) => job.readyForDelivery || job.status === 'Delivered');
+  const jobOptions = eligibleJobs.map((job) => '<option value="' + safe(job.id) + '"' + (job.id === selectedJob.id ? ' selected' : '') + '>' + safe(job.id + ' · ' + job.customer + ' · ' + job.item) + '</option>').join('');
+  const today = localDateISO();
   const form = '<h2 id="modalTitle">Capture delivery proof</h2><p>Record who received the delivery and attach a signed challan or photo. Files stay in this local workspace.</p><form id="proofForm" class="form-grid"><label>Job<select name="jobId">' + jobOptions + '</select></label><div class="form-row"><label>Delivered on<input required name="deliveredAt" type="date" value="' + today + '"></label><label>Received by<input required name="receivedBy" placeholder="Recipient name"></label></div><label>Challan or reference number<input name="challan" placeholder="e.g. DC-2084"></label><label>Delivery photo or signed challan<input name="attachment" type="file" accept="image/jpeg,image/png,image/webp,application/pdf"></label><small class="upload-hint">Optional JPG, PNG, WebP, or PDF up to 1 MB.</small><label>Notes<input name="notes" placeholder="e.g. 12 cartons received in good condition"></label><p id="proofError" class="form-error" hidden></p><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="primary-button" type="submit">Save proof</button></div></form>';
   openModal(form, true);
   ui('#proofForm').addEventListener('submit', async (event) => {
@@ -835,6 +836,11 @@ function openDeliveryProof(jobId) {
     }
     const job = jobs.find((item) => item.id === formData.get('jobId'));
     if (!job) return;
+    if (!job.readyForDelivery && job.status !== 'Delivered') {
+      error.textContent = 'This job has not passed production and QC release checks.';
+      error.hidden = false;
+      return;
+    }
     const delivery = { id: 'DP-' + (101 + deliveries.length), jobId: job.id, customer: job.customer, receivedBy: formData.get('receivedBy'), challan: formData.get('challan') || 'Not provided', deliveredAt: formData.get('deliveredAt'), notes: formData.get('notes') || 'No additional notes.', attachment, createdAt: new Date().toISOString() };
     const existing = deliveries.findIndex((item) => item.jobId === job.id);
     if (existing >= 0) deliveries.splice(existing, 1, delivery); else deliveries.unshift(delivery);
@@ -1155,7 +1161,7 @@ function bind() {
   all('[data-cost-job]').forEach((button) => button.addEventListener('click', () => editJobCosts(button.dataset.costJob)));
   all('[data-plan-job]').forEach((button) => button.addEventListener('click', () => planJobMaterials(button.dataset.planJob, button.dataset.planSku || null)));
   all('[data-schedule-job]').forEach((button) => button.addEventListener('click', () => scheduleProduction(button.dataset.scheduleJob)));
-  all('[data-execution-job]').forEach((button) => button.addEventListener('click', () => goto('execution')));
+  all('[data-execution-job]').forEach((button) => button.addEventListener('click', () => recordProductionOutput(button.dataset.executionJob)));
   all('[data-production-job]').forEach((button) => button.addEventListener('click', () => recordProductionOutput(button.dataset.productionJob)));
   all('[data-qc-job]').forEach((button) => button.addEventListener('click', () => inspectProduction(button.dataset.qcJob)));
   all('[data-rework-job]').forEach((button) => button.addEventListener('click', () => recordRework(button.dataset.reworkJob)));
