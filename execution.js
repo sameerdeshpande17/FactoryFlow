@@ -94,8 +94,10 @@
     job.readyForDelivery = false;
     const target = Number(job.qty) || 0;
     job.progress = target > 0 ? Math.min(100, Math.round((totals.producedQty / target) * 100)) : 0;
-    if (totals.producedQty >= target && target > 0 && job.status !== 'QC review') {
+    if (totals.producedQty >= target && target > 0) {
       job.status = 'QC review';
+    } else if (totals.producedQty > 0 && !['Delivered', 'Cancelled'].includes(job.status)) {
+      job.status = 'In production';
     }
     return { record, totals, target, remainingQty: Math.max(0, target - totals.producedQty) };
   }
