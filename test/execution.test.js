@@ -251,3 +251,50 @@ test('does not release closed jobs or release jobs without enough accepted units
   data.jobs[0].status = 'Delivered';
   assert.throws(() => execution.releaseForDelivery(data.jobs, data.productionLogs, data.qcInspections, data.reworkLogs, 'JB-1'), /open job/i);
 });
+
+
+test('captures validated actual work hours and a matching scheduled-session link', () => {
+  const data = fixture();
+  const sessions = [{
+    id: 'SC-1',
+    jobId: 'JB-1',
+    workerId: 'WRK-1',
+    date: '2026-10-31',
+    hours: 6
+  }];
+  const result = execution.recordProduction(data.productionLogs, data.jobs, data.workers, {
+    jobId: 'JB-1',
+    workerId: 'WRK-1',
+    scheduleId: 'SC-1',
+    productionDate: '2026-10-31',
+    shift: 'Day',
+    producedQty: 10,
+    goodQty: 9,
+    rejectedQty: 1,
+    actualHours: 5.5
+  }, sessions);
+  assert.equal(result.record.actualHours, 5.5);
+  assert.equal(result.record.scheduleId, 'SC-1');
+});
+
+test('rejects invalid actual hours and schedule links to another worker, job or date', () => {
+  const data = fixture();
+  const sessions = [
+    { id: 'SC-WORKER', jobId: 'JB-1', workerId: 'WRK-2', date: '2026-10-31', hours: 6 },
+    { id: 'SC-DATE', jobId: 'JB-1', workerId: 'WRK-1', date: '2026-11-01', hours: 6 },
+    { id: 'SC-JOB', jobId: 'JB-2', workerId: 'WRK-1', date: '2026-10-31', hours: 6 }
+  ];
+  for (const actualHours of [0, -1, 24.1, 'invalid']) {
+    assert.throws(() => execution.recordProduction(data.productionLogs, data.jobs, data.workers, {
+      jobId: 'JB-1', workerId: 'WRK-1', productionDate: '2026-10-31', shift: 'Day',
+      producedQty: 10, goodQty: 10, rejectedQty: 0, actualHours
+    }, sessions), /Actual production hours/i);
+  }
+  for (const scheduleId of ['SC-WORKER', 'SC-DATE', 'SC-JOB', 'SC-MISSING']) {
+    assert.throws(() => execution.recordProduction(data.productionLogs, data.jobs, data.workers, {
+      jobId: 'JB-1', workerId: 'WRK-1', productionDate: '2026-10-31', shift: 'Day',
+      producedQty: 10, goodQty: 10, rejectedQty: 0, actualHours: 6, scheduleId
+    }, sessions), /scheduled session/i);
+  }
+  assert.equal(data.productionLogs.length, 0);
+});
