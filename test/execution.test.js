@@ -190,7 +190,7 @@ test('release is blocked until production target and complete QC coverage are re
   const data = fixture();
   addProduction(data, { producedQty: 8, goodQty: 8, rejectedQty: 0 });
   assert.throws(() => execution.releaseForDelivery(data.jobs, data.productionLogs, data.qcInspections, data.reworkLogs, 'JB-1'), /2 unit\(s\) remain/i);
-  assert.equal(data.jobs[0].readyForDelivery, undefined);
+  assert.equal(data.jobs[0].readyForDelivery, false);
 
   addProduction(data, { producedQty: 2, goodQty: 2, rejectedQty: 0 });
   assert.throws(() => execution.releaseForDelivery(data.jobs, data.productionLogs, data.qcInspections, data.reworkLogs, 'JB-1'), /Initial QC must cover all 10/i);
