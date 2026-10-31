@@ -36,7 +36,10 @@ function readStore() {
     movements: list(stored.movements),
     requirements: list(stored.requirements),
     workers: list(stored.workers),
-    schedules: list(stored.schedules)
+    schedules: list(stored.schedules),
+    productionLogs: list(stored.productionLogs),
+    qcInspections: list(stored.qcInspections),
+    reworkLogs: list(stored.reworkLogs)
   };
 }
 
@@ -110,7 +113,10 @@ async function handleApi(request, response, pathname) {
         movements: list(body.movements),
         requirements: list(body.requirements),
         workers: list(body.workers),
-        schedules: list(body.schedules)
+        schedules: list(body.schedules),
+        productionLogs: list(body.productionLogs),
+        qcInspections: list(body.qcInspections),
+        reworkLogs: list(body.reworkLogs)
       };
       writeStore(next);
       return sendJson(response, 200, { ok: true, updatedAt: new Date().toISOString(), customers: customerDirectory(next) });
