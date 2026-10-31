@@ -192,6 +192,9 @@ function quotesPage() {
 }
 
 function jobCard(job, note, warning) {
+  if (!job) {
+    return '<article class="work-card"><strong>No jobs in this stage</strong><p>Jobs will appear here as they move through production.</p><footer><button class="text-button" data-new="job">＋ Create job →</button></footer></article>';
+  }
   const proof = deliveries.find((delivery) => delivery.jobId === job.id);
   const consumeAction = ['In production', 'With worker'].includes(job.status)
     ? '<button class="text-button" data-consume-job="' + safe(job.id) + '">Record material use →</button>'
@@ -199,20 +202,26 @@ function jobCard(job, note, warning) {
   const costAction = '<button class="text-button" data-cost-job="' + safe(job.id) + '">View costing →</button>';
   const planningAction = !['Delivered', 'QC review', 'Cancelled'].includes(job.status) ? '<button class="text-button" data-plan-job="' + safe(job.id) + '">Plan materials →</button>' : '';
   const scheduleAction = !['Delivered', 'QC review', 'Cancelled'].includes(job.status) ? '<button class="text-button" data-schedule-job="' + safe(job.id) + '">Schedule production →</button>' : '';
-  const executionAction = !['Delivered', 'Cancelled'].includes(job.status) ? '<button class="text-button" data-execution-job="' + safe(job.id) + '">Record output / QC →</button>' : '';
+  const executionAction = !['Delivered', 'Cancelled'].includes(job.status) && !job.readyForDelivery ? '<button class="text-button" data-execution-job="' + safe(job.id) + '">Record output / QC →</button>' : '';
+  const deliveryAction = job.readyForDelivery
+    ? (proof
+      ? '<button class="text-button" data-view-proof="' + safe(job.id) + '">View delivery proof →</button>'
+      : '<button class="text-button" data-proof-job="' + safe(job.id) + '">Add delivery proof →</button>')
+    : '';
   const plannedSessions = schedules.filter((session) => session.jobId === job.id).length;
   const scheduleLabel = plannedSessions ? '<div class="subtle">' + plannedSessions + ' production session(s) scheduled</div>' : '';
-  return '<article class="work-card"><strong>' + safe(job.id) + ' · ' + safe(job.item) + '</strong><p>' + Number(job.qty || 0).toLocaleString('en-IN') + ' units · ' + safe(job.customer) + '</p>' + scheduleLabel + '<footer><span class="small-avatar">' + safe(job.owner || '') + '</span><span class="due ' + (warning ? 'warn' : '') + '">' + (proof ? '✓ Proof saved' : '◷ ') + note + '</span></footer>' + (consumeAction ? '<footer>' + consumeAction + '</footer>' : '') + (planningAction ? '<footer>' + planningAction + '</footer>' : '') + (scheduleAction ? '<footer>' + scheduleAction + '</footer>' : '') + (executionAction ? '<footer>' + executionAction + '</footer>' : '') + '<footer>' + costAction + '</footer></article>';
+  return '<article class="work-card"><strong>' + safe(job.id) + ' · ' + safe(job.item) + '</strong><p>' + Number(job.qty || 0).toLocaleString('en-IN') + ' units · ' + safe(job.customer) + '</p>' + scheduleLabel + '<footer><span class="small-avatar">' + safe(job.owner || '') + '</span><span class="due ' + (warning ? 'warn' : '') + '">' + (proof ? '✓ Proof saved' : '◷ ') + safe(note || job.due || job.status) + '</span></footer>' + (consumeAction ? '<footer>' + consumeAction + '</footer>' : '') + (planningAction ? '<footer>' + planningAction + '</footer>' : '') + (scheduleAction ? '<footer>' + scheduleAction + '</footer>' : '') + (executionAction ? '<footer>' + executionAction + '</footer>' : '') + (deliveryAction ? '<footer>' + deliveryAction + '</footer>' : '') + '<footer>' + costAction + '</footer></article>';
 }
 
 function jobsPage() {
-  const pending = jobs.find((job) => job.status === 'Material pending') || jobs[0];
-  const active = jobs.filter((job) => job.status === 'In production' || job.status === 'With worker');
-  const qc = jobs.find((job) => job.readyForDelivery) || jobs.find((job) => job.status === 'QC review') || jobs[0];
-  const proof = qc ? deliveries.find((delivery) => delivery.jobId === qc.id) : null;
-  const proofAction = !qc ? '' : proof ? '<button class="text-button" data-view-proof="' + qc.id + '">View proof →</button>' : qc.readyForDelivery ? '<button class="text-button" data-proof-job="' + qc.id + '">Add proof →</button>' : '<button class="text-button" data-go="execution">Complete production & QC →</button>';
+  const pendingJobs = jobs.filter((job) => !['In production', 'With worker', 'QC review', 'Delivered', 'Cancelled'].includes(job.status));
+  const activeJobs = jobs.filter((job) => ['In production', 'With worker'].includes(job.status));
+  const qcJobs = jobs.filter((job) => (job.status === 'QC review' || job.readyForDelivery) && !['Delivered', 'Cancelled'].includes(job.status));
+  const pendingCards = pendingJobs.length ? pendingJobs.map((job) => jobCard(job, job.status, true)).join('') : jobCard(null);
+  const activeCards = activeJobs.length ? activeJobs.map((job) => jobCard(job, job.due)).join('') : jobCard(null);
+  const qcCards = qcJobs.length ? qcJobs.map((job) => jobCard(job, job.readyForDelivery ? 'QC cleared' : 'QC review')).join('') : jobCard(null);
   return head('JOB CONTROL', 'Jobs in motion', 'Assign job workers, track progress, and capture proof before delivery.', '<button class="primary-button" data-new="job">＋ Create job</button>') +
-  '<section class="kanban"><div class="kanban-column"><div class="kanban-title">READY TO ASSIGN <span class="kanban-count">1</span></div>' + jobCard(pending, 'Material pending', true) + '<article class="work-card"><strong>Assign a verified worker</strong><p>Match capacity, rate, and delivery promise in one place.</p><footer><button class="text-button" data-go="workers">Find workers →</button></footer></article></div><div class="kanban-column"><div class="kanban-title">WITH JOB WORKER <span class="kanban-count">' + active.length + '</span></div>' + active.map((job) => jobCard(job, job.due)).join('') + '</div><div class="kanban-column"><div class="kanban-title">DELIVERY & QC <span class="kanban-count">1</span></div>' + jobCard(qc, proof ? ' · ' + proof.receivedBy : 'Proof needed') + '<article class="work-card"><strong>' + (proof ? 'Delivery proof captured' : qc && qc.readyForDelivery ? 'Capture delivery proof' : 'Production & QC clearance required') + '</strong><p>' + (proof ? 'Saved for ' + safe(proof.receivedBy) + '. Keep this with the GST invoice.' : qc && qc.readyForDelivery ? 'Attach a signed challan or delivery photo, then issue the invoice.' : 'Record production output, complete QC and clear all rework before attaching delivery proof.') + '</p><footer><span class="status ' + (proof ? 'on-track' : 'setup') + '">' + (proof ? 'Saved' : 'Ready') + '</span>' + proofAction + '</footer></article></div></section>';
+    '<section class="kanban"><div class="kanban-column"><div class="kanban-title">READY TO ASSIGN <span class="kanban-count">' + pendingJobs.length + '</span></div>' + pendingCards + '<article class="work-card"><strong>Assign a verified worker</strong><p>Match capacity, rate, and delivery promise in one place.</p><footer><button class="text-button" data-go="workers">Find workers →</button></footer></article></div><div class="kanban-column"><div class="kanban-title">WITH JOB WORKER <span class="kanban-count">' + activeJobs.length + '</span></div>' + activeCards + '</div><div class="kanban-column"><div class="kanban-title">DELIVERY & QC <span class="kanban-count">' + qcJobs.length + '</span></div>' + qcCards + '</div></section>';
 }
 
 function purchasesPage() {
@@ -499,7 +508,7 @@ function executionPage() {
   const totalRejected = summaries.reduce((sum, item) => sum + item.summary.rejectedQty, 0);
   const pendingRework = summaries.reduce((sum, item) => sum + item.summary.pendingReworkQty, 0);
   const rows = summaries.map(({ job, summary }) => {
-    const releaseAction = summary.readyForDelivery
+    const releaseAction = job.readyForDelivery
       ? '<button class="table-button" data-delivery-proof="' + safe(job.id) + '">Add delivery proof</button>'
       : '<button class="table-button" data-release-job="' + safe(job.id) + '">Release check</button>';
     return '<tr><td class="order-code">' + safe(job.id) + '<div class="subtle">' + safe(job.customer) + '</div></td><td><div class="item-name">' + safe(job.item) + '</div><div class="subtle">Target ' + summary.targetQty.toLocaleString('en-IN') + '</div></td><td>' + summary.producedQty.toLocaleString('en-IN') + '<div class="subtle">' + summary.productionProgress + '% produced</div></td><td>' + summary.goodQty.toLocaleString('en-IN') + '</td><td>' + summary.rejectedQty.toLocaleString('en-IN') + '</td><td>' + summary.acceptedQty.toLocaleString('en-IN') + '</td><td>' + summary.pendingReworkQty.toLocaleString('en-IN') + '</td><td><div class="execution-actions"><button class="table-button" data-production-job="' + safe(job.id) + '">Record output</button><button class="table-button" data-qc-job="' + safe(job.id) + '">Inspect</button>' + (summary.pendingReworkQty > 0 ? '<button class="table-button" data-rework-job="' + safe(job.id) + '">Rework</button>' : '') + releaseAction + '</div></td></tr>';
