@@ -34,6 +34,9 @@ Opening index.html directly is still supported as a browser-only fallback, but c
 - Production scheduling by job and worker, daily capacity checks, worker availability dates, scheduled production queue, and deadline-risk alerts
 - Production output logs with worker, shift, planned date, produced/good/rejected quantities, and job progress reconciliation
 - QC inspections, defect dispositions, rework and reinspection tracking, and a controlled release-for-delivery gate
+- Production analytics with date-filtered output trends, yield, QC pass/fail rates, worker productivity, planned-versus-actual hours for linked sessions, delivery timeliness, and job performance
+- Machine/workstation downtime logging by time, machine, reason, reporter, and optional job reference, with machine and reason summaries
+- Production output captures actual hours worked and can link to a scheduled session; legacy records without actual hours are excluded from throughput rates and flagged in analytics
 - Responsive layout for desktop and mobile screens
 
 ## Suggested next steps
