@@ -50,6 +50,12 @@
     const fromDate = input.fromDate || '';
     const toDate = input.toDate || '';
     const groupBy = ['day', 'week', 'month'].includes(input.groupBy) ? input.groupBy : 'day';
+    if ((fromDate && !validDate(fromDate)) || (toDate && !validDate(toDate))) {
+      throw new Error('Analytics date filters must use valid YYYY-MM-DD dates.');
+    }
+    if (fromDate && toDate && fromDate > toDate) {
+      throw new Error('Analytics start date must be on or before end date.');
+    }
 
     const production = productionLogs.filter((entry) => inRange(entry.productionDate, fromDate, toDate));
     const quality = qcInspections.filter((entry) => inRange(entry.inspectedAt, fromDate, toDate));
