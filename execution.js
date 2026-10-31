@@ -91,6 +91,7 @@
     productionLogs.push(record);
 
     const totals = productionTotals(productionLogs, job.id);
+    job.readyForDelivery = false;
     const target = Number(job.qty) || 0;
     job.progress = target > 0 ? Math.min(100, Math.round((totals.producedQty / target) * 100)) : 0;
     if (totals.producedQty >= target && target > 0 && job.status !== 'QC review') {
@@ -168,16 +169,19 @@
       inspectedAt: input.inspectedAt || new Date().toISOString()
     };
     qcInspections.push(record);
+    job.readyForDelivery = false;
     return { record, disposition };
   }
 
-  function recordRework(reworkLogs, qcInspections, input) {
+  function recordRework(reworkLogs, qcInspections, jobs, input) {
     if (!Array.isArray(reworkLogs)) throw new TypeError('Rework records must be an array.');
     const inspection = (Array.isArray(qcInspections) ? qcInspections : [])
       .find((item) => item.id === input.qcInspectionId);
     if (!inspection || inspection.disposition !== 'Rework') {
       throw new Error('Choose a QC inspection marked for rework.');
     }
+    const job = (Array.isArray(jobs) ? jobs : []).find((item) => item.id === inspection.jobId);
+    if (!job || closedStatuses.has(job.status)) throw new Error('Choose a job that is still open.');
 
     const reworkedQty = positiveInteger(input.reworkedQty, 'Reworked quantity');
     const recoveredQty = nonNegativeInteger(input.recoveredQty, 'Recovered quantity');
@@ -202,6 +206,7 @@
       completedAt: input.completedAt || new Date().toISOString()
     };
     reworkLogs.push(record);
+    job.readyForDelivery = false;
     return {
       record,
       totals: reworkTotals(reworkLogs, inspection.id),
