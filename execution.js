@@ -84,7 +84,7 @@
     const scheduleId = String(input.scheduleId || '').trim();
     if (scheduleId) {
       const scheduled = (Array.isArray(scheduleRecords) ? scheduleRecords : []).find((item) => item.id === scheduleId);
-      if (!scheduled || scheduled.jobId !== job.id || scheduled.workerId !== worker.id) {
+      if (!scheduled || scheduled.jobId !== job.id || scheduled.workerId !== worker.id || scheduled.date !== input.productionDate) {
         throw new Error('Choose a scheduled session for this job and worker.');
       }
     }
