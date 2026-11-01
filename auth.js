@@ -29,7 +29,7 @@ const ROLE_PERMISSIONS = Object.freeze({
   supervisor: [
     'dashboard.view', 'jobs.view', 'materials.view', 'planning.view',
     'schedule.view', 'execution.view', 'execution.record', 'execution.qc',
-    'analytics.view', 'analytics.downtime', 'costing.view', 'workers.view'
+    'analytics.view', 'analytics.downtime', 'workers.view'
   ],
   worker: [
     'dashboard.view', 'jobs.view', 'schedule.view', 'execution.view', 'execution.record'
