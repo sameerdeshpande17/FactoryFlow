@@ -204,9 +204,10 @@ class SessionStore {
   create(userId, now = Date.now()) {
     this.prune(now);
     const token = crypto.randomBytes(32).toString('base64url');
+    const csrfToken = crypto.randomBytes(32).toString('base64url');
     const hash = tokenHash(token);
-    this.sessions.set(hash, { userId, createdAt: now, expiresAt: now + this.ttlMs });
-    return { token, expiresAt: now + this.ttlMs };
+    this.sessions.set(hash, { userId, csrfToken, createdAt: now, expiresAt: now + this.ttlMs });
+    return { token, csrfToken, expiresAt: now + this.ttlMs };
   }
 
   get(token, now = Date.now()) {
@@ -226,10 +227,11 @@ class SessionStore {
     return this.sessions.delete(tokenHash(token));
   }
 
-  revokeUser(userId) {
+  revokeUser(userId, exceptToken = '') {
     let count = 0;
+    const exceptHash = exceptToken ? tokenHash(exceptToken) : '';
     for (const [hash, session] of this.sessions.entries()) {
-      if (session.userId === userId) {
+      if (session.userId === userId && hash !== exceptHash) {
         this.sessions.delete(hash);
         count += 1;
       }
