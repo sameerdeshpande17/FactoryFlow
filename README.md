@@ -47,6 +47,8 @@ On a fresh workspace, open the application and create the first administrator ac
 
 Authentication is enforced by the local Node.js workspace server. Do not expose this development server directly to the public internet; use HTTPS, a reverse proxy with appropriate security headers, backups, and a managed deployment before production use. Browser-only `file://` mode is not supported for authenticated workspaces.
 
+Sessions are held in server memory and expire after eight hours of inactivity/elapsed lifetime; restarting the Node.js server invalidates active sessions and requires users to sign in again. User accounts and audit events are persisted in the workspace JSON store. This local JSON store is suitable for a single-process development workspace, not concurrent multi-instance production hosting.
+
 ## Suggested next steps
 
 1. Add production authentication, role-based views, and a hosted database.
