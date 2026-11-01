@@ -98,19 +98,18 @@ function setDataStatus(label, state) {
 }
 
 async function syncWorkspace() {
-  if (syncInFlight || location.protocol === 'file:') return;
+  const role = window.FactoryFlowAuth.state.user && window.FactoryFlowAuth.state.user.role;
+  if (syncInFlight || location.protocol === 'file:' || !['admin', 'manager'].includes(role)) return;
   syncInFlight = true;
   setDataStatus('Saving…', 'pending');
   try {
-    const response = await fetch('/api/sync', {
+    await window.FactoryFlowAuth.request('/api/sync', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ quotes, jobs, purchases, materials, deliveries, receipts, movements, requirements, workers, schedules, productionLogs, qcInspections, reworkLogs, downtimeLogs })
     });
-    if (!response.ok) throw new Error('Workspace sync failed.');
     setDataStatus('Synced', 'online');
   } catch {
-    setDataStatus('Local mode', 'offline');
+    setDataStatus('Sync error', 'offline');
   } finally {
     syncInFlight = false;
   }
@@ -127,8 +126,9 @@ async function hydrateWorkspace() {
     const response = await fetch('/api/bootstrap', { headers: { Accept: 'application/json' } });
     if (!response.ok) throw new Error('Workspace is unavailable.');
     const payload = await response.json();
+    if (payload.auth) window.FactoryFlowAuth.update(payload.auth);
     const remote = payload.state || {};
-    const hasRemoteData = ['quotes', 'jobs', 'purchases', 'materials', 'deliveries', 'receipts', 'movements', 'requirements', 'workers', 'schedules', 'productionLogs', 'qcInspections', 'reworkLogs', 'downtimeLogs'].some((key) => Array.isArray(remote[key]) && remote[key].length);
+    const hasRemoteData = Object.keys(remote).some((key) => Array.isArray(remote[key]) && remote[key].length);
     if (hasRemoteData) {
       quotes.splice(0, quotes.length, ...remote.quotes);
       jobs.splice(0, jobs.length, ...remote.jobs);
@@ -167,6 +167,19 @@ function schedule(time, name, detail, percent, warn) {
   return '<div class="schedule-item"><div class="schedule-time">' + time + '</div><div><div class="schedule-name">' + name + '</div><div class="schedule-detail">' + detail + '</div></div><div class="progress ' + (warn ? 'amber' : '') + '"><i style="width:' + percent + '%"></i></div></div>';
 }
 
+function workerDashboard() {
+  const user = window.FactoryFlowAuth.state.user;
+  const ownJobs = jobs.filter((job) => !['Delivered', 'Cancelled'].includes(job.status));
+  const sessions = schedules.slice().sort((a, b) => a.date.localeCompare(b.date));
+  const cards = ownJobs.map((job) => jobCard(job, job.due || job.status)).join('');
+  return head('MY WORKSPACE', 'Welcome, ' + safe(user.name), 'Your assigned production work and schedule. Record actual output when your shift is complete.', '') +
+    '<div class="inventory-grid"><article class="inventory-stat"><span>ASSIGNED JOBS</span><strong>' + ownJobs.length + '</strong><small>Active jobs visible to your account</small></article><article class="inventory-stat"><span>SCHEDULED SESSIONS</span><strong>' + sessions.length + '</strong><small>Your assigned production sessions</small></article><article class="inventory-stat"><span>OUTPUT ENTRIES</span><strong>' + productionLogs.length + '</strong><small>Your recorded output</small></article></div>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong>My production jobs</strong></div>' +
+    (cards ? '<div class="worker-capacity-grid">' + cards + '</div>' : '<div class="empty-state"><h2>No assigned jobs</h2><p>Ask your production supervisor to assign a job and schedule your shift.</p></div>') + '</section>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong>My scheduled sessions</strong></div>' +
+    (sessions.length ? '<div class="schedule-list">' + sessions.map((session) => '<div class="schedule-item"><div class="schedule-time">' + safe(session.date) + '</div><div class="schedule-copy"><strong>' + safe(session.jobId) + '</strong><small>' + Number(session.hours).toFixed(1) + ' planned hours · ' + safe(session.note || 'Production') + '</small></div></div>').join('') + '</div>' : '<div class="empty-state">No production sessions scheduled yet.</div>') + '</section>';
+}
+
 function dashboard() {
   const hello = app.language === 'hi' ? 'नमस्ते, Sameer' : 'Namaste, Sameer';
   return head(new Intl.DateTimeFormat('en-IN', { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date()).toUpperCase(), hello, app.language === 'hi' ? 'आज आपका काम, पैसा और माल एक जगह पर है।' : 'Your factory’s work, money, and material—at a glance.', '<button class="primary-button" data-new="quote">＋ New quote</button>') +
@@ -197,25 +210,23 @@ function quotesPage() {
 }
 
 function jobCard(job, note, warning) {
+  const can = (permission) => window.FactoryFlowAuth.has(permission);
   if (!job) {
-    return '<article class="work-card"><strong>No jobs in this stage</strong><p>Jobs will appear here as they move through production.</p><footer><button class="text-button" data-new="job">＋ Create job →</button></footer></article>';
+    return '<article class="work-card"><strong>No jobs in this stage</strong><p>Jobs will appear here as they move through production.</p>' + (can('jobs.manage') ? '<footer><button class="text-button" data-new="job">＋ Create job →</button></footer>' : '') + '</article>';
   }
   const proof = deliveries.find((delivery) => delivery.jobId === job.id);
-  const consumeAction = ['In production', 'With worker'].includes(job.status)
-    ? '<button class="text-button" data-consume-job="' + safe(job.id) + '">Record material use →</button>'
-    : '';
-  const costAction = '<button class="text-button" data-cost-job="' + safe(job.id) + '">View costing →</button>';
-  const planningAction = !['Delivered', 'QC review', 'Cancelled'].includes(job.status) ? '<button class="text-button" data-plan-job="' + safe(job.id) + '">Plan materials →</button>' : '';
-  const scheduleAction = !['Delivered', 'QC review', 'Cancelled'].includes(job.status) ? '<button class="text-button" data-schedule-job="' + safe(job.id) + '">Schedule production →</button>' : '';
-  const executionAction = !['Delivered', 'Cancelled'].includes(job.status) && !job.readyForDelivery ? '<button class="text-button" data-execution-job="' + safe(job.id) + '">Record output / QC →</button>' : '';
-  const deliveryAction = job.readyForDelivery
-    ? (proof
-      ? '<button class="text-button" data-view-proof="' + safe(job.id) + '">View delivery proof →</button>'
-      : '<button class="text-button" data-proof-job="' + safe(job.id) + '">Add delivery proof →</button>')
-    : '';
+  const consumeAction = can('materials.manage') && ['In production', 'With worker'].includes(job.status)
+    ? '<button class="text-button" data-consume-job="' + safe(job.id) + '">Record material use →</button>' : '';
+  const costAction = can('costing.view') ? '<button class="text-button" data-cost-job="' + safe(job.id) + '">View costing →</button>' : '';
+  const planningAction = can('planning.manage') && !['Delivered', 'QC review', 'Cancelled'].includes(job.status) ? '<button class="text-button" data-plan-job="' + safe(job.id) + '">Plan materials →</button>' : '';
+  const scheduleAction = can('schedule.manage') && !['Delivered', 'QC review', 'Cancelled'].includes(job.status) ? '<button class="text-button" data-schedule-job="' + safe(job.id) + '">Schedule production →</button>' : '';
+  const executionAction = can('execution.record') && !['Delivered', 'Cancelled'].includes(job.status) && !job.readyForDelivery ? '<button class="text-button" data-execution-job="' + safe(job.id) + '">Record production output →</button>' : '';
+  const deliveryAction = can('jobs.manage') && job.readyForDelivery
+    ? (proof ? '<button class="text-button" data-view-proof="' + safe(job.id) + '">View delivery proof →</button>' : '<button class="text-button" data-proof-job="' + safe(job.id) + '">Add delivery proof →</button>') : '';
   const plannedSessions = schedules.filter((session) => session.jobId === job.id).length;
   const scheduleLabel = plannedSessions ? '<div class="subtle">' + plannedSessions + ' production session(s) scheduled</div>' : '';
-  return '<article class="work-card"><strong>' + safe(job.id) + ' · ' + safe(job.item) + '</strong><p>' + Number(job.qty || 0).toLocaleString('en-IN') + ' units · ' + safe(job.customer) + '</p>' + scheduleLabel + '<footer><span class="small-avatar">' + safe(job.owner || '') + '</span><span class="due ' + (warning ? 'warn' : '') + '">' + (proof ? '✓ Proof saved' : '◷ ') + safe(note || job.due || job.status) + '</span></footer>' + (consumeAction ? '<footer>' + consumeAction + '</footer>' : '') + (planningAction ? '<footer>' + planningAction + '</footer>' : '') + (scheduleAction ? '<footer>' + scheduleAction + '</footer>' : '') + (executionAction ? '<footer>' + executionAction + '</footer>' : '') + (deliveryAction ? '<footer>' + deliveryAction + '</footer>' : '') + '<footer>' + costAction + '</footer></article>';
+  const actions = [consumeAction, planningAction, scheduleAction, executionAction, deliveryAction, costAction].filter(Boolean);
+  return '<article class="work-card"><strong>' + safe(job.id) + ' · ' + safe(job.item) + '</strong><p>' + Number(job.qty || 0).toLocaleString('en-IN') + ' units · ' + safe(job.customer) + '</p>' + scheduleLabel + '<footer><span class="small-avatar">' + safe(job.owner || '') + '</span><span class="due ' + (warning ? 'warn' : '') + '">' + (proof ? '✓ Proof saved' : '◷ ') + safe(note || job.due || job.status) + '</span></footer>' + actions.map((action) => '<footer>' + action + '</footer>').join('') + '</article>';
 }
 
 function jobsPage() {
