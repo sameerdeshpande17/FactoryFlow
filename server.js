@@ -137,7 +137,9 @@ function currentSession(request, store) {
   const session = sessions.get(token);
   if (!session) return null;
   const user = store.users.find((item) => item.id === session.userId && item.active !== false);
-  if (!user) {
+  const workerProfileActive = !user || user.role !== 'worker' ||
+    store.workers.some((worker) => worker.id === user.workerId && worker.active !== false);
+  if (!user || !workerProfileActive) {
     sessions.revoke(token);
     return null;
   }
