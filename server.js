@@ -239,7 +239,9 @@ function customerDirectory(store) {
 }
 
 function projectStoreForUser(store, user) {
-  if (user.role === 'admin' || user.role === 'manager') return store;
+  if (user.role === 'admin' || user.role === 'manager') {
+    return { ...store, users: [], auditLogs: [] };
+  }
   if (user.role === 'supervisor') {
     return {
       ...store,
@@ -332,6 +334,9 @@ async function handleApi(request, response, pathname) {
   let current;
   try { current = requireUser(request, store); }
   catch (error) { return publicAuthError(error, response); }
+  if (current.user.mustChangePassword && !['/api/auth/password', '/api/auth/logout'].includes(pathname)) {
+    return sendJson(response, 403, { error: 'Change your temporary password before accessing the workspace.' });
+  }
 
   if (request.method === 'POST' && pathname === '/api/auth/logout') {
     try {
