@@ -961,12 +961,12 @@ function settingsPage() {
 }
 
 function render() {
+  const permissions = { dashboard: 'dashboard.view', quotes: 'quotes.view', jobs: 'jobs.view', purchases: 'purchases.view', materials: 'materials.view', workers: 'workers.view', invoices: 'invoices.view', marketplace: 'marketplace.view', planning: 'planning.view', schedule: 'schedule.view', execution: 'execution.view', analytics: 'analytics.view', costing: 'costing.view', settings: 'settings.view', users: 'users.manage' };
+  if (!window.FactoryFlowAuth.has(permissions[app.view])) app.view = 'dashboard';
   const label = titles[app.view];
   ui('#pageKicker').textContent = label[0];
   ui('#pageTitle').textContent = label[1];
   all('.nav-link[data-view]').forEach((button) => button.classList.toggle('active', button.dataset.view === app.view));
-  const permissions = { dashboard: 'dashboard.view', quotes: 'quotes.view', jobs: 'jobs.view', purchases: 'purchases.view', materials: 'materials.view', workers: 'workers.view', invoices: 'invoices.view', marketplace: 'marketplace.view', planning: 'planning.view', schedule: 'schedule.view', execution: 'execution.view', analytics: 'analytics.view', costing: 'costing.view', settings: 'settings.view', users: 'users.manage' };
-  if (!window.FactoryFlowAuth.has(permissions[app.view])) app.view = 'dashboard';
   const pages = { dashboard: window.FactoryFlowAuth.state.user.role === 'worker' ? workerDashboard : dashboard, quotes: quotesPage, jobs: jobsPage, purchases: purchasesPage, materials: materialsPage, workers: workersPage, invoices: invoicesPage, marketplace: marketplacePage, planning: planningPage, schedule: schedulePage, execution: executionPage, analytics: analyticsPage, costing: costingPage, settings: settingsPage, users: usersPage };
   ui('#view').innerHTML = pages[app.view]();
   bind();
