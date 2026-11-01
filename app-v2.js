@@ -138,8 +138,8 @@ async function hydrateWorkspace() {
       receipts.splice(0, receipts.length, ...(remote.receipts || []));
       movements.splice(0, movements.length, ...(remote.movements || []));
       requirements.splice(0, requirements.length, ...(remote.requirements || []));
-      if (Array.isArray(remote.workers) && remote.workers.length) workers.splice(0, workers.length, ...remote.workers);
-      if (Array.isArray(remote.schedules) && remote.schedules.length) schedules.splice(0, schedules.length, ...remote.schedules);
+      if (Array.isArray(remote.workers)) workers.splice(0, workers.length, ...remote.workers);
+      if (Array.isArray(remote.schedules)) schedules.splice(0, schedules.length, ...remote.schedules);
       if (Array.isArray(remote.productionLogs)) productionLogs.splice(0, productionLogs.length, ...remote.productionLogs);
       if (Array.isArray(remote.qcInspections)) qcInspections.splice(0, qcInspections.length, ...remote.qcInspections);
       if (Array.isArray(remote.reworkLogs)) reworkLogs.splice(0, reworkLogs.length, ...remote.reworkLogs);
