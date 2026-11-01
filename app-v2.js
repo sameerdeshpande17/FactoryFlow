@@ -177,6 +177,18 @@ function workerDashboard() {
     (sessions.length ? '<div class="schedule-list">' + sessions.map((session) => '<div class="schedule-item"><div class="schedule-time">' + safe(session.date) + '</div><div class="schedule-copy"><strong>' + safe(session.jobId) + '</strong><small>' + Number(session.hours).toFixed(1) + ' planned hours · ' + safe(session.note || 'Production') + '</small></div></div>').join('') + '</div>' : '<div class="empty-state">No production sessions scheduled yet.</div>') + '</section>';
 }
 
+function supervisorDashboard() {
+  const activeJobs = jobs.filter((job) => !['Delivered', 'Cancelled'].includes(job.status));
+  const produced = productionLogs.reduce((sum, entry) => sum + Number(entry.producedQty || 0), 0);
+  const qcPending = activeJobs.filter((job) => job.status === 'QC review' || job.readyForDelivery).length;
+  const scheduleCount = schedules.filter((session) => session.date >= localDateISO()).length;
+  return head('PRODUCTION CONTROL', 'Factory operations', 'Monitor active work, production output, QC queues and today’s scheduled sessions.', '') +
+    '<div class="inventory-grid"><article class="inventory-stat"><span>ACTIVE JOBS</span><strong>' + activeJobs.length + '</strong><small>Open production work</small></article><article class="inventory-stat"><span>OUTPUT RECORDED</span><strong>' + produced.toLocaleString('en-IN') + '</strong><small>Units across production logs</small></article><article class="inventory-stat"><span>QC QUEUE</span><strong>' + qcPending + '</strong><small>Jobs awaiting quality / release</small></article><article class="inventory-stat"><span>UPCOMING SESSIONS</span><strong>' + scheduleCount + '</strong><small>Today and future assignments</small></article></div>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong>Active production jobs</strong><button class="text-button" data-go="jobs">View jobs →</button></div>' +
+    (activeJobs.length ? '<div class="worker-capacity-grid">' + activeJobs.slice(0, 8).map((job) => jobCard(job, job.due || job.status)).join('') + '</div>' : '<div class="empty-state">No active production jobs.</div>') + '</section>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong>Production controls</strong></div><div class="user-admin-actions"><button class="secondary-button" data-go="schedule">Production schedule</button><button class="secondary-button" data-go="execution">Production & QC</button><button class="secondary-button" data-go="analytics">Performance analytics</button></div></section>';
+}
+
 function dashboard() {
   const hello = app.language === 'hi' ? 'नमस्ते, Sameer' : 'Namaste, Sameer';
   return head(new Intl.DateTimeFormat('en-IN', { weekday: 'long', month: 'long', day: 'numeric' }).format(new Date()).toUpperCase(), hello, app.language === 'hi' ? 'आज आपका काम, पैसा और माल एक जगह पर है।' : 'Your factory’s work, money, and material—at a glance.', '<button class="primary-button" data-new="quote">＋ New quote</button>') +
@@ -964,7 +976,7 @@ function render() {
   ui('#pageKicker').textContent = label[0];
   ui('#pageTitle').textContent = label[1];
   all('.nav-link[data-view]').forEach((button) => button.classList.toggle('active', button.dataset.view === app.view));
-  const pages = { dashboard: window.FactoryFlowAuth.state.user.role === 'worker' ? workerDashboard : dashboard, quotes: quotesPage, jobs: jobsPage, purchases: purchasesPage, materials: materialsPage, workers: workersPage, invoices: invoicesPage, marketplace: marketplacePage, planning: planningPage, schedule: schedulePage, execution: executionPage, analytics: analyticsPage, costing: costingPage, settings: settingsPage, users: usersPage };
+  const pages = { dashboard: window.FactoryFlowAuth.state.user.role === 'worker' ? workerDashboard : window.FactoryFlowAuth.state.user.role === 'supervisor' ? supervisorDashboard : dashboard, quotes: quotesPage, jobs: jobsPage, purchases: purchasesPage, materials: materialsPage, workers: workersPage, invoices: invoicesPage, marketplace: marketplacePage, planning: planningPage, schedule: schedulePage, execution: executionPage, analytics: analyticsPage, costing: costingPage, settings: settingsPage, users: usersPage };
   ui('#view').innerHTML = pages[app.view]();
   bind();
 }
