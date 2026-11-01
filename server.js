@@ -315,7 +315,8 @@ async function handleApi(request, response, pathname) {
       checkLoginThrottle(key);
       const store = readStore();
       const user = store.users.find((item) => auth.normalizeEmail(item.email) === email);
-      if (!user || user.active === false || !auth.verifyPassword(body.password, user.passwordHash)) {
+      const linkedWorker = user && user.role === 'worker' ? store.workers.find((item) => item.id === user.workerId && item.active !== false) : true;
+      if (!user || user.active === false || !linkedWorker || !auth.verifyPassword(body.password, user.passwordHash)) {
         failLogin(key);
         return sendJson(response, 401, { error: 'Email or password is incorrect.' });
       }
@@ -440,8 +441,13 @@ async function handleApi(request, response, pathname) {
       requireCsrf(request, current);
       requirePermission(current, 'execution.record');
       const body = await readJson(request);
-      if (current.user.role === 'worker' && body.workerId !== current.user.workerId) {
-        return sendJson(response, 403, { error: 'Workers can only record output against their own worker profile.' });
+      if (current.user.role === 'worker') {
+        if (body.workerId !== current.user.workerId) {
+          return sendJson(response, 403, { error: 'Workers can only record output against their own worker profile.' });
+        }
+        const worker = store.workers.find((item) => item.id === current.user.workerId && item.active !== false);
+        const assigned = worker && (store.jobs.some((job) => job.id === body.jobId && job.worker === worker.name) || store.schedules.some((session) => session.jobId === body.jobId && session.workerId === worker.id));
+        if (!assigned) return sendJson(response, 403, { error: 'This job is not assigned to your worker profile.' });
       }
       const result = execution.recordProduction(store.productionLogs, store.jobs, store.workers, body, store.schedules);
       appendAudit(store, current.user, 'production.output_recorded', 'production', result.record.id, {
