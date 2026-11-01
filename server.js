@@ -554,6 +554,7 @@ async function handleApi(request, response, pathname) {
       else store.deliveries.unshift(delivery);
       job.status = 'Delivered';
       job.readyForDelivery = true;
+      job.progress = 100;
       job.due = 'Delivered ' + new Date(deliveredAt + 'T00:00:00').toLocaleDateString('en-IN', { month: 'short', day: 'numeric' });
       appendAudit(store, current.user, 'delivery.proof_saved', 'delivery', delivery.id, { jobId: job.id, challan: delivery.challan }, request);
       writeStore(store);
