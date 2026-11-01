@@ -97,9 +97,6 @@
       button.textContent = 'Please wait…';
       const data = new FormData(form);
       try {
-        if (setup || (!password && data.get('password') !== data.get('password'))) {
-          throw new Error('Please review the form.');
-        }
         if ((setup || password) && data.get('password') !== data.get('confirmPassword') && setup) {
           throw new Error('Passwords do not match.');
         }
