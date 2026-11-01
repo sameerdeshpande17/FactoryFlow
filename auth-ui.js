@@ -6,7 +6,11 @@
     permissions: [],
     csrfToken: '',
     adminUsers: [],
-    auditRecords: []
+    auditRecords: [],
+    facilities: [],
+    activeFacilityId: '',
+    facilitySummaries: [],
+    facilitySummariesLoaded: false
   };
   let authResolver = null;
   let initPromise = null;
@@ -16,6 +20,13 @@
     if (payload.user) state.user = payload.user;
     if (Array.isArray(payload.permissions)) state.permissions = payload.permissions;
     if (payload.csrfToken) state.csrfToken = payload.csrfToken;
+    if (Array.isArray(payload.facilities)) state.facilities = payload.facilities;
+    if (payload.user && payload.activeFacilityId) {
+      state.activeFacilityId = payload.activeFacilityId;
+      try { localStorage.setItem('ff-active-facility-' + payload.user.id, payload.activeFacilityId); } catch {}
+    } else if (payload.user && !state.activeFacilityId) {
+      try { state.activeFacilityId = localStorage.getItem('ff-active-facility-' + payload.user.id) || ''; } catch {}
+    }
     document.body.classList.remove('auth-required');
     if (overlay) overlay.remove();
     overlay = null;
@@ -29,6 +40,7 @@
   function request(url, options = {}) {
     const headers = new Headers(options.headers || {});
     if (options.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+    if (state.activeFacilityId && !headers.has('X-Facility-ID')) headers.set('X-Facility-ID', state.activeFacilityId);
     if (options.method && options.method.toUpperCase() !== 'GET' && options.method.toUpperCase() !== 'HEAD' && state.csrfToken) {
       headers.set('X-CSRF-Token', state.csrfToken);
     }
@@ -160,6 +172,7 @@
       if (!response.ok) throw new Error(payload.error || 'Could not verify workspace sign-in.');
       if (payload.authenticated) {
         update(payload);
+        try { state.activeFacilityId = localStorage.getItem('ff-active-facility-' + payload.user.id) || ''; } catch {}
         if (payload.user.mustChangePassword) {
           return new Promise((resolve) => {
             authResolver = resolve;
@@ -176,6 +189,27 @@
     return initPromise;
   }
 
+  function setActiveFacility(facilityId) {
+    const id = String(facilityId || '').trim();
+    if (!state.facilities.some((facility) => facility.id === id && facility.active !== false)) {
+      throw new Error('You are not assigned to that active facility.');
+    }
+    state.activeFacilityId = id;
+    state.facilitySummariesLoaded = false;
+    state.facilitySummaries = [];
+    if (state.user) {
+      try { localStorage.setItem('ff-active-facility-' + state.user.id, id); } catch {}
+    }
+    return id;
+  }
+
+  function clearActiveFacility() {
+    state.activeFacilityId = '';
+    if (state.user) {
+      try { localStorage.removeItem('ff-active-facility-' + state.user.id); } catch {}
+    }
+  }
+
   async function logout() {
     try {
       await request('/api/auth/logout', { method: 'POST', body: '{}' });
@@ -186,6 +220,7 @@
 
   function applyNavigation() {
     const viewPermissions = {
+      facilities: 'facilities.view',
       dashboard: 'dashboard.view',
       quotes: 'quotes.view',
       jobs: 'jobs.view',
@@ -206,6 +241,19 @@
       const permission = viewPermissions[button.dataset.view];
       button.hidden = Boolean(permission && !has(permission));
     });
+    const facilityWrap = document.querySelector('#facilitySwitcherWrap');
+    const facilitySelect = document.querySelector('#facilitySwitcher');
+    if (facilityWrap && facilitySelect) {
+      const activeFacilities = state.facilities.filter((facility) => facility.active !== false);
+      const canSwitch = has('facilities.view') && state.user && state.user.role !== 'worker' && activeFacilities.length > 1;
+      facilityWrap.hidden = !canSwitch;
+      if (canSwitch) {
+        facilitySelect.innerHTML = activeFacilities.map((facility) =>
+          '<option value="' + safe(facility.id) + '">' + safe(facility.name + ' · ' + facility.code) + '</option>'
+        ).join('');
+        if (activeFacilities.some((facility) => facility.id === state.activeFacilityId)) facilitySelect.value = state.activeFacilityId;
+      }
+    }
     const accountName = document.querySelector('.user-card strong');
     const accountRole = document.querySelector('.user-card small');
     if (accountName && state.user) accountName.textContent = state.user.name;
@@ -230,6 +278,8 @@
     update,
     has,
     request,
+    setActiveFacility,
+    clearActiveFacility,
     logout,
     applyNavigation
   };

@@ -5,6 +5,7 @@ const { URL } = require('node:url');
 const auth = require('./auth.js');
 const execution = require('./execution.js');
 const analytics = require('./analytics.js');
+const facilityModel = require('./facilities.js');
 
 const root = __dirname;
 const dataDirectory = path.join(root, 'data');
@@ -38,8 +39,9 @@ function ensureDataStore() {
 function readStore() {
   ensureDataStore();
   const stored = JSON.parse(fs.readFileSync(dataPath, 'utf8'));
-  return {
+  const normalized = facilityModel.ensureFacilityState({
     workspace: stored.workspace || { name: 'Northstar Works', cluster: 'Packaging', locale: 'en-IN' },
+    facilities: list(stored.facilities),
     quotes: list(stored.quotes),
     jobs: list(stored.jobs),
     purchases: list(stored.purchases),
@@ -56,7 +58,9 @@ function readStore() {
     downtimeLogs: list(stored.downtimeLogs),
     users: list(stored.users),
     auditLogs: list(stored.auditLogs)
-  };
+  });
+  if (normalized.changed) writeStore(normalized.store);
+  return normalized.store;
 }
 
 function writeStore(payload) {
@@ -72,6 +76,7 @@ function appendAudit(store, actor, action, targetType, targetId, details = {}, r
     actorId: actor ? actor.id : '',
     actorName: actor ? actor.name : 'System',
     actorRole: actor ? actor.role : 'system',
+    facilityId: request && request.factoryFlowFacilityId ? request.factoryFlowFacilityId : '',
     action,
     targetType,
     targetId: targetId || '',
@@ -339,6 +344,18 @@ async function handleApi(request, response, pathname) {
   if (current.user.mustChangePassword && !['/api/auth/password', '/api/auth/logout'].includes(pathname)) {
     return sendJson(response, 403, { error: 'Change your temporary password before accessing the workspace.' });
   }
+  const activeFacility = facilityModel.resolveFacility(
+    current.user,
+    store.facilities,
+    store,
+    request.headers['x-facility-id'] || ''
+  );
+  if (!activeFacility) {
+    return sendJson(response, 403, { error: 'Your account is not assigned to an active factory facility.' });
+  }
+  current.facility = activeFacility;
+  current.allowedFacilityIds = facilityModel.allowedFacilityIds(current.user, store.facilities, store);
+  request.factoryFlowFacilityId = activeFacility.id;
 
   if (request.method === 'POST' && pathname === '/api/auth/logout') {
     try {
@@ -369,10 +386,15 @@ async function handleApi(request, response, pathname) {
   }
 
   if (pathname === '/api/bootstrap' && request.method === 'GET') {
-    const projected = projectStoreForUser(store, current.user);
+    const roleProjected = projectStoreForUser(store, current.user);
+    const projected = facilityModel.projectStoreForFacility(roleProjected, current.facility.id);
+    const visibleFacilities = store.facilities.filter((facility) => current.allowedFacilityIds.includes(facility.id) && facility.active !== false);
+    projected.facilities = visibleFacilities;
     return sendJson(response, 200, {
-      workspace: store.workspace,
+      workspace: { ...store.workspace, activeFacilityId: current.facility.id },
       state: projected,
+      facilities: visibleFacilities,
+      activeFacilityId: current.facility.id,
       customers: customerDirectory(projected),
       auth: {
         user: auth.sanitizeUser(current.user),
@@ -380,6 +402,51 @@ async function handleApi(request, response, pathname) {
         csrfToken: current.session.csrfToken
       }
     });
+  }
+
+  if (pathname === '/api/facilities' && request.method === 'GET') {
+    try {
+      requirePermission(current, 'facilities.view');
+      const visible = store.facilities.filter((facility) => current.allowedFacilityIds.includes(facility.id) && facility.active !== false);
+      return sendJson(response, 200, { facilities: visible });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  if (pathname === '/api/facilities/summary' && request.method === 'GET') {
+    try {
+      requirePermission(current, 'facilities.view');
+      const visible = store.facilities.filter((facility) => current.allowedFacilityIds.includes(facility.id) && facility.active !== false);
+      return sendJson(response, 200, {
+        summaries: visible.map((facility) => facilityModel.summarizeFacility(store, facility)),
+        facilityCount: visible.length
+      });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  if (pathname === '/api/facilities' && request.method === 'POST') {
+    try {
+      requireCsrf(request, current);
+      requirePermission(current, 'facilities.manage');
+      const body = await readJson(request);
+      const facility = facilityModel.createFacility(body, store.facilities);
+      appendAudit(store, current.user, 'facility.created', 'facility', facility.id, { code: facility.code, name: facility.name }, request);
+      writeStore(store);
+      return sendJson(response, 201, { facility });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  const facilityMatch = /^\/api\/facilities\/([^/]+)$/.exec(pathname);
+  if (facilityMatch && request.method === 'PATCH') {
+    try {
+      requireCsrf(request, current);
+      requirePermission(current, 'facilities.manage');
+      const body = await readJson(request);
+      const facility = facilityModel.updateFacility(facilityMatch[1], body, store.facilities, store.workspace);
+      if (body.isDefault === true) facilityModel.setDefaultFacility(facility.id, store.facilities, store.workspace);
+      appendAudit(store, current.user, 'facility.updated', 'facility', facility.id, { active: facility.active, isDefault: facility.isDefault }, request);
+      writeStore(store);
+      return sendJson(response, 200, { facility });
+    } catch (error) { return publicAuthError(error, response); }
   }
 
   if (pathname === '/api/users' && request.method === 'GET') {
@@ -397,7 +464,21 @@ async function handleApi(request, response, pathname) {
       if (body.role === 'worker' && !store.workers.some((worker) => worker.id === body.workerId && worker.active !== false)) {
         return sendJson(response, 400, { error: 'Choose an active worker profile for this account.' });
       }
-      const user = auth.createUser(body, store.users, { mustChangePassword: true });
+      const activeIds = store.facilities.filter((facility) => facility.active !== false).map((facility) => facility.id);
+      const roleFacilityIds = body.role === 'admin'
+        ? []
+        : [...new Set(list(body.facilityIds).map((id) => String(id).trim()).filter((id) => activeIds.includes(id)))];
+      if (body.role !== 'admin' && !roleFacilityIds.length) {
+        return sendJson(response, 400, { error: 'Assign at least one active facility to this account.' });
+      }
+      if (body.role === 'worker') {
+        const worker = store.workers.find((item) => item.id === body.workerId && item.active !== false);
+        if (!worker || !roleFacilityIds.includes(worker.facilityId)) {
+          return sendJson(response, 400, { error: 'A worker account must be assigned to the facility of its linked worker profile.' });
+        }
+        if (roleFacilityIds.length !== 1) return sendJson(response, 400, { error: 'Worker accounts can belong to only one facility.' });
+      }
+      const user = auth.createUser({ ...body, facilityIds: roleFacilityIds }, store.users, { mustChangePassword: true });
       appendAudit(store, current.user, 'users.created', 'user', user.id, { role: user.role }, request);
       writeStore(store);
       return sendJson(response, 201, { user: auth.sanitizeUser(user) });
@@ -418,23 +499,37 @@ async function handleApi(request, response, pathname) {
       const nextRole = body.role !== undefined ? auth.validateRole(body.role) : target.role;
       const nextActive = body.active !== undefined ? body.active : target.active !== false;
       if (typeof nextActive !== 'boolean') return sendJson(response, 400, { error: 'Account status must be active or inactive.' });
-      const nextWorkerId = body.workerId !== undefined ? String(body.workerId || '').trim() : target.workerId || '';
-      if (nextRole === 'worker' && !store.workers.some((worker) => worker.id === nextWorkerId && worker.active !== false)) return sendJson(response, 400, { error: 'Worker accounts must be linked to an active worker profile.' });
-      if (body.name !== undefined) {
-        const name = String(body.name).trim();
-        if (!name || name.length > 100) return sendJson(response, 400, { error: 'Enter a valid user name.' });
-      }
       const activeAdminsAfter = store.users.filter((item) => item.id === target.id
         ? nextRole === 'admin' && nextActive
         : item.role === 'admin' && item.active !== false);
       if (!activeAdminsAfter.length) return sendJson(response, 400, { error: 'At least one active administrator must remain.' });
+      const nextWorkerId = body.workerId !== undefined ? String(body.workerId || '').trim() : target.workerId || '';
+      const activeFacilityIds = store.facilities.filter((facility) => facility.active !== false).map((facility) => facility.id);
+      const nextFacilityIds = nextRole === 'admin'
+        ? []
+        : body.facilityIds !== undefined
+          ? [...new Set(list(body.facilityIds).map((id) => String(id).trim()).filter((id) => activeFacilityIds.includes(id)))]
+          : list(target.facilityIds);
+      if (nextRole !== 'admin' && !nextFacilityIds.length) return sendJson(response, 400, { error: 'Assign at least one active facility to this account.' });
+      if (nextRole === 'worker') {
+        const worker = store.workers.find((item) => item.id === nextWorkerId && item.active !== false);
+        if (!worker || nextFacilityIds.length !== 1 || nextFacilityIds[0] !== worker.facilityId) {
+          return sendJson(response, 400, { error: 'A worker account must be assigned only to the facility of its linked worker profile.' });
+        }
+      }
+      if (body.name !== undefined) {
+        const name = String(body.name).trim();
+        if (!name || name.length > 100) return sendJson(response, 400, { error: 'Enter a valid user name.' });
+      }
       const roleChanged = target.role !== nextRole;
+      const facilityAssignmentChanged = JSON.stringify(list(target.facilityIds)) !== JSON.stringify(nextFacilityIds);
       if (body.name !== undefined) target.name = String(body.name).trim();
       target.role = nextRole;
       target.workerId = nextWorkerId;
+      target.facilityIds = nextFacilityIds;
       target.active = nextActive;
       target.updatedAt = new Date().toISOString();
-      if (target.active === false || roleChanged) sessions.revokeUser(target.id);
+      if (target.active === false || roleChanged || facilityAssignmentChanged) sessions.revokeUser(target.id);
       appendAudit(store, current.user, 'users.updated', 'user', target.id, { role: target.role, active: target.active }, request);
       writeStore(store);
       return sendJson(response, 200, { user: auth.sanitizeUser(target) });
@@ -466,17 +561,21 @@ async function handleApi(request, response, pathname) {
         );
         if (!assignedSession) return sendJson(response, 403, { error: 'Workers must record output against their own scheduled session and production date.' });
       }
+      const targetJob = store.jobs.find((job) => job.id === body.jobId && job.facilityId === current.facility.id);
+      if (!targetJob) return sendJson(response, 404, { error: 'Job not found in the selected facility.' });
       const result = execution.recordProduction(store.productionLogs, store.jobs, store.workers, body, store.schedules);
+      result.record.facilityId = current.facility.id;
       appendAudit(store, current.user, 'production.output_recorded', 'production', result.record.id, {
         jobId: result.record.jobId,
         producedQty: result.record.producedQty,
         actualHours: result.record.actualHours
       }, request);
       writeStore(store);
-      const projected = projectStoreForUser(store, current.user);
+      const roleProjected = projectStoreForUser(store, current.user);
+      const projected = facilityModel.projectStoreForFacility(roleProjected, current.facility.id);
       return sendJson(response, 201, {
         record: result.record,
-        job: store.jobs.find((item) => item.id === result.record.jobId),
+        job: store.jobs.find((item) => item.id === result.record.jobId && item.facilityId === current.facility.id),
         productionLogs: projected.productionLogs,
         jobs: projected.jobs
       });
@@ -488,12 +587,15 @@ async function handleApi(request, response, pathname) {
       requireCsrf(request, current);
       requirePermission(current, 'execution.qc');
       const body = await readJson(request);
+      if (!store.jobs.some((job) => job.id === body.jobId && job.facilityId === current.facility.id)) return sendJson(response, 404, { error: 'Job not found in the selected facility.' });
       const result = execution.recordInspection(store.qcInspections, store.productionLogs, store.reworkLogs, store.jobs, body);
+      result.record.facilityId = current.facility.id;
       appendAudit(store, current.user, 'quality.inspection_recorded', 'qc_inspection', result.record.id, {
         jobId: result.record.jobId, disposition: result.record.disposition
       }, request);
       writeStore(store);
-      return sendJson(response, 201, { record: result.record, qcInspections: store.qcInspections });
+      const scoped = facilityModel.projectStoreForFacility(store, current.facility.id);
+      return sendJson(response, 201, { record: result.record, qcInspections: scoped.qcInspections });
     } catch (error) { return publicAuthError(error, response); }
   }
 
@@ -502,12 +604,16 @@ async function handleApi(request, response, pathname) {
       requireCsrf(request, current);
       requirePermission(current, 'execution.qc');
       const body = await readJson(request);
+      const sourceInspection = store.qcInspections.find((item) => item.id === body.qcInspectionId && item.facilityId === current.facility.id);
+      if (!sourceInspection) return sendJson(response, 404, { error: 'QC inspection not found in the selected facility.' });
       const result = execution.recordRework(store.reworkLogs, store.qcInspections, store.jobs, body);
+      result.record.facilityId = current.facility.id;
       appendAudit(store, current.user, 'quality.rework_recorded', 'rework', result.record.id, {
         jobId: result.record.jobId, recoveredQty: result.record.recoveredQty, scrappedQty: result.record.scrappedQty
       }, request);
       writeStore(store);
-      return sendJson(response, 201, { record: result.record, reworkLogs: store.reworkLogs });
+      const scoped = facilityModel.projectStoreForFacility(store, current.facility.id);
+      return sendJson(response, 201, { record: result.record, reworkLogs: scoped.reworkLogs });
     } catch (error) { return publicAuthError(error, response); }
   }
 
@@ -516,6 +622,7 @@ async function handleApi(request, response, pathname) {
       requireCsrf(request, current);
       requirePermission(current, 'execution.qc');
       const body = await readJson(request);
+      if (!store.jobs.some((job) => job.id === body.jobId && job.facilityId === current.facility.id)) return sendJson(response, 404, { error: 'Job not found in the selected facility.' });
       const result = execution.releaseForDelivery(store.jobs, store.productionLogs, store.qcInspections, store.reworkLogs, body.jobId);
       appendAudit(store, current.user, 'production.released', 'job', body.jobId, {
         acceptedQty: result.summary.acceptedQty,
@@ -531,7 +638,7 @@ async function handleApi(request, response, pathname) {
       requireCsrf(request, current);
       requirePermission(current, 'jobs.manage');
       const body = await readJson(request);
-      const job = store.jobs.find((item) => item.id === body.jobId);
+      const job = store.jobs.find((item) => item.id === body.jobId && item.facilityId === current.facility.id);
       if (!job || (!job.readyForDelivery && job.status !== 'Delivered')) {
         return sendJson(response, 400, { error: 'This job has not passed production and QC release checks.' });
       }
@@ -549,8 +656,9 @@ async function handleApi(request, response, pathname) {
           return sendJson(response, 400, { error: 'Delivery attachment must be a JPG, PNG, WebP or PDF up to 1 MB.' });
         }
       }
-      const existingIndex = store.deliveries.findIndex((item) => item.jobId === job.id);
+      const existingIndex = store.deliveries.findIndex((item) => item.jobId === job.id && item.facilityId === current.facility.id);
       const delivery = {
+        facilityId: current.facility.id,
         id: existingIndex >= 0 ? store.deliveries[existingIndex].id : 'DP-' + cryptoId(),
         jobId: job.id,
         customer: job.customer,
@@ -579,12 +687,15 @@ async function handleApi(request, response, pathname) {
       requireCsrf(request, current);
       requirePermission(current, 'analytics.downtime');
       const body = await readJson(request);
+      if (body.jobId && !store.jobs.some((job) => job.id === body.jobId && job.facilityId === current.facility.id)) return sendJson(response, 404, { error: 'Job not found in the selected facility.' });
       const record = analytics.recordDowntime(store.downtimeLogs, store.jobs, body);
+      record.facilityId = current.facility.id;
       appendAudit(store, current.user, 'production.downtime_recorded', 'downtime', record.id, {
         machineName: record.machineName, durationMinutes: record.durationMinutes, reason: record.reason
       }, request);
       writeStore(store);
-      return sendJson(response, 201, { record, downtimeLogs: store.downtimeLogs });
+      const scoped = facilityModel.projectStoreForFacility(store, current.facility.id);
+      return sendJson(response, 201, { record, downtimeLogs: scoped.downtimeLogs });
     } catch (error) { return publicAuthError(error, response); }
   }
 
@@ -596,26 +707,14 @@ async function handleApi(request, response, pathname) {
         return sendJson(response, 403, { error: 'This role must use its specific operational actions instead of full workspace sync.' });
       }
       const body = await readJson(request);
-      const next = {
-        ...store,
-        quotes: list(body.quotes),
-        jobs: list(body.jobs),
-        purchases: list(body.purchases),
-        materials: list(body.materials),
-        deliveries: list(body.deliveries),
-        receipts: list(body.receipts),
-        movements: list(body.movements),
-        requirements: list(body.requirements),
-        workers: list(body.workers),
-        schedules: list(body.schedules),
-        productionLogs: list(body.productionLogs),
-        qcInspections: list(body.qcInspections),
-        reworkLogs: list(body.reworkLogs),
-        downtimeLogs: list(body.downtimeLogs)
-      };
+      const next = { ...store };
+      for (const key of facilityModel.COLLECTIONS) {
+        next[key] = facilityModel.mergeFacilityCollection(store[key], list(body[key]), current.facility.id, ['jobs', 'workers', 'schedules'].includes(key));
+      }
       appendAudit(next, current.user, 'workspace.synced', 'workspace', '', {}, request);
       writeStore(next);
-      return sendJson(response, 200, { ok: true, updatedAt: new Date().toISOString(), customers: customerDirectory(next) });
+      const scoped = facilityModel.projectStoreForFacility(next, current.facility.id);
+      return sendJson(response, 200, { ok: true, updatedAt: new Date().toISOString(), customers: customerDirectory(scoped) });
     } catch (error) { return publicAuthError(error, response); }
   }
 
@@ -633,7 +732,7 @@ function serveStatic(response, pathname) {
   const blocked = decoded.split('/').some((part) =>
     part === '..' || part === '.git' || part === 'data' || part === 'node_modules' ||
     part.startsWith('.')
-  ) || ['/server.js', '/auth.js'].includes(decoded);
+  ) || ['/server.js', '/auth.js', '/facilities.js'].includes(decoded);
   if (blocked) {
     response.writeHead(404);
     return response.end('Not found');

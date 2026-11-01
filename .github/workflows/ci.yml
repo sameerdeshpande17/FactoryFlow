@@ -10,6 +10,7 @@ on:
       - feat/production-execution-quality-control
       - feat/production-analytics-performance
       - feat/auth-rbac-user-management
+      - feat/multi-facility-workspaces
   pull_request:
     branches:
       - main

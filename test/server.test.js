@@ -23,7 +23,7 @@ async function freePort() {
 before(async () => {
   const root = path.join(__dirname, '..');
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'factoryflow-test-'));
-  for (const file of ['server.js', 'auth.js', 'execution.js', 'analytics.js']) {
+  for (const file of ['server.js', 'auth.js', 'facilities.js', 'execution.js', 'analytics.js']) {
     fs.copyFileSync(path.join(root, file), path.join(tempDir, file));
   }
   fs.mkdirSync(path.join(tempDir, 'data'));
@@ -112,6 +112,23 @@ test('authenticates users, enforces role access, persists operations and protect
   assert.ok(Array.isArray(emptyState.state.downtimeLogs));
   assert.deepEqual(emptyState.state.users, []);
   assert.deepEqual(emptyState.state.auditLogs, []);
+  assert.equal(emptyState.activeFacilityId, 'FAC-001');
+  assert.equal(emptyState.facilities.length, 1);
+  assert.equal(emptyState.facilities[0].id, 'FAC-001');
+
+  const createFacility = await fetch(baseUrl + '/api/facilities', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Pune Plant', code: 'PUNE-01', city: 'Pune', address: 'Industrial Area', timezone: 'Asia/Kolkata' })
+  });
+  assert.equal(createFacility.status, 201);
+  const puneFacility = (await json(createFacility)).facility;
+  assert.equal(puneFacility.code, 'PUNE-01');
+  assert.notEqual(puneFacility.id, 'FAC-001');
+
+  const initialFacilitySummary = await json(await fetch(baseUrl + '/api/facilities/summary', { headers: { Cookie: adminCookie } }));
+  assert.equal(initialFacilitySummary.facilityCount, 2);
+  assert.deepEqual(initialFacilitySummary.summaries.map((item) => item.facilityId).sort(), ['FAC-001', puneFacility.id].sort());
 
   const invalidCsrf = await fetch(baseUrl + '/api/sync', {
     method: 'POST',
@@ -147,10 +164,85 @@ test('authenticates users, enforces role access, persists operations and protect
   };
   const sync = await fetch(baseUrl + '/api/sync', {
     method: 'POST',
-    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'Content-Type': 'application/json' },
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
     body: JSON.stringify(state)
   });
   assert.equal(sync.status, 200);
+
+  const puneState = {
+    quotes: [],
+    jobs: [{ id: 'JB-PUNE', customer: 'Pune Foods', item: 'Pune carton run', qty: 100, status: 'In production', progress: 0 }],
+    purchases: [],
+    materials: [{ sku: 'RM-PUNE', item: 'Pune kraft paper', onHand: '50 kg', stock: 50, capacity: 50, status: 'Critical' }],
+    deliveries: [],
+    receipts: [],
+    movements: [],
+    requirements: [],
+    workers: [{ id: 'WRK-PUNE', name: 'Pune Worker', skill: 'Printing', capacityHoursPerDay: 8, active: true, unavailableDates: [] }],
+    schedules: [],
+    productionLogs: [{ id: 'PR-PUNE', jobId: 'JB-PUNE', workerId: 'WRK-PUNE', producedQty: 60, goodQty: 58, rejectedQty: 2, actualHours: 5 }],
+    qcInspections: [],
+    reworkLogs: [],
+    downtimeLogs: [{ id: 'DT-PUNE', machineName: 'Pune Press', durationMinutes: 90, reason: 'Breakdown', startAt: '2026-11-01T08:00', endAt: '2026-11-01T09:30' }]
+  };
+  const puneSync = await fetch(baseUrl + '/api/sync', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': puneFacility.id, 'Content-Type': 'application/json' },
+    body: JSON.stringify(puneState)
+  });
+  assert.equal(puneSync.status, 200);
+
+  const mainFacilityProduction = await fetch(baseUrl + '/api/operations/production', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jobId: 'JB-OTHER',
+      workerId: 'WRK-OTHER',
+      productionDate: '2026-11-01',
+      shift: 'Day',
+      producedQty: 5,
+      goodQty: 5,
+      rejectedQty: 0,
+      actualHours: 1
+    })
+  });
+  assert.equal(mainFacilityProduction.status, 201);
+  const mainFacilityProductionPayload = await json(mainFacilityProduction);
+  assert.equal(mainFacilityProductionPayload.productionLogs.some((entry) => entry.id === 'PR-PUNE'), false);
+
+  const mainBootstrap = await json(await fetch(baseUrl + '/api/bootstrap', {
+    headers: { Cookie: adminCookie, 'X-Facility-ID': 'FAC-001' }
+  }));
+  assert.deepEqual(mainBootstrap.state.jobs.map((job) => job.id).sort(), ['JB-OTHER', 'JB-WORKER']);
+  assert.equal(mainBootstrap.state.materials.some((item) => item.sku === 'RM-PUNE'), false);
+
+  const puneBootstrap = await json(await fetch(baseUrl + '/api/bootstrap', {
+    headers: { Cookie: adminCookie, 'X-Facility-ID': puneFacility.id }
+  }));
+  assert.deepEqual(puneBootstrap.state.jobs.map((job) => job.id), ['JB-PUNE']);
+  assert.deepEqual(puneBootstrap.state.materials.map((item) => item.sku), ['RM-PUNE']);
+  assert.deepEqual(puneBootstrap.state.workers.map((item) => item.id), ['WRK-PUNE']);
+
+  const allFacilitySummaries = await json(await fetch(baseUrl + '/api/facilities/summary', {
+    headers: { Cookie: adminCookie, 'X-Facility-ID': 'FAC-001' }
+  }));
+  const puneSummary = allFacilitySummaries.summaries.find((item) => item.facilityId === puneFacility.id);
+  assert.equal(puneSummary.activeJobs, 1);
+  assert.equal(puneSummary.producedQty, 60);
+  assert.equal(puneSummary.activeWorkers, 1);
+  assert.equal(puneSummary.stockAlerts, 1);
+  assert.equal(puneSummary.downtimeHours, 1.5);
+
+  const crossFacilityWrite = await fetch(baseUrl + '/api/sync', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...state, jobs: [{ id: 'JB-PUNE', facilityId: puneFacility.id, customer: 'Tamper' }] })
+  });
+  assert.equal(crossFacilityWrite.status, 400);
+  const puneStillIntact = await json(await fetch(baseUrl + '/api/bootstrap', {
+    headers: { Cookie: adminCookie, 'X-Facility-ID': puneFacility.id }
+  }));
+  assert.equal(puneStillIntact.state.jobs[0].customer, 'Pune Foods');
 
   const createManager = await fetch(baseUrl + '/api/users', {
     method: 'POST',
@@ -159,6 +251,7 @@ test('authenticates users, enforces role access, persists operations and protect
       name: 'Factory Manager',
       email: 'manager@factory.example',
       role: 'manager',
+      facilityIds: ['FAC-001'],
       password: 'FactoryFlowManager123'
     })
   });
@@ -185,6 +278,17 @@ test('authenticates users, enforces role access, persists operations and protect
   const managerBootstrap = await json(await fetch(baseUrl + '/api/bootstrap', { headers: { Cookie: managerCookie } }));
   assert.deepEqual(managerBootstrap.state.users, []);
   assert.deepEqual(managerBootstrap.state.auditLogs, []);
+  assert.equal(managerBootstrap.facilities.length, 1);
+  assert.equal(managerBootstrap.facilities[0].id, 'FAC-001');
+  const managerFacilitySummary = await json(await fetch(baseUrl + '/api/facilities/summary', { headers: { Cookie: managerCookie } }));
+  assert.equal(managerFacilitySummary.facilityCount, 1);
+  assert.deepEqual(managerFacilitySummary.summaries.map((item) => item.facilityId), ['FAC-001']);
+  assert.equal((await fetch(baseUrl + '/api/bootstrap', { headers: { Cookie: managerCookie, 'X-Facility-ID': puneFacility.id } })).status, 403);
+  assert.equal((await fetch(baseUrl + '/api/facilities', {
+    method: 'POST',
+    headers: { Cookie: managerCookie, 'X-CSRF-Token': managerCsrf, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Unauthorized Site', code: 'NOPE' })
+  })).status, 403);
   assert.equal((await fetch(baseUrl + '/api/users', { headers: { Cookie: managerCookie } })).status, 403);
 
   const createWorker = await fetch(baseUrl + '/api/users', {
@@ -195,6 +299,7 @@ test('authenticates users, enforces role access, persists operations and protect
       email: 'worker@factory.example',
       role: 'worker',
       workerId: 'WRK-TEST',
+      facilityIds: ['FAC-001'],
       password: 'FactoryFlowWorker123'
     })
   });
