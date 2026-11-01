@@ -255,8 +255,7 @@ function projectStoreForUser(store, user) {
   const schedules = store.schedules.filter((item) => item.workerId === user.workerId);
   const jobIds = new Set([
     ...schedules.map((item) => item.jobId),
-    ...store.productionLogs.filter((item) => item.workerId === user.workerId).map((item) => item.jobId),
-    ...store.jobs.filter((item) => workerName && item.worker === workerName).map((item) => item.id)
+    ...store.productionLogs.filter((item) => item.workerId === user.workerId).map((item) => item.jobId)
   ]);
   return {
     ...store,
@@ -452,7 +451,7 @@ async function handleApi(request, response, pathname) {
           return sendJson(response, 403, { error: 'Workers can only record output against their own worker profile.' });
         }
         const worker = store.workers.find((item) => item.id === current.user.workerId && item.active !== false);
-        const assigned = worker && (store.jobs.some((job) => job.id === body.jobId && job.worker === worker.name) || store.schedules.some((session) => session.jobId === body.jobId && session.workerId === worker.id));
+        const assigned = worker && store.schedules.some((session) => session.jobId === body.jobId && session.workerId === worker.id);
         if (!assigned) return sendJson(response, 403, { error: 'This job is not assigned to your worker profile.' });
       }
       const result = execution.recordProduction(store.productionLogs, store.jobs, store.workers, body, store.schedules);
