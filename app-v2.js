@@ -1511,16 +1511,40 @@ function bind() {
   }));
 }
 
-all('.nav-link[data-view]').forEach((button) => button.addEventListener('click', () => goto(button.dataset.view)));
-ui('#mobileMenu').addEventListener('click', () => ui('.sidebar').classList.toggle('open'));
-ui('#modalClose').addEventListener('click', closeModal);
-ui('#modalBackdrop').addEventListener('click', (event) => { if (event.target.id === 'modalBackdrop') closeModal(); });
-ui('#notificationButton').addEventListener('click', () => notify('Two material alerts and one customer reply need attention.'));
-ui('#dateButton').addEventListener('click', () => notify('Showing work scheduled for today.'));
-ui('#languageToggle').addEventListener('click', toggleLanguage);
-ui('#globalSearch').addEventListener('input', () => { if (app.view === 'quotes') ui('#quotesBody').innerHTML = quoteRows(); });
-ui('#todayDate').textContent = new Date().toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' });
-ui('#languageToggle').textContent = app.language === 'hi' ? 'EN' : 'हिं';
-save(false);
-render();
-hydrateWorkspace();
+async function startFactoryFlowApplication() {
+  try {
+    await window.FactoryFlowAuth.initialize();
+    window.FactoryFlowAuth.applyNavigation();
+    const pagePermissions = {
+      dashboard: 'dashboard.view', quotes: 'quotes.view', jobs: 'jobs.view',
+      purchases: 'purchases.view', materials: 'materials.view', workers: 'workers.view',
+      invoices: 'invoices.view', marketplace: 'marketplace.view', planning: 'planning.view',
+      schedule: 'schedule.view', execution: 'execution.view', analytics: 'analytics.view',
+      costing: 'costing.view', settings: 'settings.view', users: 'users.manage'
+    };
+    all('.nav-link[data-view]').forEach((button) => button.addEventListener('click', () => {
+      if (window.FactoryFlowAuth.has(pagePermissions[button.dataset.view])) goto(button.dataset.view);
+    }));
+    ui('#mobileMenu').addEventListener('click', () => ui('.sidebar').classList.toggle('open'));
+    ui('#modalClose').addEventListener('click', closeModal);
+    ui('#modalBackdrop').addEventListener('click', (event) => { if (event.target.id === 'modalBackdrop') closeModal(); });
+    ui('#notificationButton').addEventListener('click', () => notify('You are signed in to your FactoryFlow workspace.'));
+    ui('#dateButton').addEventListener('click', () => notify('Showing work scheduled for today.'));
+    ui('#languageToggle').addEventListener('click', toggleLanguage);
+    ui('#globalSearch').addEventListener('input', () => {
+      if (app.view === 'quotes' && window.FactoryFlowAuth.has('quotes.view')) ui('#quotesBody').innerHTML = quoteRows();
+    });
+    ui('#todayDate').textContent = new Date().toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' });
+    ui('#languageToggle').textContent = app.language === 'hi' ? 'EN' : 'हिं';
+    await hydrateWorkspace();
+    window.FactoryFlowAuth.applyNavigation();
+    render();
+  } catch (error) {
+    const shell = document.createElement('main');
+    shell.className = 'auth-overlay';
+    shell.innerHTML = '<section class="auth-card"><h1>FactoryFlow could not start</h1><p class="auth-error">' + safe(error.message) + '</p><button class="auth-submit" id="factoryFlowRetry" type="button">Retry</button></section>';
+    document.body.appendChild(shell);
+    shell.querySelector('#factoryFlowRetry').addEventListener('click', () => window.location.reload());
+  }
+}
+startFactoryFlowApplication();
