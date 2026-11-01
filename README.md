@@ -37,7 +37,15 @@ Opening index.html directly is still supported as a browser-only fallback, but c
 - Production analytics with date-filtered output trends, yield, QC pass/fail rates, worker productivity, planned-versus-actual hours for linked sessions, delivery timeliness, and job performance
 - Machine/workstation downtime logging by time, machine, reason, reporter, and optional job reference, with machine and reason summaries
 - Production output captures actual hours worked and can link to a scheduled session; legacy records without actual hours are excluded from throughput rates and flagged in analytics
+- Role-based access for administrators, managers, production supervisors, and workers, with server-enforced permissions and worker-scoped workspace data
+- Salted scrypt password hashes, HttpOnly SameSite session cookies, CSRF checks, first-admin setup, forced password change for provisioned accounts, login throttling, and audit history
 - Responsive layout for desktop and mobile screens
+
+## Authentication setup
+
+On a fresh workspace, open the application and create the first administrator account. Administrators can then create Manager, Production supervisor, and Worker accounts from User management. Newly created accounts must change their temporary password on first sign-in. Worker accounts must be linked to an active job-worker profile.
+
+Authentication is enforced by the local Node.js workspace server. Do not expose this development server directly to the public internet; use HTTPS, a reverse proxy with appropriate security headers, backups, and a managed deployment before production use. Browser-only `file://` mode is not supported for authenticated workspaces.
 
 ## Suggested next steps
 
