@@ -297,6 +297,22 @@ test('authenticates users, enforces role access, persists operations and protect
   });
   assert.equal(unrelatedJobOutput.status, 403);
 
+  const unscheduledWorkerOutput = await fetch(baseUrl + '/api/operations/production', {
+    method: 'POST',
+    headers: { Cookie: workerCookie, 'X-CSRF-Token': workerCsrf, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      jobId: 'JB-WORKER',
+      workerId: 'WRK-TEST',
+      productionDate: '2026-11-01',
+      shift: 'Day',
+      producedQty: 2,
+      goodQty: 2,
+      rejectedQty: 0,
+      actualHours: 1
+    })
+  });
+  assert.equal(unscheduledWorkerOutput.status, 403);
+
   const ownJobOutput = await fetch(baseUrl + '/api/operations/production', {
     method: 'POST',
     headers: { Cookie: workerCookie, 'X-CSRF-Token': workerCsrf, 'Content-Type': 'application/json' },
