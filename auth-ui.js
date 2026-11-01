@@ -43,6 +43,7 @@
           state.user = null;
           state.permissions = [];
           state.csrfToken = '';
+          if (!authResolver) authResolver = () => window.location.reload();
           showAuth('login', 'Your session has expired. Sign in again.');
         }
         throw new Error(payload.error || 'Request failed (' + response.status + ').');
