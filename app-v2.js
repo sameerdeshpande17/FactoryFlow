@@ -760,23 +760,27 @@ function createDowntimeRecord() {
   const end = new Date(now.getTime() + 60 * 60 * 1000);
   const jobOptions = '<option value="">Not linked to a job</option>' + jobs.map((job) => '<option value="' + safe(job.id) + '">' + safe(job.id + ' · ' + job.customer + ' · ' + job.item) + '</option>').join('');
   openModal('<h2 id="modalTitle">Log machine downtime</h2><p>Record an actual machine or workstation stop. Duration is calculated from the start and end time.</p><form id="downtimeForm" class="form-grid"><label>Machine / workstation<input required name="machineName" placeholder="e.g. Flexo press 1"></label><div class="form-row"><label>Start time<input required type="datetime-local" name="startAt" value="' + localDateTimeValue(now) + '"></label><label>End time<input required type="datetime-local" name="endAt" value="' + localDateTimeValue(end) + '"></label></div><label>Reason<select required name="reason"><option value="">Select reason</option><option>Breakdown</option><option>Planned maintenance</option><option>Material shortage</option><option>Power outage</option><option>Changeover / setup</option><option>Quality issue</option><option>Operator unavailable</option><option>Other</option></select></label><label>Related job (optional)<select name="jobId">' + jobOptions + '</select></label><label>Reported by<input required name="reportedBy" placeholder="Name of operator / supervisor"></label><label>Notes<input name="notes" placeholder="Cause, action taken or maintenance reference"></label><p id="downtimeError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save downtime record</button></div></form>');
-  ui('#downtimeForm').addEventListener('submit', (event) => {
+  ui('#downtimeForm').addEventListener('submit', async (event) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     try {
-      const record = window.FactoryFlowAnalytics.recordDowntime(downtimeLogs, jobs, {
-        machineName: data.get('machineName'),
-        startAt: data.get('startAt'),
-        endAt: data.get('endAt'),
-        reason: data.get('reason'),
-        jobId: data.get('jobId'),
-        reportedBy: data.get('reportedBy'),
-        notes: data.get('notes')
+      const result = await window.FactoryFlowAuth.request('/api/operations/downtime', {
+        method: 'POST',
+        body: JSON.stringify({
+          machineName: data.get('machineName'),
+          startAt: data.get('startAt'),
+          endAt: data.get('endAt'),
+          reason: data.get('reason'),
+          jobId: data.get('jobId'),
+          reportedBy: data.get('reportedBy'),
+          notes: data.get('notes')
+        })
       });
-      save();
+      downtimeLogs.splice(0, downtimeLogs.length, ...(result.downtimeLogs || []));
+      save(false);
       closeModal();
       goto('analytics');
-      notify(record.id + ' saved · ' + record.durationMinutes + ' minutes of downtime.');
+      notify(result.record.id + ' saved · ' + result.record.durationMinutes + ' minutes of downtime.');
     } catch (error) {
       const element = ui('#downtimeError');
       element.textContent = error.message;
@@ -1108,14 +1112,27 @@ function openDeliveryProof(jobId) {
       error.hidden = false;
       return;
     }
-    const delivery = { id: 'DP-' + (101 + deliveries.length), jobId: job.id, customer: job.customer, receivedBy: formData.get('receivedBy'), challan: formData.get('challan') || 'Not provided', deliveredAt: formData.get('deliveredAt'), notes: formData.get('notes') || 'No additional notes.', attachment, createdAt: new Date().toISOString() };
-    const existing = deliveries.findIndex((item) => item.jobId === job.id);
-    if (existing >= 0) deliveries.splice(existing, 1, delivery); else deliveries.unshift(delivery);
-    job.status = 'Delivered';
-    job.readyForDelivery = true;
-    job.due = 'Delivered ' + new Date(delivery.deliveredAt + 'T12:00:00').toLocaleDateString('en-IN', { month: 'short', day: 'numeric' });
-    job.progress = 100;
-    save(); closeModal(); goto('jobs'); notify('Delivery proof saved for ' + job.id + '.');
+    try {
+      const result = await window.FactoryFlowAuth.request('/api/operations/delivery', {
+        method: 'POST',
+        body: JSON.stringify({
+          jobId: job.id,
+          receivedBy: formData.get('receivedBy'),
+          challan: formData.get('challan'),
+          deliveredAt: formData.get('deliveredAt'),
+          notes: formData.get('notes'),
+          attachment
+        })
+      });
+      const existing = deliveries.findIndex((item) => item.jobId === job.id);
+      if (existing >= 0) deliveries.splice(existing, 1, result.delivery); else deliveries.unshift(result.delivery);
+      const index = jobs.findIndex((item) => item.id === job.id);
+      if (index >= 0) jobs.splice(index, 1, result.job);
+      save(false); closeModal(); goto('jobs'); notify('Delivery proof saved for ' + job.id + '.');
+    } catch (saveError) {
+      error.textContent = saveError.message;
+      error.hidden = false;
+    }
   });
 }
 function viewDeliveryProof(jobId) {
