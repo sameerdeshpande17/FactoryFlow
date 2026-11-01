@@ -376,38 +376,45 @@ function recordProductionOutput(jobId) {
   }
   const activeWorkers = workers.filter((worker) => worker.active !== false);
   if (!activeWorkers.length) {
-    notify('Activate a worker before recording production output.');
+    notify('No active worker profile is linked to your account or job.');
     return;
   }
   const preferred = activeWorkers.find((worker) => worker.name === job.worker) || activeWorkers[0];
-  const workerOptions = activeWorkers.map((worker) => '<option value="' + safe(worker.id) + '"' + (worker.id === preferred.id ? ' selected' : '') + '>' + safe(worker.name + ' · ' + worker.skill) + '</option>').join('');
-  const scheduledSessions = schedules.filter((session) => session.jobId === job.id);
+  const workerOptions = activeWorkers.map((worker) => '<option value="' + safe(worker.id) + '"' + (preferred.id === worker.id ? ' selected' : '') + '>' + safe(worker.name + ' · ' + worker.skill) + '</option>').join('');
+  const scheduledSessions = schedules.filter((session) => session.jobId === job.id && activeWorkers.some((worker) => worker.id === session.workerId));
   const sessionOptions = '<option value="">Not linked to a scheduled session</option>' + scheduledSessions.map((session) => {
     const worker = workers.find((item) => item.id === session.workerId);
     return '<option value="' + safe(session.id) + '">' + safe(session.date + ' · ' + (worker ? worker.name : session.workerName) + ' · ' + Number(session.hours).toFixed(1) + ' planned hrs') + '</option>';
   }).join('');
   const date = localDateISO();
-  openModal('<h2 id="modalTitle">Record production output · ' + safe(job.id) + '</h2><p>' + safe(job.customer + ' · ' + job.item + ' · target ' + Number(job.qty).toLocaleString('en-IN')) + '</p><form id="productionEntryForm" class="form-grid"><label>Worker<select name="workerId" required>' + workerOptions + '</select></label><label>Scheduled session (optional)<select name="scheduleId">' + sessionOptions + '</select></label><div class="form-row"><label>Production date<input required type="date" name="productionDate" value="' + date + '"></label><label>Shift<select name="shift"><option>Day</option><option>Evening</option><option>Night</option></select></label></div><div class="form-row"><label>Total produced units<input required type="number" min="1" step="1" name="producedQty" placeholder="e.g. 2500"></label><label>Actual hours worked<input required type="number" min="0.25" max="24" step="0.25" name="actualHours" placeholder="e.g. 7.5"></label></div><div class="form-row"><label>Good units<input required type="number" min="0" step="1" name="goodQty" value="0"></label><label>Rejected units<input required type="number" min="0" step="1" name="rejectedQty" value="0"></label></div><label>Production notes<input name="notes" placeholder="Machine, batch or shift notes"></label><p class="subtle">Good + rejected units must equal total produced. Actual hours are used for productivity reporting; only enter hours actually worked.</p><p id="productionError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save production entry</button></div></form>');
-  ui('#productionEntryForm').addEventListener('submit', (event) => {
+  openModal('<h2 id="modalTitle">Record production output · ' + safe(job.id) + '</h2><p>' + safe(job.customer + ' · ' + job.item + ' · target ' + Number(job.qty).toLocaleString('en-IN')) + '</p><form id="productionEntryForm" class="form-grid"><label>Worker<select name="workerId" required>' + workerOptions + '</select></label><label>Scheduled session (optional)<select name="scheduleId">' + sessionOptions + '</select></label><div class="form-row"><label>Production date<input required type="date" name="productionDate" value="' + date + '"></label><label>Shift<select name="shift"><option>Day</option><option>Evening</option><option>Night</option></select></label></div><div class="form-row"><label>Total produced units<input required type="number" min="1" step="1" name="producedQty" placeholder="e.g. 2500"></label><label>Actual hours worked<input required type="number" min="0.25" max="24" step="0.25" name="actualHours" placeholder="e.g. 7.5"></label></div><div class="form-row"><label>Good units<input required type="number" min="0" step="1" name="goodQty" value="0"></label><label>Rejected units<input required type="number" min="0" step="1" name="rejectedQty" value="0"></label></div><label>Production notes<input name="notes" placeholder="Machine, batch or shift notes"></label><p class="subtle">Good + rejected units must equal total produced. The server checks your role, worker assignment and linked session.</p><p id="productionError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save production entry</button></div></form>');
+  ui('#productionEntryForm').addEventListener('submit', async (event) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     try {
-      const result = window.FactoryFlowExecution.recordProduction(productionLogs, jobs, workers, {
-        jobId: job.id,
-        workerId: data.get('workerId'),
-        scheduleId: data.get('scheduleId'),
-        productionDate: data.get('productionDate'),
-        shift: data.get('shift'),
-        producedQty: Number(data.get('producedQty')),
-        actualHours: Number(data.get('actualHours')),
-        goodQty: Number(data.get('goodQty')),
-        rejectedQty: Number(data.get('rejectedQty')),
-        notes: data.get('notes')
-      }, schedules);
-      save();
+      const result = await window.FactoryFlowAuth.request('/api/operations/production', {
+        method: 'POST',
+        body: JSON.stringify({
+          jobId: job.id,
+          workerId: data.get('workerId'),
+          scheduleId: data.get('scheduleId'),
+          productionDate: data.get('productionDate'),
+          shift: data.get('shift'),
+          producedQty: Number(data.get('producedQty')),
+          actualHours: Number(data.get('actualHours')),
+          goodQty: Number(data.get('goodQty')),
+          rejectedQty: Number(data.get('rejectedQty')),
+          notes: data.get('notes')
+        })
+      });
+      const index = jobs.findIndex((item) => item.id === result.job.id);
+      if (index >= 0) jobs.splice(index, 1, result.job);
+      else jobs.unshift(result.job);
+      productionLogs.splice(0, productionLogs.length, ...(result.productionLogs || []));
+      save(false);
       closeModal();
       goto('execution');
-      notify(result.record.id + ' saved. ' + result.totals.producedQty.toLocaleString('en-IN') + ' of ' + result.target.toLocaleString('en-IN') + ' units produced.');
+      notify(result.record.id + ' saved. ' + result.record.producedQty.toLocaleString('en-IN') + ' units recorded.');
     } catch (error) {
       const element = ui('#productionError');
       element.textContent = error.message;
@@ -433,7 +440,7 @@ function inspectProduction(jobId) {
     const inspected = qcInspections.filter((item) => item.inspectionType === 'Reinspection' && item.sourceInspectionId === inspection.id).reduce((sum, item) => sum + Number(item.inspectedQty || 0), 0);
     return '<option value="' + safe(inspection.id) + '">' + safe(inspection.id + ' · ' + Math.max(0, worked - inspected) + ' recovered unit(s) pending') + '</option>';
   }).join('');
-  openModal('<h2 id="modalTitle">Quality inspection · ' + safe(job.id) + '</h2><p>' + safe(job.customer + ' · ' + job.item) + ' · produced ' + totals.producedQty.toLocaleString('en-IN') + ' units</p><form id="qcInspectionForm" class="form-grid"><label>Inspection type<select name="inspectionType"><option value="Initial">Initial inspection</option>' + (sourceOptions ? '<option value="Reinspection">Reinspect recovered units</option>' : '') + '</select></label><label id="reinspectionSourceLabel" hidden>Source rework inspection<select name="sourceInspectionId">' + sourceOptions + '</select></label><label>Inspector<input required name="inspector" placeholder="Inspector name"></label><div class="form-row"><label>Inspected quantity<input required name="inspectedQty" type="number" min="1" step="1" placeholder="e.g. 500"></label><label>Passed quantity<input required name="passedQty" type="number" min="0" step="1" value="0"></label></div><label>Failed quantity<input required name="failedQty" type="number" min="0" step="1" value="0"></label><label>Failed-unit disposition<select name="disposition"><option value="Rework">Send for rework</option><option value="Reject">Reject / scrap</option></select></label><label>Defect category<select name="defectCategory"><option>Print defect</option><option>Dimension / size</option><option>Lamination / adhesion</option><option>Material damage</option><option>Finishing defect</option><option>Other</option></select></label><label>Inspection notes<input name="notes" placeholder="Sampling method, defect details or observations"></label><p class="subtle">Passed + failed must equal inspected quantity. Initial QC can cover each produced unit once. Reinspection can only cover units recovered from a completed rework entry.</p><p id="qcError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save inspection</button></div></form>');
+  openModal('<h2 id="modalTitle">Quality inspection · ' + safe(job.id) + '</h2><p>' + safe(job.customer + ' · ' + job.item) + ' · produced ' + totals.producedQty.toLocaleString('en-IN') + ' units</p><form id="qcInspectionForm" class="form-grid"><label>Inspection type<select name="inspectionType"><option value="Initial">Initial inspection</option>' + (sourceOptions ? '<option value="Reinspection">Reinspect recovered units</option>' : '') + '</select></label><label id="reinspectionSourceLabel" hidden>Source rework inspection<select name="sourceInspectionId">' + sourceOptions + '</select></label><label>Inspector<input required name="inspector" placeholder="Inspector name"></label><div class="form-row"><label>Inspected quantity<input required name="inspectedQty" type="number" min="1" step="1" placeholder="e.g. 500"></label><label>Passed quantity<input required name="passedQty" type="number" min="0" step="1" value="0"></label></div><label>Failed quantity<input required name="failedQty" type="number" min="0" step="1" value="0"></label><label>Failed-unit disposition<select name="disposition"><option value="Rework">Send for rework</option><option value="Reject">Reject / scrap</option></select></label><label>Defect category<select name="defectCategory"><option>Print defect</option><option>Dimension / size</option><option>Lamination / adhesion</option><option>Material damage</option><option>Finishing defect</option><option>Other</option></select></label><label>Inspection notes<input name="notes" placeholder="Sampling method, defect details or observations"></label><p class="subtle">Passed + failed must equal inspected quantity. The server validates inspection coverage and disposition.</p><p id="qcError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save inspection</button></div></form>');
   const typeSelect = ui('#qcInspectionForm [name="inspectionType"]');
   const sourceLabel = ui('#reinspectionSourceLabel');
   const sourceSelect = ui('#qcInspectionForm [name="sourceInspectionId"]');
@@ -444,26 +451,30 @@ function inspectProduction(jobId) {
   };
   typeSelect.addEventListener('change', updateSourceVisibility);
   updateSourceVisibility();
-  ui('#qcInspectionForm').addEventListener('submit', (event) => {
+  ui('#qcInspectionForm').addEventListener('submit', async (event) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     try {
-      const result = window.FactoryFlowExecution.recordInspection(qcInspections, productionLogs, reworkLogs, jobs, {
-        jobId: job.id,
-        inspectionType: data.get('inspectionType'),
-        sourceInspectionId: data.get('sourceInspectionId'),
-        inspectedQty: Number(data.get('inspectedQty')),
-        passedQty: Number(data.get('passedQty')),
-        failedQty: Number(data.get('failedQty')),
-        disposition: data.get('disposition'),
-        defectCategory: data.get('defectCategory'),
-        inspector: data.get('inspector'),
-        notes: data.get('notes')
+      const result = await window.FactoryFlowAuth.request('/api/operations/qc', {
+        method: 'POST',
+        body: JSON.stringify({
+          jobId: job.id,
+          inspectionType: data.get('inspectionType'),
+          sourceInspectionId: data.get('sourceInspectionId'),
+          inspectedQty: Number(data.get('inspectedQty')),
+          passedQty: Number(data.get('passedQty')),
+          failedQty: Number(data.get('failedQty')),
+          disposition: data.get('disposition'),
+          defectCategory: data.get('defectCategory'),
+          inspector: data.get('inspector'),
+          notes: data.get('notes')
+        })
       });
-      save();
+      qcInspections.splice(0, qcInspections.length, ...(result.qcInspections || []));
+      save(false);
       closeModal();
       goto('execution');
-      notify(result.record.id + ' saved. QC disposition: ' + result.disposition + '.');
+      notify(result.record.id + ' saved. QC disposition: ' + result.record.disposition + '.');
     } catch (error) {
       const element = ui('#qcError');
       element.textContent = error.message;
@@ -487,18 +498,22 @@ function recordRework(jobId) {
   }).filter(Boolean).join('');
   if (!options) return notify('There are no pending rework units for this job.');
   openModal('<h2 id="modalTitle">Record rework · ' + safe(job.id) + '</h2><p>Record reworked units and separate recovered units from scrapped units.</p><form id="reworkForm" class="form-grid"><label>QC inspection<select required name="qcInspectionId">' + options + '</select></label><label>Total units reworked<input required name="reworkedQty" type="number" min="1" step="1" placeholder="e.g. 40"></label><div class="form-row"><label>Recovered units<input required name="recoveredQty" type="number" min="0" step="1" value="0"></label><label>Scrapped units<input required name="scrappedQty" type="number" min="0" step="1" value="0"></label></div><label>Rework notes<input name="notes" placeholder="Corrective action or machine adjustment"></label><p class="subtle">Recovered + scrapped must equal total reworked. Recovered units must be reinspected before the job can be released.</p><p id="reworkError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save rework result</button></div></form>');
-  ui('#reworkForm').addEventListener('submit', (event) => {
+  ui('#reworkForm').addEventListener('submit', async (event) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     try {
-      const result = window.FactoryFlowExecution.recordRework(reworkLogs, qcInspections, jobs, {
-        qcInspectionId: data.get('qcInspectionId'),
-        reworkedQty: Number(data.get('reworkedQty')),
-        recoveredQty: Number(data.get('recoveredQty')),
-        scrappedQty: Number(data.get('scrappedQty')),
-        notes: data.get('notes')
+      const result = await window.FactoryFlowAuth.request('/api/operations/rework', {
+        method: 'POST',
+        body: JSON.stringify({
+          qcInspectionId: data.get('qcInspectionId'),
+          reworkedQty: Number(data.get('reworkedQty')),
+          recoveredQty: Number(data.get('recoveredQty')),
+          scrappedQty: Number(data.get('scrappedQty')),
+          notes: data.get('notes')
+        })
       });
-      save();
+      reworkLogs.splice(0, reworkLogs.length, ...(result.reworkLogs || []));
+      save(false);
       closeModal();
       goto('execution');
       notify(result.record.id + ' saved. ' + result.record.recoveredQty + ' recovered unit(s) await reinspection.');
@@ -510,10 +525,15 @@ function recordRework(jobId) {
   });
 }
 
-function releaseJobForDelivery(jobId) {
+async function releaseJobForDelivery(jobId) {
   try {
-    const result = window.FactoryFlowExecution.releaseForDelivery(jobs, productionLogs, qcInspections, reworkLogs, jobId);
-    save();
+    const result = await window.FactoryFlowAuth.request('/api/operations/release', {
+      method: 'POST',
+      body: JSON.stringify({ jobId })
+    });
+    const index = jobs.findIndex((item) => item.id === result.job.id);
+    if (index >= 0) jobs.splice(index, 1, result.job);
+    save(false);
     render();
     notify(jobId + ' passed production/QC release checks. Delivery proof can now be recorded.');
     return result;
