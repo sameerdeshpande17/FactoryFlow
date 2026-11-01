@@ -387,6 +387,9 @@ async function handleApi(request, response, pathname) {
       requireCsrf(request, current);
       requirePermission(current, 'users.manage');
       const body = await readJson(request);
+      if (body.role === 'worker' && !store.workers.some((worker) => worker.id === body.workerId && worker.active !== false)) {
+        return sendJson(response, 400, { error: 'Choose an active worker profile for this account.' });
+      }
       const user = auth.createUser(body, store.users, { mustChangePassword: true });
       appendAudit(store, current.user, 'users.created', 'user', user.id, { role: user.role }, request);
       writeStore(store);
@@ -413,7 +416,7 @@ async function handleApi(request, response, pathname) {
       }
       if (body.role !== undefined) target.role = body.role;
       if (body.workerId !== undefined) target.workerId = String(body.workerId || '').trim();
-      if (target.role === 'worker' && !target.workerId) return sendJson(response, 400, { error: 'Worker accounts must be linked to a worker profile.' });
+      if (target.role === 'worker' && !store.workers.some((worker) => worker.id === target.workerId && worker.active !== false)) return sendJson(response, 400, { error: 'Worker accounts must be linked to an active worker profile.' });
       if (body.active !== undefined) target.active = Boolean(body.active);
       target.updatedAt = new Date().toISOString();
       if (target.active === false || (body.role !== undefined)) sessions.revokeUser(target.id);
@@ -482,6 +485,68 @@ async function handleApi(request, response, pathname) {
       }, request);
       writeStore(store);
       return sendJson(response, 201, { record: result.record, reworkLogs: store.reworkLogs });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  if (pathname === '/api/operations/release' && request.method === 'POST') {
+    try {
+      requireCsrf(request, current);
+      requirePermission(current, 'execution.qc');
+      const body = await readJson(request);
+      const result = execution.releaseForDelivery(store.jobs, store.productionLogs, store.qcInspections, store.reworkLogs, body.jobId);
+      appendAudit(store, current.user, 'production.released', 'job', body.jobId, {
+        acceptedQty: result.summary.acceptedQty,
+        targetQty: result.summary.targetQty
+      }, request);
+      writeStore(store);
+      return sendJson(response, 200, { job: result.job, summary: result.summary });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  if (pathname === '/api/operations/delivery' && request.method === 'POST') {
+    try {
+      requireCsrf(request, current);
+      requirePermission(current, 'jobs.manage');
+      const body = await readJson(request);
+      const job = store.jobs.find((item) => item.id === body.jobId);
+      if (!job || (!job.readyForDelivery && job.status !== 'Delivered')) {
+        return sendJson(response, 400, { error: 'This job has not passed production and QC release checks.' });
+      }
+      const deliveredAt = String(body.deliveredAt || '');
+      if (!analytics.validDate(deliveredAt)) return sendJson(response, 400, { error: 'Choose a valid delivery date.' });
+      const receivedBy = String(body.receivedBy || '').trim();
+      if (!receivedBy || receivedBy.length > 120) return sendJson(response, 400, { error: 'Enter a valid recipient name.' });
+      const attachment = body.attachment || null;
+      if (attachment) {
+        const allowed = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+        if (!allowed.includes(attachment.type) || !Number.isSafeInteger(Number(attachment.size)) ||
+            Number(attachment.size) <= 0 || Number(attachment.size) > 1000000 ||
+            typeof attachment.dataUrl !== 'string' || attachment.dataUrl.length > 1400000 ||
+            !attachment.dataUrl.startsWith('data:' + attachment.type + ';base64,')) {
+          return sendJson(response, 400, { error: 'Delivery attachment must be a JPG, PNG, WebP or PDF up to 1 MB.' });
+        }
+      }
+      const existingIndex = store.deliveries.findIndex((item) => item.jobId === job.id);
+      const delivery = {
+        id: existingIndex >= 0 ? store.deliveries[existingIndex].id : 'DP-' + cryptoId(),
+        jobId: job.id,
+        customer: job.customer,
+        receivedBy,
+        challan: String(body.challan || '').trim().slice(0, 100),
+        notes: String(body.notes || '').trim().slice(0, 1000),
+        deliveredAt,
+        attachment,
+        recordedBy: current.user.id,
+        createdAt: new Date().toISOString()
+      };
+      if (existingIndex >= 0) store.deliveries[existingIndex] = delivery;
+      else store.deliveries.unshift(delivery);
+      job.status = 'Delivered';
+      job.readyForDelivery = true;
+      job.due = 'Delivered ' + new Date(deliveredAt + 'T00:00:00').toLocaleDateString('en-IN', { month: 'short', day: 'numeric' });
+      appendAudit(store, current.user, 'delivery.proof_saved', 'delivery', delivery.id, { jobId: job.id, challan: delivery.challan }, request);
+      writeStore(store);
+      return sendJson(response, 201, { delivery, job });
     } catch (error) { return publicAuthError(error, response); }
   }
 
