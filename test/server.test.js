@@ -179,6 +179,16 @@ test('authenticates users, enforces role access, persists operations and protect
   });
   assert.equal(badWorkerLink.status, 400);
 
+  const lastAdminDemotion = await fetch(baseUrl + '/api/users/' + encodeURIComponent(setupPayload.user.id), {
+    method: 'PATCH',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ role: 'manager', active: true })
+  });
+  assert.equal(lastAdminDemotion.status, 400);
+  assert.match((await json(lastAdminDemotion)).error, /at least one active administrator/i);
+  const adminStillAuthenticated = await json(await fetch(baseUrl + '/api/auth/status', { headers: { Cookie: adminCookie } }));
+  assert.equal(adminStillAuthenticated.authenticated, true);
+
   const adminUsers = await json(await fetch(baseUrl + '/api/users', { headers: { Cookie: adminCookie } }));
   assert.equal(adminUsers.users.length, 2);
   assert.equal(Object.hasOwn(adminUsers.users[1], 'passwordHash'), false);
