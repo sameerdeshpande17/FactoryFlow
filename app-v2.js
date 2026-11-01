@@ -68,7 +68,7 @@ const titles = {
   dashboard: ['JOB-WORK OS', 'Overview'], quotes: ['SALES', 'Quotes'], jobs: ['JOB CONTROL', 'Jobs'],
   purchases: ['PURCHASING', 'Purchase orders'], materials: ['RAW MATERIAL', 'Materials'],
   workers: ['PARTNERS', 'Job workers'], invoices: ['FINANCE', 'GST invoices'],
-  marketplace: ['B2B NETWORK', 'Marketplace'], planning: ['PRODUCTION', 'Material planning'], schedule: ['PRODUCTION', 'Production schedule'], execution: ['PRODUCTION', 'Production execution & QC'], analytics: ['MANAGEMENT', 'Production analytics'], costing: ['FINANCE', 'Job costing'], settings: ['WORKSPACE', 'Settings']
+  marketplace: ['B2B NETWORK', 'Marketplace'], users: ['ADMINISTRATION', 'User management'], planning: ['PRODUCTION', 'Material planning'], schedule: ['PRODUCTION', 'Production schedule'], execution: ['PRODUCTION', 'Production execution & QC'], analytics: ['MANAGEMENT', 'Production analytics'], costing: ['FINANCE', 'Job costing'], settings: ['WORKSPACE', 'Settings']
 };
 
 function save(shouldSync = true) {
@@ -531,10 +531,12 @@ function executionPage() {
   const totalRejected = summaries.reduce((sum, item) => sum + item.summary.rejectedQty, 0);
   const pendingRework = summaries.reduce((sum, item) => sum + item.summary.pendingReworkQty, 0);
   const rows = summaries.map(({ job, summary }) => {
-    const releaseAction = job.readyForDelivery
+    const releaseAction = window.FactoryFlowAuth.has('jobs.manage') && job.readyForDelivery
       ? '<button class="table-button" data-delivery-proof="' + safe(job.id) + '">Add delivery proof</button>'
-      : '<button class="table-button" data-release-job="' + safe(job.id) + '">Release check</button>';
-    return '<tr><td class="order-code">' + safe(job.id) + '<div class="subtle">' + safe(job.customer) + '</div></td><td><div class="item-name">' + safe(job.item) + '</div><div class="subtle">Target ' + summary.targetQty.toLocaleString('en-IN') + '</div></td><td>' + summary.producedQty.toLocaleString('en-IN') + '<div class="subtle">' + summary.productionProgress + '% produced</div></td><td>' + summary.goodQty.toLocaleString('en-IN') + '</td><td>' + summary.rejectedQty.toLocaleString('en-IN') + '</td><td>' + summary.acceptedQty.toLocaleString('en-IN') + '</td><td>' + summary.pendingReworkQty.toLocaleString('en-IN') + '</td><td><div class="execution-actions"><button class="table-button" data-production-job="' + safe(job.id) + '">Record output</button><button class="table-button" data-qc-job="' + safe(job.id) + '">Inspect</button>' + (summary.pendingReworkQty > 0 ? '<button class="table-button" data-rework-job="' + safe(job.id) + '">Rework</button>' : '') + releaseAction + '</div></td></tr>';
+      : window.FactoryFlowAuth.has('execution.qc') && !job.readyForDelivery
+        ? '<button class="table-button" data-release-job="' + safe(job.id) + '">Release check</button>'
+        : '';
+    return '<tr><td class="order-code">' + safe(job.id) + '<div class="subtle">' + safe(job.customer) + '</div></td><td><div class="item-name">' + safe(job.item) + '</div><div class="subtle">Target ' + summary.targetQty.toLocaleString('en-IN') + '</div></td><td>' + summary.producedQty.toLocaleString('en-IN') + '<div class="subtle">' + summary.productionProgress + '% produced</div></td><td>' + summary.goodQty.toLocaleString('en-IN') + '</td><td>' + summary.rejectedQty.toLocaleString('en-IN') + '</td><td>' + summary.acceptedQty.toLocaleString('en-IN') + '</td><td>' + summary.pendingReworkQty.toLocaleString('en-IN') + '</td><td><div class="execution-actions">' + (window.FactoryFlowAuth.has('execution.record') ? '<button class="table-button" data-production-job="' + safe(job.id) + '">Record output</button>' : '') + (window.FactoryFlowAuth.has('execution.qc') ? '<button class="table-button" data-qc-job="' + safe(job.id) + '">Inspect</button>' : '') + (window.FactoryFlowAuth.has('execution.qc') && summary.pendingReworkQty > 0 ? '<button class="table-button" data-rework-job="' + safe(job.id) + '">Rework</button>' : '') + releaseAction + '</div></td></tr>';
   }).join('');
   const productionRows = productionLogs.slice().reverse().slice(0, 12).map((entry) =>
     '<tr><td class="order-code">' + safe(entry.id) + '</td><td>' + safe(entry.jobId) + '</td><td>' + safe(entry.workerName) + '</td><td>' + safe(entry.productionDate) + ' · ' + safe(entry.shift) + '</td><td>' + Number(entry.producedQty).toLocaleString('en-IN') + '</td><td>' + Number(entry.goodQty).toLocaleString('en-IN') + '</td><td>' + Number(entry.rejectedQty).toLocaleString('en-IN') + '</td></tr>'
@@ -847,7 +849,9 @@ function render() {
   ui('#pageKicker').textContent = label[0];
   ui('#pageTitle').textContent = label[1];
   all('.nav-link[data-view]').forEach((button) => button.classList.toggle('active', button.dataset.view === app.view));
-  const pages = { dashboard, quotes: quotesPage, jobs: jobsPage, purchases: purchasesPage, materials: materialsPage, workers: workersPage, invoices: invoicesPage, marketplace: marketplacePage, planning: planningPage, schedule: schedulePage, execution: executionPage, analytics: analyticsPage, costing: costingPage, settings: settingsPage };
+  const permissions = { dashboard: 'dashboard.view', quotes: 'quotes.view', jobs: 'jobs.view', purchases: 'purchases.view', materials: 'materials.view', workers: 'workers.view', invoices: 'invoices.view', marketplace: 'marketplace.view', planning: 'planning.view', schedule: 'schedule.view', execution: 'execution.view', analytics: 'analytics.view', costing: 'costing.view', settings: 'settings.view', users: 'users.manage' };
+  if (!window.FactoryFlowAuth.has(permissions[app.view])) app.view = 'dashboard';
+  const pages = { dashboard: window.FactoryFlowAuth.state.user.role === 'worker' ? workerDashboard : dashboard, quotes: quotesPage, jobs: jobsPage, purchases: purchasesPage, materials: materialsPage, workers: workersPage, invoices: invoicesPage, marketplace: marketplacePage, planning: planningPage, schedule: schedulePage, execution: executionPage, analytics: analyticsPage, costing: costingPage, settings: settingsPage, users: usersPage };
   ui('#view').innerHTML = pages[app.view]();
   bind();
 }
@@ -1337,6 +1341,8 @@ function bind() {
     save();
     render();
   });
+  all('[data-add-user]').forEach((button) => button.addEventListener('click', addWorkspaceUser));
+  all('[data-edit-user]').forEach((button) => button.addEventListener('click', () => manageWorkspaceUser(button.dataset.editUser)));
   all('[data-consume-job]').forEach((button) => button.addEventListener('click', () => consumeMaterials(button.dataset.consumeJob)));
   all('[data-cost-job]').forEach((button) => button.addEventListener('click', () => editJobCosts(button.dataset.costJob)));
   all('[data-plan-job]').forEach((button) => button.addEventListener('click', () => planJobMaterials(button.dataset.planJob, button.dataset.planSku || null)));
