@@ -110,6 +110,8 @@ test('authenticates users, enforces role access, persists operations and protect
   assert.equal(emptyState.auth.user.role, 'admin');
   assert.ok(Array.isArray(emptyState.state.workers));
   assert.ok(Array.isArray(emptyState.state.downtimeLogs));
+  assert.deepEqual(emptyState.state.users, []);
+  assert.deepEqual(emptyState.state.auditLogs, []);
 
   const invalidCsrf = await fetch(baseUrl + '/api/sync', {
     method: 'POST',
@@ -149,6 +151,33 @@ test('authenticates users, enforces role access, persists operations and protect
     body: JSON.stringify(state)
   });
   assert.equal(sync.status, 200);
+
+  const createManager = await fetch(baseUrl + '/api/users', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: 'Factory Manager',
+      email: 'manager@factory.example',
+      role: 'manager',
+      password: 'FactoryFlowManager123'
+    })
+  });
+  assert.equal(createManager.status, 201);
+
+  const managerLogin = await fetch(baseUrl + '/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: 'manager@factory.example', password: 'FactoryFlowManager123' })
+  });
+  assert.equal(managerLogin.status, 200);
+  const managerLoginPayload = await json(managerLogin);
+  assert.equal(managerLoginPayload.permissions.includes('users.manage'), false);
+  const managerCookie = managerLogin.headers.get('set-cookie').split(';')[0];
+  const managerBootstrap = await json(await fetch(baseUrl + '/api/bootstrap', { headers: { Cookie: managerCookie } }));
+  assert.deepEqual(managerBootstrap.state.users, []);
+  assert.deepEqual(managerBootstrap.state.auditLogs, []);
+  assert.equal(Object.hasOwn(managerBootstrap.state.users[0] || {}, 'passwordHash'), false);
+  assert.equal((await fetch(baseUrl + '/api/users', { headers: { Cookie: managerCookie } })).status, 403);
 
   const createWorker = await fetch(baseUrl + '/api/users', {
     method: 'POST',
@@ -190,7 +219,7 @@ test('authenticates users, enforces role access, persists operations and protect
   assert.equal(adminStillAuthenticated.authenticated, true);
 
   const adminUsers = await json(await fetch(baseUrl + '/api/users', { headers: { Cookie: adminCookie } }));
-  assert.equal(adminUsers.users.length, 2);
+  assert.equal(adminUsers.users.length, 3);
   assert.equal(Object.hasOwn(adminUsers.users[1], 'passwordHash'), false);
 
   const workerLogin = await fetch(baseUrl + '/api/auth/login', {
@@ -206,6 +235,19 @@ test('authenticates users, enforces role access, persists operations and protect
   const workerCookie = workerLogin.headers.get('set-cookie').split(';')[0];
   const workerCsrf = workerLoginPayload.csrfToken;
 
+  const tempPasswordBootstrap = await fetch(baseUrl + '/api/bootstrap', { headers: { Cookie: workerCookie } });
+  assert.equal(tempPasswordBootstrap.status, 403);
+  assert.match((await json(tempPasswordBootstrap)).error, /change your temporary password/i);
+
+  const changePassword = await fetch(baseUrl + '/api/auth/password', {
+    method: 'POST',
+    headers: { Cookie: workerCookie, 'X-CSRF-Token': workerCsrf, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ currentPassword: 'FactoryFlowWorker123', newPassword: 'FactoryFlowWorkerSecure456' })
+  });
+  assert.equal(changePassword.status, 200);
+  const changedPasswordPayload = await json(changePassword);
+  assert.equal(changedPasswordPayload.user.mustChangePassword, false);
+
   const workerBootstrap = await fetch(baseUrl + '/api/bootstrap', { headers: { Cookie: workerCookie } });
   assert.equal(workerBootstrap.status, 200);
   const workerState = await json(workerBootstrap);
@@ -215,6 +257,8 @@ test('authenticates users, enforces role access, persists operations and protect
   assert.deepEqual(workerState.state.jobs.map((job) => job.id), ['JB-WORKER']);
   assert.deepEqual(workerState.state.schedules.map((item) => item.id), ['SC-WORKER']);
   assert.deepEqual(workerState.state.workers.map((item) => item.id), ['WRK-TEST']);
+  assert.deepEqual(workerState.state.users, []);
+  assert.deepEqual(workerState.state.auditLogs, []);
 
   const workerUsers = await fetch(baseUrl + '/api/users', { headers: { Cookie: workerCookie } });
   assert.equal(workerUsers.status, 403);
@@ -269,15 +313,6 @@ test('authenticates users, enforces role access, persists operations and protect
     body: JSON.stringify({ jobId: 'JB-WORKER', inspectedQty: 1, passedQty: 1, failedQty: 0, inspector: 'Worker' })
   });
   assert.equal(workerQc.status, 403);
-
-  const changePassword = await fetch(baseUrl + '/api/auth/password', {
-    method: 'POST',
-    headers: { Cookie: workerCookie, 'X-CSRF-Token': workerCsrf, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ currentPassword: 'FactoryFlowWorker123', newPassword: 'FactoryFlowWorkerSecure456' })
-  });
-  assert.equal(changePassword.status, 200);
-  const changedPasswordPayload = await json(changePassword);
-  assert.equal(changedPasswordPayload.user.mustChangePassword, false);
 
   const statusAfterPassword = await json(await fetch(baseUrl + '/api/auth/status', { headers: { Cookie: workerCookie } }));
   assert.equal(statusAfterPassword.authenticated, true);
