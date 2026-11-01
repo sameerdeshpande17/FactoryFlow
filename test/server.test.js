@@ -173,10 +173,18 @@ test('authenticates users, enforces role access, persists operations and protect
   const managerLoginPayload = await json(managerLogin);
   assert.equal(managerLoginPayload.permissions.includes('users.manage'), false);
   const managerCookie = managerLogin.headers.get('set-cookie').split(';')[0];
+  const managerCsrf = managerLoginPayload.csrfToken;
+  const managerTempBootstrap = await fetch(baseUrl + '/api/bootstrap', { headers: { Cookie: managerCookie } });
+  assert.equal(managerTempBootstrap.status, 403);
+  const managerPasswordChange = await fetch(baseUrl + '/api/auth/password', {
+    method: 'POST',
+    headers: { Cookie: managerCookie, 'X-CSRF-Token': managerCsrf, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ currentPassword: 'FactoryFlowManager123', newPassword: 'FactoryFlowManagerSecure456' })
+  });
+  assert.equal(managerPasswordChange.status, 200);
   const managerBootstrap = await json(await fetch(baseUrl + '/api/bootstrap', { headers: { Cookie: managerCookie } }));
   assert.deepEqual(managerBootstrap.state.users, []);
   assert.deepEqual(managerBootstrap.state.auditLogs, []);
-  assert.equal(Object.hasOwn(managerBootstrap.state.users[0] || {}, 'passwordHash'), false);
   assert.equal((await fetch(baseUrl + '/api/users', { headers: { Cookie: managerCookie } })).status, 403);
 
   const createWorker = await fetch(baseUrl + '/api/users', {
@@ -217,6 +225,10 @@ test('authenticates users, enforces role access, persists operations and protect
   assert.match((await json(lastAdminDemotion)).error, /at least one active administrator/i);
   const adminStillAuthenticated = await json(await fetch(baseUrl + '/api/auth/status', { headers: { Cookie: adminCookie } }));
   assert.equal(adminStillAuthenticated.authenticated, true);
+
+  const adminBootstrapAfterUsers = await json(await fetch(baseUrl + '/api/bootstrap', { headers: { Cookie: adminCookie } }));
+  assert.deepEqual(adminBootstrapAfterUsers.state.users, []);
+  assert.deepEqual(adminBootstrapAfterUsers.state.auditLogs, []);
 
   const adminUsers = await json(await fetch(baseUrl + '/api/users', { headers: { Cookie: adminCookie } }));
   assert.equal(adminUsers.users.length, 3);
