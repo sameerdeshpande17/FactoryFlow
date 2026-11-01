@@ -296,9 +296,9 @@ async function handleApi(request, response, pathname) {
   if (request.method === 'POST' && pathname === '/api/auth/setup') {
     try {
       assertSameOrigin(request);
+      const body = await readJson(request);
       const store = readStore();
       if (store.users.length) return sendJson(response, 409, { error: 'Initial setup is already complete. Ask an administrator to create your account.' });
-      const body = await readJson(request);
       const user = auth.createUser({ ...body, role: 'admin' }, store.users);
       appendAudit(store, user, 'auth.initial_setup', 'user', user.id, { role: 'admin' }, request);
       writeStore(store);
@@ -456,8 +456,13 @@ async function handleApi(request, response, pathname) {
           return sendJson(response, 403, { error: 'Workers can only record output against their own worker profile.' });
         }
         const worker = store.workers.find((item) => item.id === current.user.workerId && item.active !== false);
-        const assigned = worker && store.schedules.some((session) => session.jobId === body.jobId && session.workerId === worker.id);
-        if (!assigned) return sendJson(response, 403, { error: 'This job is not assigned to your worker profile.' });
+        const assignedSession = worker && store.schedules.find((session) =>
+          session.id === body.scheduleId &&
+          session.jobId === body.jobId &&
+          session.workerId === worker.id &&
+          session.date === body.productionDate
+        );
+        if (!assignedSession) return sendJson(response, 403, { error: 'Workers must record output against their own scheduled session and production date.' });
       }
       const result = execution.recordProduction(store.productionLogs, store.jobs, store.workers, body, store.schedules);
       appendAudit(store, current.user, 'production.output_recorded', 'production', result.record.id, {
