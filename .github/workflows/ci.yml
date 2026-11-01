@@ -9,6 +9,7 @@ on:
       - feat/production-scheduling-capacity
       - feat/production-execution-quality-control
       - feat/production-analytics-performance
+      - feat/auth-rbac-user-management
   pull_request:
     branches:
       - main

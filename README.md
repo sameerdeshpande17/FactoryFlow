@@ -37,7 +37,26 @@ Opening index.html directly is still supported as a browser-only fallback, but c
 - Production analytics with date-filtered output trends, yield, QC pass/fail rates, worker productivity, planned-versus-actual hours for linked sessions, delivery timeliness, and job performance
 - Machine/workstation downtime logging by time, machine, reason, reporter, and optional job reference, with machine and reason summaries
 - Production output captures actual hours worked and can link to a scheduled session; legacy records without actual hours are excluded from throughput rates and flagged in analytics
+- Role-based access for administrators, managers, production supervisors, and workers, with server-enforced permissions and worker-scoped workspace data
+- Salted scrypt password hashes, HttpOnly SameSite session cookies, CSRF checks, first-admin setup, forced password change for provisioned accounts, login throttling, and audit history
 - Responsive layout for desktop and mobile screens
+
+## Authentication setup
+
+On a fresh workspace, open the application and create the first administrator account. Administrators can then create Manager, Production supervisor, and Worker accounts from User management. Newly created accounts must change their temporary password before accessing workspace data. Worker accounts must be linked to an active job-worker profile and can record output only against their own scheduled sessions.
+
+| Role | Intended access |
+|---|---|
+| Administrator | Full workspace, account management, audit history |
+| Manager | Sales, purchasing, inventory, production, finance, analytics and workspace management; cannot manage user accounts |
+| Production supervisor | Jobs, material/schedule views, production output, QC, rework and downtime; no sales, purchasing, finance or account administration |
+| Worker | Own assigned jobs and schedules, and production output recording only |
+
+Authentication is enforced by the local Node.js workspace server. Passwords use salted scrypt hashes; session cookies are HttpOnly and SameSite, and state-changing API requests require a CSRF token. The server enforces role permissions and returns role-scoped bootstrap data; browser navigation hiding is only a usability layer.
+
+Do not expose this development server directly to the public internet; use HTTPS, a reverse proxy with appropriate security headers, backups, and a managed deployment before production use. Browser-only `file://` mode is not supported for authenticated workspaces.
+
+Sessions are held in server memory and have a fixed eight-hour lifetime from sign-in; restarting the Node.js server invalidates active sessions and requires users to sign in again. User accounts and audit events are persisted in the workspace JSON store. Bootstrap responses never include password hashes or the raw user/audit collections. This local JSON store and in-memory session store are suitable for a single-process development workspace, not concurrent multi-instance production hosting. This milestone does not add MFA, email verification, password-reset email, a hosted database, or production-grade identity provider integration.
 
 ## Suggested next steps
 

@@ -68,7 +68,7 @@ const titles = {
   dashboard: ['JOB-WORK OS', 'Overview'], quotes: ['SALES', 'Quotes'], jobs: ['JOB CONTROL', 'Jobs'],
   purchases: ['PURCHASING', 'Purchase orders'], materials: ['RAW MATERIAL', 'Materials'],
   workers: ['PARTNERS', 'Job workers'], invoices: ['FINANCE', 'GST invoices'],
-  marketplace: ['B2B NETWORK', 'Marketplace'], planning: ['PRODUCTION', 'Material planning'], schedule: ['PRODUCTION', 'Production schedule'], execution: ['PRODUCTION', 'Production execution & QC'], analytics: ['MANAGEMENT', 'Production analytics'], costing: ['FINANCE', 'Job costing'], settings: ['WORKSPACE', 'Settings']
+  marketplace: ['B2B NETWORK', 'Marketplace'], users: ['ADMINISTRATION', 'User management'], planning: ['PRODUCTION', 'Material planning'], schedule: ['PRODUCTION', 'Production schedule'], execution: ['PRODUCTION', 'Production execution & QC'], analytics: ['MANAGEMENT', 'Production analytics'], costing: ['FINANCE', 'Job costing'], settings: ['WORKSPACE', 'Settings']
 };
 
 function save(shouldSync = true) {
@@ -98,19 +98,18 @@ function setDataStatus(label, state) {
 }
 
 async function syncWorkspace() {
-  if (syncInFlight || location.protocol === 'file:') return;
+  const role = window.FactoryFlowAuth.state.user && window.FactoryFlowAuth.state.user.role;
+  if (syncInFlight || location.protocol === 'file:' || !['admin', 'manager'].includes(role)) return;
   syncInFlight = true;
   setDataStatus('Saving…', 'pending');
   try {
-    const response = await fetch('/api/sync', {
+    await window.FactoryFlowAuth.request('/api/sync', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ quotes, jobs, purchases, materials, deliveries, receipts, movements, requirements, workers, schedules, productionLogs, qcInspections, reworkLogs, downtimeLogs })
     });
-    if (!response.ok) throw new Error('Workspace sync failed.');
     setDataStatus('Synced', 'online');
   } catch {
-    setDataStatus('Local mode', 'offline');
+    setDataStatus('Sync error', 'offline');
   } finally {
     syncInFlight = false;
   }
@@ -118,41 +117,39 @@ async function syncWorkspace() {
 
 async function hydrateWorkspace() {
   if (location.protocol === 'file:') {
-    setDataStatus('Local mode', 'offline');
-    workspaceReady = true;
+    setDataStatus('Authenticated server required', 'offline');
+    workspaceReady = false;
     return;
   }
   setDataStatus('Connecting…', 'pending');
   try {
-    const response = await fetch('/api/bootstrap', { headers: { Accept: 'application/json' } });
-    if (!response.ok) throw new Error('Workspace is unavailable.');
-    const payload = await response.json();
+    const payload = await window.FactoryFlowAuth.request('/api/bootstrap', {
+      headers: { Accept: 'application/json' }
+    });
+    if (payload.auth) window.FactoryFlowAuth.update(payload.auth);
     const remote = payload.state || {};
-    const hasRemoteData = ['quotes', 'jobs', 'purchases', 'materials', 'deliveries', 'receipts', 'movements', 'requirements', 'workers', 'schedules', 'productionLogs', 'qcInspections', 'reworkLogs', 'downtimeLogs'].some((key) => Array.isArray(remote[key]) && remote[key].length);
-    if (hasRemoteData) {
-      quotes.splice(0, quotes.length, ...remote.quotes);
-      jobs.splice(0, jobs.length, ...remote.jobs);
-      purchases.splice(0, purchases.length, ...remote.purchases);
-      materials.splice(0, materials.length, ...remote.materials);
-      deliveries.splice(0, deliveries.length, ...(remote.deliveries || []));
-      receipts.splice(0, receipts.length, ...(remote.receipts || []));
-      movements.splice(0, movements.length, ...(remote.movements || []));
-      requirements.splice(0, requirements.length, ...(remote.requirements || []));
-      if (Array.isArray(remote.workers) && remote.workers.length) workers.splice(0, workers.length, ...remote.workers);
-      if (Array.isArray(remote.schedules) && remote.schedules.length) schedules.splice(0, schedules.length, ...remote.schedules);
-      if (Array.isArray(remote.productionLogs)) productionLogs.splice(0, productionLogs.length, ...remote.productionLogs);
-      if (Array.isArray(remote.qcInspections)) qcInspections.splice(0, qcInspections.length, ...remote.qcInspections);
-      if (Array.isArray(remote.reworkLogs)) reworkLogs.splice(0, reworkLogs.length, ...remote.reworkLogs);
-      if (Array.isArray(remote.downtimeLogs)) downtimeLogs.splice(0, downtimeLogs.length, ...remote.downtimeLogs);
-    }
+    const replace = (target, key) => target.splice(0, target.length, ...(Array.isArray(remote[key]) ? remote[key] : []));
+    replace(quotes, 'quotes');
+    replace(jobs, 'jobs');
+    replace(purchases, 'purchases');
+    replace(materials, 'materials');
+    replace(deliveries, 'deliveries');
+    replace(receipts, 'receipts');
+    replace(movements, 'movements');
+    replace(requirements, 'requirements');
+    replace(workers, 'workers');
+    replace(schedules, 'schedules');
+    replace(productionLogs, 'productionLogs');
+    replace(qcInspections, 'qcInspections');
+    replace(reworkLogs, 'reworkLogs');
+    replace(downtimeLogs, 'downtimeLogs');
     window.FactoryFlowInventory.ensureStockMetadata(materials);
     workspaceReady = true;
-    save(hasRemoteData ? false : true);
+    save(false);
     setDataStatus('Synced', 'online');
-    render();
   } catch {
-    workspaceReady = true;
-    setDataStatus('Local mode', 'offline');
+    workspaceReady = false;
+    setDataStatus('Sign-in required', 'offline');
   }
 }
 
@@ -165,6 +162,31 @@ function metric(label, value, sub, alert) {
 function status(text) { return '<span class="status ' + stClass(text) + '">' + text + '</span>'; }
 function schedule(time, name, detail, percent, warn) {
   return '<div class="schedule-item"><div class="schedule-time">' + time + '</div><div><div class="schedule-name">' + name + '</div><div class="schedule-detail">' + detail + '</div></div><div class="progress ' + (warn ? 'amber' : '') + '"><i style="width:' + percent + '%"></i></div></div>';
+}
+
+function workerDashboard() {
+  const user = window.FactoryFlowAuth.state.user;
+  const ownJobs = jobs.filter((job) => !['Delivered', 'Cancelled'].includes(job.status));
+  const sessions = schedules.slice().sort((a, b) => a.date.localeCompare(b.date));
+  const cards = ownJobs.map((job) => jobCard(job, job.due || job.status)).join('');
+  return head('MY WORKSPACE', 'Welcome, ' + safe(user.name), 'Your assigned production work and schedule. Record actual output when your shift is complete.', '') +
+    '<div class="inventory-grid"><article class="inventory-stat"><span>ASSIGNED JOBS</span><strong>' + ownJobs.length + '</strong><small>Active jobs visible to your account</small></article><article class="inventory-stat"><span>SCHEDULED SESSIONS</span><strong>' + sessions.length + '</strong><small>Your assigned production sessions</small></article><article class="inventory-stat"><span>OUTPUT ENTRIES</span><strong>' + productionLogs.length + '</strong><small>Your recorded output</small></article></div>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong>My production jobs</strong></div>' +
+    (cards ? '<div class="worker-capacity-grid">' + cards + '</div>' : '<div class="empty-state"><h2>No assigned jobs</h2><p>Ask your production supervisor to assign a job and schedule your shift.</p></div>') + '</section>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong>My scheduled sessions</strong></div>' +
+    (sessions.length ? '<div class="schedule-list">' + sessions.map((session) => '<div class="schedule-item"><div class="schedule-time">' + safe(session.date) + '</div><div class="schedule-copy"><strong>' + safe(session.jobId) + '</strong><small>' + Number(session.hours).toFixed(1) + ' planned hours · ' + safe(session.note || 'Production') + '</small></div></div>').join('') + '</div>' : '<div class="empty-state">No production sessions scheduled yet.</div>') + '</section>';
+}
+
+function supervisorDashboard() {
+  const activeJobs = jobs.filter((job) => !['Delivered', 'Cancelled'].includes(job.status));
+  const produced = productionLogs.reduce((sum, entry) => sum + Number(entry.producedQty || 0), 0);
+  const qcPending = activeJobs.filter((job) => job.status === 'QC review' || job.readyForDelivery).length;
+  const scheduleCount = schedules.filter((session) => session.date >= localDateISO()).length;
+  return head('PRODUCTION CONTROL', 'Factory operations', 'Monitor active work, production output, QC queues and today’s scheduled sessions.', '') +
+    '<div class="inventory-grid"><article class="inventory-stat"><span>ACTIVE JOBS</span><strong>' + activeJobs.length + '</strong><small>Open production work</small></article><article class="inventory-stat"><span>OUTPUT RECORDED</span><strong>' + produced.toLocaleString('en-IN') + '</strong><small>Units across production logs</small></article><article class="inventory-stat"><span>QC QUEUE</span><strong>' + qcPending + '</strong><small>Jobs awaiting quality / release</small></article><article class="inventory-stat"><span>UPCOMING SESSIONS</span><strong>' + scheduleCount + '</strong><small>Today and future assignments</small></article></div>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong>Active production jobs</strong><button class="text-button" data-go="jobs">View jobs →</button></div>' +
+    (activeJobs.length ? '<div class="worker-capacity-grid">' + activeJobs.slice(0, 8).map((job) => jobCard(job, job.due || job.status)).join('') + '</div>' : '<div class="empty-state">No active production jobs.</div>') + '</section>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong>Production controls</strong></div><div class="user-admin-actions"><button class="secondary-button" data-go="schedule">Production schedule</button><button class="secondary-button" data-go="execution">Production & QC</button><button class="secondary-button" data-go="analytics">Performance analytics</button></div></section>';
 }
 
 function dashboard() {
@@ -197,25 +219,23 @@ function quotesPage() {
 }
 
 function jobCard(job, note, warning) {
+  const can = (permission) => window.FactoryFlowAuth.has(permission);
   if (!job) {
-    return '<article class="work-card"><strong>No jobs in this stage</strong><p>Jobs will appear here as they move through production.</p><footer><button class="text-button" data-new="job">＋ Create job →</button></footer></article>';
+    return '<article class="work-card"><strong>No jobs in this stage</strong><p>Jobs will appear here as they move through production.</p>' + (can('jobs.manage') ? '<footer><button class="text-button" data-new="job">＋ Create job →</button></footer>' : '') + '</article>';
   }
   const proof = deliveries.find((delivery) => delivery.jobId === job.id);
-  const consumeAction = ['In production', 'With worker'].includes(job.status)
-    ? '<button class="text-button" data-consume-job="' + safe(job.id) + '">Record material use →</button>'
-    : '';
-  const costAction = '<button class="text-button" data-cost-job="' + safe(job.id) + '">View costing →</button>';
-  const planningAction = !['Delivered', 'QC review', 'Cancelled'].includes(job.status) ? '<button class="text-button" data-plan-job="' + safe(job.id) + '">Plan materials →</button>' : '';
-  const scheduleAction = !['Delivered', 'QC review', 'Cancelled'].includes(job.status) ? '<button class="text-button" data-schedule-job="' + safe(job.id) + '">Schedule production →</button>' : '';
-  const executionAction = !['Delivered', 'Cancelled'].includes(job.status) && !job.readyForDelivery ? '<button class="text-button" data-execution-job="' + safe(job.id) + '">Record output / QC →</button>' : '';
-  const deliveryAction = job.readyForDelivery
-    ? (proof
-      ? '<button class="text-button" data-view-proof="' + safe(job.id) + '">View delivery proof →</button>'
-      : '<button class="text-button" data-proof-job="' + safe(job.id) + '">Add delivery proof →</button>')
-    : '';
+  const consumeAction = can('materials.manage') && ['In production', 'With worker'].includes(job.status)
+    ? '<button class="text-button" data-consume-job="' + safe(job.id) + '">Record material use →</button>' : '';
+  const costAction = can('costing.view') ? '<button class="text-button" data-cost-job="' + safe(job.id) + '">View costing →</button>' : '';
+  const planningAction = can('planning.manage') && !['Delivered', 'QC review', 'Cancelled'].includes(job.status) ? '<button class="text-button" data-plan-job="' + safe(job.id) + '">Plan materials →</button>' : '';
+  const scheduleAction = can('schedule.manage') && !['Delivered', 'QC review', 'Cancelled'].includes(job.status) ? '<button class="text-button" data-schedule-job="' + safe(job.id) + '">Schedule production →</button>' : '';
+  const executionAction = can('execution.record') && !['Delivered', 'Cancelled'].includes(job.status) && !job.readyForDelivery ? '<button class="text-button" data-execution-job="' + safe(job.id) + '">Record production output →</button>' : '';
+  const deliveryAction = can('jobs.manage') && job.readyForDelivery
+    ? (proof ? '<button class="text-button" data-view-proof="' + safe(job.id) + '">View delivery proof →</button>' : '<button class="text-button" data-proof-job="' + safe(job.id) + '">Add delivery proof →</button>') : '';
   const plannedSessions = schedules.filter((session) => session.jobId === job.id).length;
   const scheduleLabel = plannedSessions ? '<div class="subtle">' + plannedSessions + ' production session(s) scheduled</div>' : '';
-  return '<article class="work-card"><strong>' + safe(job.id) + ' · ' + safe(job.item) + '</strong><p>' + Number(job.qty || 0).toLocaleString('en-IN') + ' units · ' + safe(job.customer) + '</p>' + scheduleLabel + '<footer><span class="small-avatar">' + safe(job.owner || '') + '</span><span class="due ' + (warning ? 'warn' : '') + '">' + (proof ? '✓ Proof saved' : '◷ ') + safe(note || job.due || job.status) + '</span></footer>' + (consumeAction ? '<footer>' + consumeAction + '</footer>' : '') + (planningAction ? '<footer>' + planningAction + '</footer>' : '') + (scheduleAction ? '<footer>' + scheduleAction + '</footer>' : '') + (executionAction ? '<footer>' + executionAction + '</footer>' : '') + (deliveryAction ? '<footer>' + deliveryAction + '</footer>' : '') + '<footer>' + costAction + '</footer></article>';
+  const actions = [consumeAction, planningAction, scheduleAction, executionAction, deliveryAction, costAction].filter(Boolean);
+  return '<article class="work-card"><strong>' + safe(job.id) + ' · ' + safe(job.item) + '</strong><p>' + Number(job.qty || 0).toLocaleString('en-IN') + ' units · ' + safe(job.customer) + '</p>' + scheduleLabel + '<footer><span class="small-avatar">' + safe(job.owner || '') + '</span><span class="due ' + (warning ? 'warn' : '') + '">' + (proof ? '✓ Proof saved' : '◷ ') + safe(note || job.due || job.status) + '</span></footer>' + actions.map((action) => '<footer>' + action + '</footer>').join('') + '</article>';
 }
 
 function jobsPage() {
@@ -225,8 +245,8 @@ function jobsPage() {
   const pendingCards = pendingJobs.length ? pendingJobs.map((job) => jobCard(job, job.status, true)).join('') : jobCard(null);
   const activeCards = activeJobs.length ? activeJobs.map((job) => jobCard(job, job.due)).join('') : jobCard(null);
   const qcCards = qcJobs.length ? qcJobs.map((job) => jobCard(job, job.readyForDelivery ? 'QC cleared' : 'QC review')).join('') : jobCard(null);
-  return head('JOB CONTROL', 'Jobs in motion', 'Assign job workers, track progress, and capture proof before delivery.', '<button class="primary-button" data-new="job">＋ Create job</button>') +
-    '<section class="kanban"><div class="kanban-column"><div class="kanban-title">READY TO ASSIGN <span class="kanban-count">' + pendingJobs.length + '</span></div>' + pendingCards + '<article class="work-card"><strong>Assign a verified worker</strong><p>Match capacity, rate, and delivery promise in one place.</p><footer><button class="text-button" data-go="workers">Find workers →</button></footer></article></div><div class="kanban-column"><div class="kanban-title">WITH JOB WORKER <span class="kanban-count">' + activeJobs.length + '</span></div>' + activeCards + '</div><div class="kanban-column"><div class="kanban-title">DELIVERY & QC <span class="kanban-count">' + qcJobs.length + '</span></div>' + qcCards + '</div></section>';
+  return head('JOB CONTROL', 'Jobs in motion', 'Assign job workers, track progress, and capture proof before delivery.', window.FactoryFlowAuth.has('jobs.manage') ? '<button class="primary-button" data-new="job">＋ Create job</button>' : '') +
+    '<section class="kanban"><div class="kanban-column"><div class="kanban-title">READY TO ASSIGN <span class="kanban-count">' + pendingJobs.length + '</span></div>' + pendingCards + (window.FactoryFlowAuth.has('workers.view') ? '<article class="work-card"><strong>Assign a verified worker</strong><p>Match capacity, rate, and delivery promise in one place.</p><footer><button class="text-button" data-go="workers">Find workers →</button></footer></article>' : '') + '</div><div class="kanban-column"><div class="kanban-title">WITH JOB WORKER <span class="kanban-count">' + activeJobs.length + '</span></div>' + activeCards + '</div><div class="kanban-column"><div class="kanban-title">DELIVERY & QC <span class="kanban-count">' + qcJobs.length + '</span></div>' + qcCards + '</div></section>';
 }
 
 function purchasesPage() {
@@ -241,9 +261,9 @@ function materialsPage() {
     const cost = item.unitCost !== null && item.unitCost !== undefined && item.unitCost !== '' && Number.isFinite(Number(item.unitCost))
       ? currency(Number(item.unitCost)) + ' / ' + (parsed ? parsed.unitLabel : 'unit')
       : 'Not set';
-    return '<tr><td class="order-code">' + safe(item.sku) + '</td><td class="item-name">' + safe(item.item) + '</td><td>' + safe(item.category) + '</td><td>' + safe(item.location) + '</td><td>' + safe(item.onHand) + '</td><td><div class="stock-bar ' + (item.status === 'Critical' ? 'critical' : item.status === 'Low stock' ? 'warn' : '') + '"><i style="width:' + item.stock + '%"></i></div></td><td>' + status(item.status) + '</td><td>' + cost + '<div><button class="table-button" data-unit-cost="' + safe(item.sku) + '">Set cost</button></div></td></tr>';
+    return '<tr><td class="order-code">' + safe(item.sku) + '</td><td class="item-name">' + safe(item.item) + '</td><td>' + safe(item.category) + '</td><td>' + safe(item.location) + '</td><td>' + safe(item.onHand) + '</td><td><div class="stock-bar ' + (item.status === 'Critical' ? 'critical' : item.status === 'Low stock' ? 'warn' : '') + '"><i style="width:' + item.stock + '%"></i></div></td><td>' + status(item.status) + '</td><td>' + cost + '' + (window.FactoryFlowAuth.has('materials.manage') ? '<div><button class="table-button" data-unit-cost="' + safe(item.sku) + '">Set cost</button></div>' : '') + '</td></tr>';
   }).join('');
-  return head('RAW MATERIAL', 'Material you can trust', 'See stock health early, before a job worker or customer has to wait.', '<button class="primary-button" data-new="purchase">＋ Purchase material</button>') + '<div class="inventory-grid"><article class="inventory-stat"><span>TRACKED MATERIALS</span><strong>' + materials.length + '</strong><small>Inventory records</small></article><article class="inventory-stat"><span>REORDER ALERTS</span><strong>' + low + '</strong><small>Needs a purchase order today</small></article><article class="inventory-stat"><span>STOCK MOVEMENTS</span><strong>' + movements.length + '</strong><small>Receipts and production usage</small></article></div><section class="content-card"><div class="toolbar"><strong style="font-size:12px">Stock by material</strong><button class="secondary-button" data-action="receive">＋ Receive material</button></div><div class="table-scroll"><table class="data-table"><thead><tr><th>SKU</th><th>MATERIAL</th><th>CATEGORY</th><th>LOCATION</th><th>ON HAND</th><th>STOCK LEVEL</th><th>STATUS</th><th>UNIT COST</th></tr></thead><tbody>' + rows + '</tbody></table></div></section>' +
+  return head('RAW MATERIAL', 'Material you can trust', 'See stock health early, before a job worker or customer has to wait.', window.FactoryFlowAuth.has('purchases.manage') ? '<button class="primary-button" data-new="purchase">＋ Purchase material</button>' : '') + '<div class="inventory-grid"><article class="inventory-stat"><span>TRACKED MATERIALS</span><strong>' + materials.length + '</strong><small>Inventory records</small></article><article class="inventory-stat"><span>REORDER ALERTS</span><strong>' + low + '</strong><small>Needs a purchase order today</small></article><article class="inventory-stat"><span>STOCK MOVEMENTS</span><strong>' + movements.length + '</strong><small>Receipts and production usage</small></article></div><section class="content-card"><div class="toolbar"><strong style="font-size:12px">Stock by material</strong>' + (window.FactoryFlowAuth.has('materials.manage') ? '<button class="secondary-button" data-action="receive">＋ Receive material</button>' : '') + '</div><div class="table-scroll"><table class="data-table"><thead><tr><th>SKU</th><th>MATERIAL</th><th>CATEGORY</th><th>LOCATION</th><th>ON HAND</th><th>STOCK LEVEL</th><th>STATUS</th><th>UNIT COST</th></tr></thead><tbody>' + rows + '</tbody></table></div></section>' +
   '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Recent material receipts</strong><span class="subtle">' + receipts.length + ' recorded</span></div>' +
   (receipts.length ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>RECEIPT</th><th>PURCHASE ORDER</th><th>SUPPLIER / MATERIAL</th><th>QUANTITY</th><th>STOCK AFTER</th><th>REFERENCE</th><th>DATE</th></tr></thead><tbody>' + receipts.slice(0, 10).map((receipt) => '<tr><td class="order-code">' + safe(receipt.id) + '</td><td>' + safe(receipt.purchaseId) + '</td><td><div class="item-name">' + safe(receipt.supplier) + '</div><div class="subtle">' + safe(receipt.material) + '</div></td><td>' + receipt.quantity + ' ' + safe(receipt.unit) + '</td><td>' + safe(receipt.stockAfter || '—') + '</td><td>' + safe(receipt.reference || '—') + '</td><td>' + new Date(receipt.receivedAt).toLocaleDateString('en-IN') + '</td></tr>').join('') + '</tbody></table></div>' : '<div class="empty-state"><h2>No receipts recorded</h2><p>Use “Receive material” to record the next supplier delivery.</p></div>') + '</section>' +
   '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Stock movement history</strong><span class="subtle">' + movements.length + ' movements</span></div>' +
@@ -328,15 +348,15 @@ function planningPage() {
     const costLabel = item.estimatedShortageCost === null ? 'Set unit cost for estimate' : currency(item.estimatedShortageCost);
     const hasDraft = purchases.some((purchase) => purchase.planningGenerated && purchase.materialSku === item.materialSku && purchase.status === 'Draft');
     const action = item.shortageQty > 0
-      ? (hasDraft ? '<span class="status setup">Draft PO · confirm to count</span>' : '<button class="table-button" data-shortage-po="' + safe(item.materialSku) + '">Create draft PO</button>')
+      ? (hasDraft ? '<span class="status setup">Draft PO · confirm to count</span>' : (window.FactoryFlowAuth.has('planning.manage') ? '<button class="table-button" data-shortage-po="' + safe(item.materialSku) + '">Create draft PO</button>' : '<span class="status critical">Shortage</span>'))
       : '<span class="status on-track">Covered</span>';
     return '<tr><td><div class="item-name">' + safe(item.material) + '</div><div class="subtle">' + safe(item.materialSku) + '</div></td><td>' + Number(item.plannedQty).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' ' + safe(item.unit) + '</td><td>' + Number(item.consumedQty).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' ' + safe(item.unit) + '</td><td><strong>' + Number(item.requiredQty).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' ' + safe(item.unit) + '</strong></td><td>' + Number(item.availableQty).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' ' + safe(item.unit) + '</td><td>' + Number(item.incomingQty || 0).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' ' + safe(item.unit) + '</td><td><strong>' + Number(item.shortageQty).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' ' + safe(item.unit) + '</strong></td><td>' + item.coveragePercent.toFixed(1) + '%</td><td>' + costLabel + '</td><td>' + action + '</td></tr>';
   }).join('');
   const requirementRows = plan.jobRequirements.map((item) =>
-    '<tr><td class="order-code">' + safe(item.jobId) + '</td><td>' + safe(item.customer) + '<div class="subtle">' + safe(item.job) + '</div></td><td>' + safe(item.material) + '<div class="subtle">' + safe(item.materialSku) + '</div></td><td>' + Number(item.quantity).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' ' + safe(item.unit) + '</td><td>' + Number(item.consumedQty).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' ' + safe(item.unit) + '</td><td>' + Number(item.remainingQty).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' ' + safe(item.unit) + '</td><td><button class="table-button" data-plan-job="' + safe(item.jobId) + '" data-plan-sku="' + safe(item.materialSku) + '">Edit plan</button></td></tr>'
+    '<tr><td class="order-code">' + safe(item.jobId) + '</td><td>' + safe(item.customer) + '<div class="subtle">' + safe(item.job) + '</div></td><td>' + safe(item.material) + '<div class="subtle">' + safe(item.materialSku) + '</div></td><td>' + Number(item.quantity).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' ' + safe(item.unit) + '</td><td>' + Number(item.consumedQty).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' ' + safe(item.unit) + '</td><td>' + Number(item.remainingQty).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' ' + safe(item.unit) + '</td><td>' + (window.FactoryFlowAuth.has('planning.manage') ? '<button class="table-button" data-plan-job="' + safe(item.jobId) + '" data-plan-sku="' + safe(item.materialSku) + '">Edit plan</button>' : '') + '</td></tr>'
   ).join('');
   const issueRows = plan.issues.map((issue) => '<li>' + safe(issue.jobId + ': ' + issue.message) + '</li>').join('');
-  return head('PRODUCTION', 'Material planning', 'Plan material requirements by job, subtract material already consumed, and check remaining demand against stock and committed purchase orders.', '<button class="primary-button" data-plan-create>Select job to plan</button>') +
+  return head('PRODUCTION', 'Material planning', 'Plan material requirements by job, subtract material already consumed, and check remaining demand against stock and committed purchase orders.', window.FactoryFlowAuth.has('planning.manage') ? '<button class="primary-button" data-plan-create>Select job to plan</button>' : '') +
     '<div class="inventory-grid"><article class="inventory-stat"><span>ACTIVE JOBS</span><strong>' + plan.activeJobCount + '</strong><small>Included in material demand</small></article><article class="inventory-stat"><span>REQUIREMENTS</span><strong>' + plan.requirementCount + '</strong><small>Job material lines</small></article><article class="inventory-stat"><span>MATERIAL SHORTAGES</span><strong>' + plan.shortages.length + '</strong><small>After available stock and open POs</small></article></div>' +
     '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Combined material requirements</strong><span class="subtle">Shared stock is counted once; recorded job consumption reduces remaining demand</span></div>' +
     (plan.byMaterial.length ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>MATERIAL</th><th>PLANNED</th><th>USED</th><th>REMAINING</th><th>ON HAND</th><th>ON ORDER</th><th>SHORTAGE</th><th>COVERAGE</th><th>EST. SHORTAGE COST</th><th></th></tr></thead><tbody>' + shortageRows + '</tbody></table></div>' : '<div class="empty-state"><h2>No material requirements yet</h2><p>Add requirements from a job card or use the button above.</p></div>') + '</section>' +
@@ -365,38 +385,46 @@ function recordProductionOutput(jobId) {
   }
   const activeWorkers = workers.filter((worker) => worker.active !== false);
   if (!activeWorkers.length) {
-    notify('Activate a worker before recording production output.');
+    notify('No active worker profile is linked to your account or job.');
     return;
   }
   const preferred = activeWorkers.find((worker) => worker.name === job.worker) || activeWorkers[0];
-  const workerOptions = activeWorkers.map((worker) => '<option value="' + safe(worker.id) + '"' + (worker.id === preferred.id ? ' selected' : '') + '>' + safe(worker.name + ' · ' + worker.skill) + '</option>').join('');
-  const scheduledSessions = schedules.filter((session) => session.jobId === job.id);
-  const sessionOptions = '<option value="">Not linked to a scheduled session</option>' + scheduledSessions.map((session) => {
+  const workerOptions = activeWorkers.map((worker) => '<option value="' + safe(worker.id) + '"' + (preferred.id === worker.id ? ' selected' : '') + '>' + safe(worker.name + ' · ' + worker.skill) + '</option>').join('');
+  const scheduledSessions = schedules.filter((session) => session.jobId === job.id && activeWorkers.some((worker) => worker.id === session.workerId));
+  const workerAccount = window.FactoryFlowAuth.state.user.role === 'worker';
+  const sessionOptions = (workerAccount ? '' : '<option value="">Not linked to a scheduled session</option>') + scheduledSessions.map((session) => {
     const worker = workers.find((item) => item.id === session.workerId);
     return '<option value="' + safe(session.id) + '">' + safe(session.date + ' · ' + (worker ? worker.name : session.workerName) + ' · ' + Number(session.hours).toFixed(1) + ' planned hrs') + '</option>';
   }).join('');
   const date = localDateISO();
-  openModal('<h2 id="modalTitle">Record production output · ' + safe(job.id) + '</h2><p>' + safe(job.customer + ' · ' + job.item + ' · target ' + Number(job.qty).toLocaleString('en-IN')) + '</p><form id="productionEntryForm" class="form-grid"><label>Worker<select name="workerId" required>' + workerOptions + '</select></label><label>Scheduled session (optional)<select name="scheduleId">' + sessionOptions + '</select></label><div class="form-row"><label>Production date<input required type="date" name="productionDate" value="' + date + '"></label><label>Shift<select name="shift"><option>Day</option><option>Evening</option><option>Night</option></select></label></div><div class="form-row"><label>Total produced units<input required type="number" min="1" step="1" name="producedQty" placeholder="e.g. 2500"></label><label>Actual hours worked<input required type="number" min="0.25" max="24" step="0.25" name="actualHours" placeholder="e.g. 7.5"></label></div><div class="form-row"><label>Good units<input required type="number" min="0" step="1" name="goodQty" value="0"></label><label>Rejected units<input required type="number" min="0" step="1" name="rejectedQty" value="0"></label></div><label>Production notes<input name="notes" placeholder="Machine, batch or shift notes"></label><p class="subtle">Good + rejected units must equal total produced. Actual hours are used for productivity reporting; only enter hours actually worked.</p><p id="productionError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save production entry</button></div></form>');
-  ui('#productionEntryForm').addEventListener('submit', (event) => {
+  openModal('<h2 id="modalTitle">Record production output · ' + safe(job.id) + '</h2><p>' + safe(job.customer + ' · ' + job.item + ' · target ' + Number(job.qty).toLocaleString('en-IN')) + '</p><form id="productionEntryForm" class="form-grid"><label>Worker<select name="workerId" required>' + workerOptions + '</select></label><label>Scheduled session' + (workerAccount ? ' (required)' : ' (optional)') + '<select name="scheduleId"' + (workerAccount ? ' required' : '') + '>' + sessionOptions + '</select></label><div class="form-row"><label>Production date<input required type="date" name="productionDate" value="' + date + '"></label><label>Shift<select name="shift"><option>Day</option><option>Evening</option><option>Night</option></select></label></div><div class="form-row"><label>Total produced units<input required type="number" min="1" step="1" name="producedQty" placeholder="e.g. 2500"></label><label>Actual hours worked<input required type="number" min="0.25" max="24" step="0.25" name="actualHours" placeholder="e.g. 7.5"></label></div><div class="form-row"><label>Good units<input required type="number" min="0" step="1" name="goodQty" value="0"></label><label>Rejected units<input required type="number" min="0" step="1" name="rejectedQty" value="0"></label></div><label>Production notes<input name="notes" placeholder="Machine, batch or shift notes"></label><p class="subtle">Good + rejected units must equal total produced. The server checks your role, worker assignment and linked session.</p><p id="productionError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save production entry</button></div></form>');
+  ui('#productionEntryForm').addEventListener('submit', async (event) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     try {
-      const result = window.FactoryFlowExecution.recordProduction(productionLogs, jobs, workers, {
-        jobId: job.id,
-        workerId: data.get('workerId'),
-        scheduleId: data.get('scheduleId'),
-        productionDate: data.get('productionDate'),
-        shift: data.get('shift'),
-        producedQty: Number(data.get('producedQty')),
-        actualHours: Number(data.get('actualHours')),
-        goodQty: Number(data.get('goodQty')),
-        rejectedQty: Number(data.get('rejectedQty')),
-        notes: data.get('notes')
-      }, schedules);
-      save();
+      const result = await window.FactoryFlowAuth.request('/api/operations/production', {
+        method: 'POST',
+        body: JSON.stringify({
+          jobId: job.id,
+          workerId: data.get('workerId'),
+          scheduleId: data.get('scheduleId'),
+          productionDate: data.get('productionDate'),
+          shift: data.get('shift'),
+          producedQty: Number(data.get('producedQty')),
+          actualHours: Number(data.get('actualHours')),
+          goodQty: Number(data.get('goodQty')),
+          rejectedQty: Number(data.get('rejectedQty')),
+          notes: data.get('notes')
+        })
+      });
+      const index = jobs.findIndex((item) => item.id === result.job.id);
+      if (index >= 0) jobs.splice(index, 1, result.job);
+      else jobs.unshift(result.job);
+      productionLogs.splice(0, productionLogs.length, ...(result.productionLogs || []));
+      save(false);
       closeModal();
       goto('execution');
-      notify(result.record.id + ' saved. ' + result.totals.producedQty.toLocaleString('en-IN') + ' of ' + result.target.toLocaleString('en-IN') + ' units produced.');
+      notify(result.record.id + ' saved. ' + result.record.producedQty.toLocaleString('en-IN') + ' units recorded.');
     } catch (error) {
       const element = ui('#productionError');
       element.textContent = error.message;
@@ -422,7 +450,7 @@ function inspectProduction(jobId) {
     const inspected = qcInspections.filter((item) => item.inspectionType === 'Reinspection' && item.sourceInspectionId === inspection.id).reduce((sum, item) => sum + Number(item.inspectedQty || 0), 0);
     return '<option value="' + safe(inspection.id) + '">' + safe(inspection.id + ' · ' + Math.max(0, worked - inspected) + ' recovered unit(s) pending') + '</option>';
   }).join('');
-  openModal('<h2 id="modalTitle">Quality inspection · ' + safe(job.id) + '</h2><p>' + safe(job.customer + ' · ' + job.item) + ' · produced ' + totals.producedQty.toLocaleString('en-IN') + ' units</p><form id="qcInspectionForm" class="form-grid"><label>Inspection type<select name="inspectionType"><option value="Initial">Initial inspection</option>' + (sourceOptions ? '<option value="Reinspection">Reinspect recovered units</option>' : '') + '</select></label><label id="reinspectionSourceLabel" hidden>Source rework inspection<select name="sourceInspectionId">' + sourceOptions + '</select></label><label>Inspector<input required name="inspector" placeholder="Inspector name"></label><div class="form-row"><label>Inspected quantity<input required name="inspectedQty" type="number" min="1" step="1" placeholder="e.g. 500"></label><label>Passed quantity<input required name="passedQty" type="number" min="0" step="1" value="0"></label></div><label>Failed quantity<input required name="failedQty" type="number" min="0" step="1" value="0"></label><label>Failed-unit disposition<select name="disposition"><option value="Rework">Send for rework</option><option value="Reject">Reject / scrap</option></select></label><label>Defect category<select name="defectCategory"><option>Print defect</option><option>Dimension / size</option><option>Lamination / adhesion</option><option>Material damage</option><option>Finishing defect</option><option>Other</option></select></label><label>Inspection notes<input name="notes" placeholder="Sampling method, defect details or observations"></label><p class="subtle">Passed + failed must equal inspected quantity. Initial QC can cover each produced unit once. Reinspection can only cover units recovered from a completed rework entry.</p><p id="qcError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save inspection</button></div></form>');
+  openModal('<h2 id="modalTitle">Quality inspection · ' + safe(job.id) + '</h2><p>' + safe(job.customer + ' · ' + job.item) + ' · produced ' + totals.producedQty.toLocaleString('en-IN') + ' units</p><form id="qcInspectionForm" class="form-grid"><label>Inspection type<select name="inspectionType"><option value="Initial">Initial inspection</option>' + (sourceOptions ? '<option value="Reinspection">Reinspect recovered units</option>' : '') + '</select></label><label id="reinspectionSourceLabel" hidden>Source rework inspection<select name="sourceInspectionId">' + sourceOptions + '</select></label><label>Inspector<input required name="inspector" placeholder="Inspector name"></label><div class="form-row"><label>Inspected quantity<input required name="inspectedQty" type="number" min="1" step="1" placeholder="e.g. 500"></label><label>Passed quantity<input required name="passedQty" type="number" min="0" step="1" value="0"></label></div><label>Failed quantity<input required name="failedQty" type="number" min="0" step="1" value="0"></label><label>Failed-unit disposition<select name="disposition"><option value="Rework">Send for rework</option><option value="Reject">Reject / scrap</option></select></label><label>Defect category<select name="defectCategory"><option>Print defect</option><option>Dimension / size</option><option>Lamination / adhesion</option><option>Material damage</option><option>Finishing defect</option><option>Other</option></select></label><label>Inspection notes<input name="notes" placeholder="Sampling method, defect details or observations"></label><p class="subtle">Passed + failed must equal inspected quantity. The server validates inspection coverage and disposition.</p><p id="qcError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save inspection</button></div></form>');
   const typeSelect = ui('#qcInspectionForm [name="inspectionType"]');
   const sourceLabel = ui('#reinspectionSourceLabel');
   const sourceSelect = ui('#qcInspectionForm [name="sourceInspectionId"]');
@@ -433,26 +461,30 @@ function inspectProduction(jobId) {
   };
   typeSelect.addEventListener('change', updateSourceVisibility);
   updateSourceVisibility();
-  ui('#qcInspectionForm').addEventListener('submit', (event) => {
+  ui('#qcInspectionForm').addEventListener('submit', async (event) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     try {
-      const result = window.FactoryFlowExecution.recordInspection(qcInspections, productionLogs, reworkLogs, jobs, {
-        jobId: job.id,
-        inspectionType: data.get('inspectionType'),
-        sourceInspectionId: data.get('sourceInspectionId'),
-        inspectedQty: Number(data.get('inspectedQty')),
-        passedQty: Number(data.get('passedQty')),
-        failedQty: Number(data.get('failedQty')),
-        disposition: data.get('disposition'),
-        defectCategory: data.get('defectCategory'),
-        inspector: data.get('inspector'),
-        notes: data.get('notes')
+      const result = await window.FactoryFlowAuth.request('/api/operations/qc', {
+        method: 'POST',
+        body: JSON.stringify({
+          jobId: job.id,
+          inspectionType: data.get('inspectionType'),
+          sourceInspectionId: data.get('sourceInspectionId'),
+          inspectedQty: Number(data.get('inspectedQty')),
+          passedQty: Number(data.get('passedQty')),
+          failedQty: Number(data.get('failedQty')),
+          disposition: data.get('disposition'),
+          defectCategory: data.get('defectCategory'),
+          inspector: data.get('inspector'),
+          notes: data.get('notes')
+        })
       });
-      save();
+      qcInspections.splice(0, qcInspections.length, ...(result.qcInspections || []));
+      save(false);
       closeModal();
       goto('execution');
-      notify(result.record.id + ' saved. QC disposition: ' + result.disposition + '.');
+      notify(result.record.id + ' saved. QC disposition: ' + result.record.disposition + '.');
     } catch (error) {
       const element = ui('#qcError');
       element.textContent = error.message;
@@ -476,18 +508,22 @@ function recordRework(jobId) {
   }).filter(Boolean).join('');
   if (!options) return notify('There are no pending rework units for this job.');
   openModal('<h2 id="modalTitle">Record rework · ' + safe(job.id) + '</h2><p>Record reworked units and separate recovered units from scrapped units.</p><form id="reworkForm" class="form-grid"><label>QC inspection<select required name="qcInspectionId">' + options + '</select></label><label>Total units reworked<input required name="reworkedQty" type="number" min="1" step="1" placeholder="e.g. 40"></label><div class="form-row"><label>Recovered units<input required name="recoveredQty" type="number" min="0" step="1" value="0"></label><label>Scrapped units<input required name="scrappedQty" type="number" min="0" step="1" value="0"></label></div><label>Rework notes<input name="notes" placeholder="Corrective action or machine adjustment"></label><p class="subtle">Recovered + scrapped must equal total reworked. Recovered units must be reinspected before the job can be released.</p><p id="reworkError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save rework result</button></div></form>');
-  ui('#reworkForm').addEventListener('submit', (event) => {
+  ui('#reworkForm').addEventListener('submit', async (event) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     try {
-      const result = window.FactoryFlowExecution.recordRework(reworkLogs, qcInspections, jobs, {
-        qcInspectionId: data.get('qcInspectionId'),
-        reworkedQty: Number(data.get('reworkedQty')),
-        recoveredQty: Number(data.get('recoveredQty')),
-        scrappedQty: Number(data.get('scrappedQty')),
-        notes: data.get('notes')
+      const result = await window.FactoryFlowAuth.request('/api/operations/rework', {
+        method: 'POST',
+        body: JSON.stringify({
+          qcInspectionId: data.get('qcInspectionId'),
+          reworkedQty: Number(data.get('reworkedQty')),
+          recoveredQty: Number(data.get('recoveredQty')),
+          scrappedQty: Number(data.get('scrappedQty')),
+          notes: data.get('notes')
+        })
       });
-      save();
+      reworkLogs.splice(0, reworkLogs.length, ...(result.reworkLogs || []));
+      save(false);
       closeModal();
       goto('execution');
       notify(result.record.id + ' saved. ' + result.record.recoveredQty + ' recovered unit(s) await reinspection.');
@@ -499,10 +535,15 @@ function recordRework(jobId) {
   });
 }
 
-function releaseJobForDelivery(jobId) {
+async function releaseJobForDelivery(jobId) {
   try {
-    const result = window.FactoryFlowExecution.releaseForDelivery(jobs, productionLogs, qcInspections, reworkLogs, jobId);
-    save();
+    const result = await window.FactoryFlowAuth.request('/api/operations/release', {
+      method: 'POST',
+      body: JSON.stringify({ jobId })
+    });
+    const index = jobs.findIndex((item) => item.id === result.job.id);
+    if (index >= 0) jobs.splice(index, 1, result.job);
+    save(false);
     render();
     notify(jobId + ' passed production/QC release checks. Delivery proof can now be recorded.');
     return result;
@@ -520,10 +561,12 @@ function executionPage() {
   const totalRejected = summaries.reduce((sum, item) => sum + item.summary.rejectedQty, 0);
   const pendingRework = summaries.reduce((sum, item) => sum + item.summary.pendingReworkQty, 0);
   const rows = summaries.map(({ job, summary }) => {
-    const releaseAction = job.readyForDelivery
+    const releaseAction = window.FactoryFlowAuth.has('jobs.manage') && job.readyForDelivery
       ? '<button class="table-button" data-delivery-proof="' + safe(job.id) + '">Add delivery proof</button>'
-      : '<button class="table-button" data-release-job="' + safe(job.id) + '">Release check</button>';
-    return '<tr><td class="order-code">' + safe(job.id) + '<div class="subtle">' + safe(job.customer) + '</div></td><td><div class="item-name">' + safe(job.item) + '</div><div class="subtle">Target ' + summary.targetQty.toLocaleString('en-IN') + '</div></td><td>' + summary.producedQty.toLocaleString('en-IN') + '<div class="subtle">' + summary.productionProgress + '% produced</div></td><td>' + summary.goodQty.toLocaleString('en-IN') + '</td><td>' + summary.rejectedQty.toLocaleString('en-IN') + '</td><td>' + summary.acceptedQty.toLocaleString('en-IN') + '</td><td>' + summary.pendingReworkQty.toLocaleString('en-IN') + '</td><td><div class="execution-actions"><button class="table-button" data-production-job="' + safe(job.id) + '">Record output</button><button class="table-button" data-qc-job="' + safe(job.id) + '">Inspect</button>' + (summary.pendingReworkQty > 0 ? '<button class="table-button" data-rework-job="' + safe(job.id) + '">Rework</button>' : '') + releaseAction + '</div></td></tr>';
+      : window.FactoryFlowAuth.has('execution.qc') && !job.readyForDelivery
+        ? '<button class="table-button" data-release-job="' + safe(job.id) + '">Release check</button>'
+        : '';
+    return '<tr><td class="order-code">' + safe(job.id) + '<div class="subtle">' + safe(job.customer) + '</div></td><td><div class="item-name">' + safe(job.item) + '</div><div class="subtle">Target ' + summary.targetQty.toLocaleString('en-IN') + '</div></td><td>' + summary.producedQty.toLocaleString('en-IN') + '<div class="subtle">' + summary.productionProgress + '% produced</div></td><td>' + summary.goodQty.toLocaleString('en-IN') + '</td><td>' + summary.rejectedQty.toLocaleString('en-IN') + '</td><td>' + summary.acceptedQty.toLocaleString('en-IN') + '</td><td>' + summary.pendingReworkQty.toLocaleString('en-IN') + '</td><td><div class="execution-actions">' + (window.FactoryFlowAuth.has('execution.record') ? '<button class="table-button" data-production-job="' + safe(job.id) + '">Record output</button>' : '') + (window.FactoryFlowAuth.has('execution.qc') ? '<button class="table-button" data-qc-job="' + safe(job.id) + '">Inspect</button>' : '') + (window.FactoryFlowAuth.has('execution.qc') && summary.pendingReworkQty > 0 ? '<button class="table-button" data-rework-job="' + safe(job.id) + '">Rework</button>' : '') + releaseAction + '</div></td></tr>';
   }).join('');
   const productionRows = productionLogs.slice().reverse().slice(0, 12).map((entry) =>
     '<tr><td class="order-code">' + safe(entry.id) + '</td><td>' + safe(entry.jobId) + '</td><td>' + safe(entry.workerName) + '</td><td>' + safe(entry.productionDate) + ' · ' + safe(entry.shift) + '</td><td>' + Number(entry.producedQty).toLocaleString('en-IN') + '</td><td>' + Number(entry.goodQty).toLocaleString('en-IN') + '</td><td>' + Number(entry.rejectedQty).toLocaleString('en-IN') + '</td></tr>'
@@ -640,12 +683,12 @@ function schedulePage() {
   const sessionRows = analysis.sessions.map((session) => {
     const dueRisk = session.deadlineRisk ? '<span class="status critical">After deadline</span>' : '<span class="status on-track">On plan</span>';
     const unavailable = session.workerUnavailable ? '<div class="risk-text">Worker marked unavailable</div>' : '';
-    return '<tr><td><strong>' + safe(session.date) + '</strong>' + (session.note ? '<div class="subtle">' + safe(session.note) + '</div>' : '') + '</td><td class="order-code">' + safe(session.jobId) + '<div class="subtle">' + safe(session.customer) + ' · ' + safe(session.job) + '</div></td><td>' + safe(session.workerName) + '</td><td>' + Number(session.hours).toFixed(1) + ' hrs</td><td>' + dueRisk + unavailable + '</td><td><button class="table-button" data-remove-session="' + safe(session.id) + '">Remove</button></td></tr>';
+    return '<tr><td><strong>' + safe(session.date) + '</strong>' + (session.note ? '<div class="subtle">' + safe(session.note) + '</div>' : '') + '</td><td class="order-code">' + safe(session.jobId) + '<div class="subtle">' + safe(session.customer) + ' · ' + safe(session.job) + '</div></td><td>' + safe(session.workerName) + '</td><td>' + Number(session.hours).toFixed(1) + ' hrs</td><td>' + dueRisk + unavailable + '</td><td>' + (window.FactoryFlowAuth.has('schedule.manage') ? '<button class="table-button" data-remove-session="' + safe(session.id) + '">Remove</button>' : '') + '</td></tr>';
   }).join('');
   const conflictItems = analysis.capacityConflicts.map((item) => '<li>' + safe(item.message + ' Assigned ' + item.assignedHours.toFixed(1) + ' / ' + item.capacityHours.toFixed(1) + ' hrs.') + '</li>');
   const riskItems = analysis.deadlineRisks.map((item) => '<li>' + safe(item.jobId + ': scheduled ' + item.scheduledDate + ' after deadline ' + item.dueDate + '.') + '</li>');
   const issueItems = analysis.issues.map((item) => '<li>' + safe(item.message) + '</li>');
-  return head('PRODUCTION', 'Production schedule', 'Schedule work by day and worker, validate daily capacity, and flag sessions that threaten job deadlines.', '<button class="primary-button" data-schedule-create>＋ Schedule a job</button>') +
+  return head('PRODUCTION', 'Production schedule', 'Schedule work by day and worker, validate daily capacity, and flag sessions that threaten job deadlines.', window.FactoryFlowAuth.has('schedule.manage') ? '<button class="primary-button" data-schedule-create>＋ Schedule a job</button>' : '') +
     '<div class="inventory-grid"><article class="inventory-stat"><span>ACTIVE JOBS</span><strong>' + analysis.activeJobCount + '</strong><small>Eligible for production scheduling</small></article><article class="inventory-stat"><span>UPCOMING SESSIONS</span><strong>' + upcoming.length + '</strong><small>Today and future sessions</small></article><article class="inventory-stat"><span>CAPACITY CONFLICTS</span><strong>' + analysis.capacityConflicts.length + '</strong><small>Worker days over allocated hours</small></article><article class="inventory-stat"><span>DEADLINE RISKS</span><strong>' + analysis.deadlineRisks.length + '</strong><small>Sessions after target completion</small></article></div>' +
     '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Production sessions</strong><span class="subtle">' + analysis.sessionCount + ' active session(s)</span></div>' +
     (sessionRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>DATE / OPERATION</th><th>JOB</th><th>WORKER</th><th>PLANNED</th><th>DEADLINE</th><th></th></tr></thead><tbody>' + sessionRows + '</tbody></table></div>' : '<div class="empty-state"><h2>No production sessions scheduled</h2><p>Schedule an active job to start building the production queue.</p></div>') + '</section>' +
@@ -727,23 +770,27 @@ function createDowntimeRecord() {
   const end = new Date(now.getTime() + 60 * 60 * 1000);
   const jobOptions = '<option value="">Not linked to a job</option>' + jobs.map((job) => '<option value="' + safe(job.id) + '">' + safe(job.id + ' · ' + job.customer + ' · ' + job.item) + '</option>').join('');
   openModal('<h2 id="modalTitle">Log machine downtime</h2><p>Record an actual machine or workstation stop. Duration is calculated from the start and end time.</p><form id="downtimeForm" class="form-grid"><label>Machine / workstation<input required name="machineName" placeholder="e.g. Flexo press 1"></label><div class="form-row"><label>Start time<input required type="datetime-local" name="startAt" value="' + localDateTimeValue(now) + '"></label><label>End time<input required type="datetime-local" name="endAt" value="' + localDateTimeValue(end) + '"></label></div><label>Reason<select required name="reason"><option value="">Select reason</option><option>Breakdown</option><option>Planned maintenance</option><option>Material shortage</option><option>Power outage</option><option>Changeover / setup</option><option>Quality issue</option><option>Operator unavailable</option><option>Other</option></select></label><label>Related job (optional)<select name="jobId">' + jobOptions + '</select></label><label>Reported by<input required name="reportedBy" placeholder="Name of operator / supervisor"></label><label>Notes<input name="notes" placeholder="Cause, action taken or maintenance reference"></label><p id="downtimeError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save downtime record</button></div></form>');
-  ui('#downtimeForm').addEventListener('submit', (event) => {
+  ui('#downtimeForm').addEventListener('submit', async (event) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     try {
-      const record = window.FactoryFlowAnalytics.recordDowntime(downtimeLogs, jobs, {
-        machineName: data.get('machineName'),
-        startAt: data.get('startAt'),
-        endAt: data.get('endAt'),
-        reason: data.get('reason'),
-        jobId: data.get('jobId'),
-        reportedBy: data.get('reportedBy'),
-        notes: data.get('notes')
+      const result = await window.FactoryFlowAuth.request('/api/operations/downtime', {
+        method: 'POST',
+        body: JSON.stringify({
+          machineName: data.get('machineName'),
+          startAt: data.get('startAt'),
+          endAt: data.get('endAt'),
+          reason: data.get('reason'),
+          jobId: data.get('jobId'),
+          reportedBy: data.get('reportedBy'),
+          notes: data.get('notes')
+        })
       });
-      save();
+      downtimeLogs.splice(0, downtimeLogs.length, ...(result.downtimeLogs || []));
+      save(false);
       closeModal();
       goto('analytics');
-      notify(record.id + ' saved · ' + record.durationMinutes + ' minutes of downtime.');
+      notify(result.record.id + ' saved · ' + result.record.durationMinutes + ' minutes of downtime.');
     } catch (error) {
       const element = ui('#downtimeError');
       element.textContent = error.message;
@@ -771,6 +818,98 @@ function exportAnalyticsCsv() {
   data.downtime.reasons.forEach((item) => rows.push(['Downtime reason', item.reason, '', item.minutes, 'minutes', item.hours + ' hours']));
   data.jobPerformance.forEach((job) => rows.push(['Job', job.jobId, job.customer, job.producedQty, 'units', 'Target: ' + job.targetQty + '; completion: ' + (job.completionPercent === null ? 'not available' : job.completionPercent + '%')]));
   downloadCsv('factoryflow-production-analytics.csv', rows);
+}
+
+function usersPage() {
+  const authState = window.FactoryFlowAuth.state;
+  if (!authState.usersLoaded) {
+    authState.usersLoaded = true;
+    Promise.all([
+      window.FactoryFlowAuth.request('/api/users'),
+      window.FactoryFlowAuth.request('/api/audit')
+    ]).then(([usersResult, auditResult]) => {
+      authState.adminUsers = usersResult.users || [];
+      authState.auditRecords = auditResult.records || [];
+      if (app.view === 'users') render();
+    }).catch((error) => notify(error.message));
+  }
+  const users = authState.adminUsers || [];
+  const rows = users.map((user) => '<tr><td><strong>' + safe(user.name) + '</strong><div class="subtle">' + safe(user.email) + '</div></td><td><span class="user-role">' + safe(user.roleLabel) + '</span>' + (user.workerId ? '<div class="subtle">' + safe(user.workerId) + '</div>' : '') + '</td><td><span class="status ' + (user.active ? 'on-track' : 'critical') + '">' + (user.active ? 'Active' : 'Inactive') + '</span>' + (user.mustChangePassword ? '<div class="subtle">Password change required</div>' : '') + '</td><td>' + safe(user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString('en-IN') : 'Never') + '</td><td><button class="table-button" data-edit-user="' + safe(user.id) + '">Manage</button></td></tr>').join('');
+  const auditRows = (authState.auditRecords || []).slice(0, 12).map((record) => '<tr><td>' + safe(new Date(record.createdAt).toLocaleString('en-IN')) + '</td><td><strong>' + safe(record.actorName) + '</strong><div class="subtle">' + safe(record.actorRole) + '</div></td><td>' + safe(record.action) + '</td><td>' + safe(record.targetType + (record.targetId ? ' · ' + record.targetId : '')) + '</td></tr>').join('');
+  const active = users.filter((user) => user.active).length;
+  return head('ADMINISTRATION', 'User management', 'Create accounts, assign roles, link workers to production profiles and review recent security-sensitive actions.', '<button class="primary-button" data-add-user>＋ Add user</button>') +
+    '<div class="user-admin-grid"><article class="user-admin-stat"><span>ACCOUNTS</span><strong>' + users.length + '</strong></article><article class="user-admin-stat"><span>ACTIVE USERS</span><strong>' + active + '</strong></article><article class="user-admin-stat"><span>INACTIVE USERS</span><strong>' + (users.length - active) + '</strong></article></div>' +
+    '<section class="content-card"><div class="toolbar"><strong>User accounts</strong><span class="subtle">New users must change their temporary password at first sign-in</span></div>' +
+    (rows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>USER</th><th>ROLE / WORKER</th><th>STATUS</th><th>LAST SIGN-IN</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>' : '<div class="empty-state">No user accounts found.</div>') + '</section>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong>Recent audit activity</strong><span class="subtle">Latest 12 recorded events</span></div>' +
+    (auditRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>TIME</th><th>ACTOR</th><th>ACTION</th><th>RECORD</th></tr></thead><tbody>' + auditRows + '</tbody></table></div>' : '<div class="empty-state">No audit activity recorded yet.</div>') + '</section>';
+}
+
+function authStateReloadUsers() {
+  const state = window.FactoryFlowAuth.state;
+  state.usersLoaded = false;
+  state.adminUsers = [];
+  state.auditRecords = [];
+  if (app.view === 'users') render();
+}
+
+function addWorkspaceUser() {
+  const workerOptions = '<option value="">Not linked to a worker</option>' + workers.map((worker) => '<option value="' + safe(worker.id) + '">' + safe(worker.name + ' · ' + worker.skill) + '</option>').join('');
+  openModal('<h2 id="modalTitle">Create user account</h2><p>Assign the least-privileged role needed. Worker accounts must be linked to an active worker profile.</p><form id="addUserForm" class="form-grid"><label>Full name<input required name="name" maxlength="100"></label><label>Email address<input required name="email" type="email"></label><label>Role<select required name="role"><option value="manager">Manager</option><option value="supervisor">Production supervisor</option><option value="worker">Worker</option><option value="admin">Administrator</option></select></label><label id="newUserWorkerLabel" hidden>Worker profile<select name="workerId">' + workerOptions + '</select></label><label>Temporary password<input required name="password" type="password" minlength="12" autocomplete="new-password" placeholder="12+ characters, uppercase, lowercase and number"></label><p class="subtle">The new user must change this password at first sign-in. Share temporary credentials through a separate secure channel.</p><p id="addUserError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Create account</button></div></form>');
+  const roleSelect = ui('#addUserForm [name="role"]');
+  const workerLabel = ui('#newUserWorkerLabel');
+  const updateWorkerVisibility = () => {
+    workerLabel.hidden = roleSelect.value !== 'worker';
+    ui('#addUserForm [name="workerId"]').required = roleSelect.value === 'worker';
+  };
+  roleSelect.addEventListener('change', updateWorkerVisibility);
+  updateWorkerVisibility();
+  ui('#addUserForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    try {
+      await window.FactoryFlowAuth.request('/api/users', {
+        method: 'POST',
+        body: JSON.stringify({ name: data.get('name'), email: data.get('email'), role: data.get('role'), workerId: data.get('workerId'), password: data.get('password') })
+      });
+      closeModal();
+      authStateReloadUsers();
+      notify('Account created. The new user must change their password on first sign-in.');
+    } catch (error) {
+      const node = ui('#addUserError');
+      node.textContent = error.message;
+      node.hidden = false;
+    }
+  });
+}
+
+function manageWorkspaceUser(userId) {
+  const user = (window.FactoryFlowAuth.state.adminUsers || []).find((item) => item.id === userId);
+  if (!user) return;
+  const workerOptions = '<option value="">Not linked</option>' + workers.map((worker) => '<option value="' + safe(worker.id) + '"' + (worker.id === user.workerId ? ' selected' : '') + '>' + safe(worker.name + ' · ' + worker.skill) + '</option>').join('');
+  openModal('<h2 id="modalTitle">Manage user</h2><p>' + safe(user.email) + '</p><form id="editUserForm" class="form-grid"><label>Full name<input required name="name" maxlength="100" value="' + safe(user.name) + '"></label><label>Role<select name="role"><option value="admin"' + (user.role === 'admin' ? ' selected' : '') + '>Administrator</option><option value="manager"' + (user.role === 'manager' ? ' selected' : '') + '>Manager</option><option value="supervisor"' + (user.role === 'supervisor' ? ' selected' : '') + '>Production supervisor</option><option value="worker"' + (user.role === 'worker' ? ' selected' : '') + '>Worker</option></select></label><label id="editUserWorkerLabel">Worker profile<select name="workerId">' + workerOptions + '</select></label><label>Account status<select name="active"><option value="active"' + (user.active ? ' selected' : '') + '>Active</option><option value="inactive"' + (!user.active ? ' selected' : '') + '>Inactive</option></select></label><p class="subtle">Deactivating an account or changing its role revokes existing sessions. You cannot deactivate your own administrator account.</p><p id="editUserError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save user</button></div></form>');
+  const roleSelect = ui('#editUserForm [name="role"]');
+  const workerLabel = ui('#editUserWorkerLabel');
+  const updateWorkerVisibility = () => { workerLabel.hidden = roleSelect.value !== 'worker'; };
+  roleSelect.addEventListener('change', updateWorkerVisibility);
+  updateWorkerVisibility();
+  ui('#editUserForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    try {
+      await window.FactoryFlowAuth.request('/api/users/' + encodeURIComponent(user.id), {
+        method: 'PATCH',
+        body: JSON.stringify({ name: data.get('name'), role: data.get('role'), workerId: data.get('workerId'), active: data.get('active') === 'active' })
+      });
+      closeModal();
+      authStateReloadUsers();
+      notify('User account updated.');
+    } catch (error) {
+      const node = ui('#editUserError');
+      node.textContent = error.message;
+      node.hidden = false;
+    }
+  });
 }
 
 function costingPage() {
@@ -806,7 +945,7 @@ function workersPage() {
     const capacity = Number(worker.capacityHoursPerDay) || 0;
     const percent = capacity > 0 ? Math.min(100, Math.round(assigned / capacity * 100)) : 0;
     const unavailable = (worker.unavailableDates || []).length;
-    return '<article class="worker-capacity-card"><div class="worker-card-head"><span class="person-avatar">' + safe(worker.name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase()) + '</span><div class="person-info"><strong>' + safe(worker.name) + '</strong><small>' + safe(worker.skill || 'General production') + '</small></div><span class="status ' + (worker.active === false ? 'critical' : 'on-track') + '">' + (worker.active === false ? 'Inactive' : 'Active') + '</span></div><div class="capacity-meta"><span>Today’s assigned load</span><strong>' + assigned.toFixed(1) + ' / ' + capacity.toFixed(1) + ' hrs</strong></div><div class="capacity-track"><i style="width:' + percent + '%"></i></div><div class="worker-card-foot"><span>' + unavailable + ' unavailable date(s)</span><button class="table-button" data-edit-worker="' + safe(worker.id) + '">Edit profile</button></div></article>';
+    return '<article class="worker-capacity-card"><div class="worker-card-head"><span class="person-avatar">' + safe(worker.name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase()) + '</span><div class="person-info"><strong>' + safe(worker.name) + '</strong><small>' + safe(worker.skill || 'General production') + '</small></div><span class="status ' + (worker.active === false ? 'critical' : 'on-track') + '">' + (worker.active === false ? 'Inactive' : 'Active') + '</span></div><div class="capacity-meta"><span>Today’s assigned load</span><strong>' + assigned.toFixed(1) + ' / ' + capacity.toFixed(1) + ' hrs</strong></div><div class="capacity-track"><i style="width:' + percent + '%"></i></div><div class="worker-card-foot"><span>' + unavailable + ' unavailable date(s)</span>' + (window.FactoryFlowAuth.has('workers.manage') ? '<button class="table-button" data-edit-worker="' + safe(worker.id) + '">Edit profile</button>' : '') + '</div></article>';
   }).join('');
   const recentSessions = analysis.sessions.filter((session) => session.date >= today).slice(0, 6).map((session) => '<div class="schedule-item"><div class="schedule-time">' + safe(session.date) + '</div><div class="schedule-copy"><strong>' + safe(session.jobId) + ' · ' + safe(session.workerName) + '</strong><small>' + safe(session.job) + ' · ' + Number(session.hours).toFixed(1) + ' hours</small></div><span class="status ' + (session.deadlineRisk || session.workerUnavailable ? 'critical' : 'on-track') + '">' + (session.deadlineRisk ? 'Deadline risk' : session.workerUnavailable ? 'Unavailable' : 'Planned') + '</span></div>').join('');
   return head('PARTNERS', 'Job-worker capacity', 'Manage worker skills, daily capacity, availability and live production assignments.', '<button class="secondary-button" data-go="schedule">Open production schedule →</button>') +
@@ -832,11 +971,13 @@ function settingsPage() {
 }
 
 function render() {
+  const permissions = { dashboard: 'dashboard.view', quotes: 'quotes.view', jobs: 'jobs.view', purchases: 'purchases.view', materials: 'materials.view', workers: 'workers.view', invoices: 'invoices.view', marketplace: 'marketplace.view', planning: 'planning.view', schedule: 'schedule.view', execution: 'execution.view', analytics: 'analytics.view', costing: 'costing.view', settings: 'settings.view', users: 'users.manage' };
+  if (!window.FactoryFlowAuth.has(permissions[app.view])) app.view = 'dashboard';
   const label = titles[app.view];
   ui('#pageKicker').textContent = label[0];
   ui('#pageTitle').textContent = label[1];
   all('.nav-link[data-view]').forEach((button) => button.classList.toggle('active', button.dataset.view === app.view));
-  const pages = { dashboard, quotes: quotesPage, jobs: jobsPage, purchases: purchasesPage, materials: materialsPage, workers: workersPage, invoices: invoicesPage, marketplace: marketplacePage, planning: planningPage, schedule: schedulePage, execution: executionPage, analytics: analyticsPage, costing: costingPage, settings: settingsPage };
+  const pages = { dashboard: window.FactoryFlowAuth.state.user.role === 'worker' ? workerDashboard : window.FactoryFlowAuth.state.user.role === 'supervisor' ? supervisorDashboard : dashboard, quotes: quotesPage, jobs: jobsPage, purchases: purchasesPage, materials: materialsPage, workers: workersPage, invoices: invoicesPage, marketplace: marketplacePage, planning: planningPage, schedule: schedulePage, execution: executionPage, analytics: analyticsPage, costing: costingPage, settings: settingsPage, users: usersPage };
   ui('#view').innerHTML = pages[app.view]();
   bind();
 }
@@ -981,14 +1122,27 @@ function openDeliveryProof(jobId) {
       error.hidden = false;
       return;
     }
-    const delivery = { id: 'DP-' + (101 + deliveries.length), jobId: job.id, customer: job.customer, receivedBy: formData.get('receivedBy'), challan: formData.get('challan') || 'Not provided', deliveredAt: formData.get('deliveredAt'), notes: formData.get('notes') || 'No additional notes.', attachment, createdAt: new Date().toISOString() };
-    const existing = deliveries.findIndex((item) => item.jobId === job.id);
-    if (existing >= 0) deliveries.splice(existing, 1, delivery); else deliveries.unshift(delivery);
-    job.status = 'Delivered';
-    job.readyForDelivery = true;
-    job.due = 'Delivered ' + new Date(delivery.deliveredAt + 'T12:00:00').toLocaleDateString('en-IN', { month: 'short', day: 'numeric' });
-    job.progress = 100;
-    save(); closeModal(); goto('jobs'); notify('Delivery proof saved for ' + job.id + '.');
+    try {
+      const result = await window.FactoryFlowAuth.request('/api/operations/delivery', {
+        method: 'POST',
+        body: JSON.stringify({
+          jobId: job.id,
+          receivedBy: formData.get('receivedBy'),
+          challan: formData.get('challan'),
+          deliveredAt: formData.get('deliveredAt'),
+          notes: formData.get('notes'),
+          attachment
+        })
+      });
+      const existing = deliveries.findIndex((item) => item.jobId === job.id);
+      if (existing >= 0) deliveries.splice(existing, 1, result.delivery); else deliveries.unshift(result.delivery);
+      const index = jobs.findIndex((item) => item.id === job.id);
+      if (index >= 0) jobs.splice(index, 1, result.job);
+      save(false); closeModal(); goto('jobs'); notify('Delivery proof saved for ' + job.id + '.');
+    } catch (saveError) {
+      error.textContent = saveError.message;
+      error.hidden = false;
+    }
   });
 }
 function viewDeliveryProof(jobId) {
@@ -1326,6 +1480,8 @@ function bind() {
     save();
     render();
   });
+  all('[data-add-user]').forEach((button) => button.addEventListener('click', addWorkspaceUser));
+  all('[data-edit-user]').forEach((button) => button.addEventListener('click', () => manageWorkspaceUser(button.dataset.editUser)));
   all('[data-consume-job]').forEach((button) => button.addEventListener('click', () => consumeMaterials(button.dataset.consumeJob)));
   all('[data-cost-job]').forEach((button) => button.addEventListener('click', () => editJobCosts(button.dataset.costJob)));
   all('[data-plan-job]').forEach((button) => button.addEventListener('click', () => planJobMaterials(button.dataset.planJob, button.dataset.planSku || null)));
@@ -1365,16 +1521,40 @@ function bind() {
   }));
 }
 
-all('.nav-link[data-view]').forEach((button) => button.addEventListener('click', () => goto(button.dataset.view)));
-ui('#mobileMenu').addEventListener('click', () => ui('.sidebar').classList.toggle('open'));
-ui('#modalClose').addEventListener('click', closeModal);
-ui('#modalBackdrop').addEventListener('click', (event) => { if (event.target.id === 'modalBackdrop') closeModal(); });
-ui('#notificationButton').addEventListener('click', () => notify('Two material alerts and one customer reply need attention.'));
-ui('#dateButton').addEventListener('click', () => notify('Showing work scheduled for today.'));
-ui('#languageToggle').addEventListener('click', toggleLanguage);
-ui('#globalSearch').addEventListener('input', () => { if (app.view === 'quotes') ui('#quotesBody').innerHTML = quoteRows(); });
-ui('#todayDate').textContent = new Date().toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' });
-ui('#languageToggle').textContent = app.language === 'hi' ? 'EN' : 'हिं';
-save(false);
-render();
-hydrateWorkspace();
+async function startFactoryFlowApplication() {
+  try {
+    await window.FactoryFlowAuth.initialize();
+    window.FactoryFlowAuth.applyNavigation();
+    const pagePermissions = {
+      dashboard: 'dashboard.view', quotes: 'quotes.view', jobs: 'jobs.view',
+      purchases: 'purchases.view', materials: 'materials.view', workers: 'workers.view',
+      invoices: 'invoices.view', marketplace: 'marketplace.view', planning: 'planning.view',
+      schedule: 'schedule.view', execution: 'execution.view', analytics: 'analytics.view',
+      costing: 'costing.view', settings: 'settings.view', users: 'users.manage'
+    };
+    all('.nav-link[data-view]').forEach((button) => button.addEventListener('click', () => {
+      if (window.FactoryFlowAuth.has(pagePermissions[button.dataset.view])) goto(button.dataset.view);
+    }));
+    ui('#mobileMenu').addEventListener('click', () => ui('.sidebar').classList.toggle('open'));
+    ui('#modalClose').addEventListener('click', closeModal);
+    ui('#modalBackdrop').addEventListener('click', (event) => { if (event.target.id === 'modalBackdrop') closeModal(); });
+    ui('#notificationButton').addEventListener('click', () => notify('You are signed in to your FactoryFlow workspace.'));
+    ui('#dateButton').addEventListener('click', () => notify('Showing work scheduled for today.'));
+    ui('#languageToggle').addEventListener('click', toggleLanguage);
+    ui('#globalSearch').addEventListener('input', () => {
+      if (app.view === 'quotes' && window.FactoryFlowAuth.has('quotes.view')) ui('#quotesBody').innerHTML = quoteRows();
+    });
+    ui('#todayDate').textContent = new Date().toLocaleDateString('en-IN', { month: 'short', day: 'numeric', year: 'numeric' });
+    ui('#languageToggle').textContent = app.language === 'hi' ? 'EN' : 'हिं';
+    await hydrateWorkspace();
+    window.FactoryFlowAuth.applyNavigation();
+    render();
+  } catch (error) {
+    const shell = document.createElement('main');
+    shell.className = 'auth-overlay';
+    shell.innerHTML = '<section class="auth-card"><h1>FactoryFlow could not start</h1><p class="auth-error">' + safe(error.message) + '</p><button class="auth-submit" id="factoryFlowRetry" type="button">Retry</button></section>';
+    document.body.appendChild(shell);
+    shell.querySelector('#factoryFlowRetry').addEventListener('click', () => window.location.reload());
+  }
+}
+startFactoryFlowApplication();
