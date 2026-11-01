@@ -786,6 +786,98 @@ function exportAnalyticsCsv() {
   downloadCsv('factoryflow-production-analytics.csv', rows);
 }
 
+function usersPage() {
+  const authState = window.FactoryFlowAuth.state;
+  if (!authState.usersLoaded) {
+    authState.usersLoaded = true;
+    Promise.all([
+      window.FactoryFlowAuth.request('/api/users'),
+      window.FactoryFlowAuth.request('/api/audit')
+    ]).then(([usersResult, auditResult]) => {
+      authState.adminUsers = usersResult.users || [];
+      authState.auditRecords = auditResult.records || [];
+      if (app.view === 'users') render();
+    }).catch((error) => notify(error.message));
+  }
+  const users = authState.adminUsers || [];
+  const rows = users.map((user) => '<tr><td><strong>' + safe(user.name) + '</strong><div class="subtle">' + safe(user.email) + '</div></td><td><span class="user-role">' + safe(user.roleLabel) + '</span>' + (user.workerId ? '<div class="subtle">' + safe(user.workerId) + '</div>' : '') + '</td><td><span class="status ' + (user.active ? 'on-track' : 'critical') + '">' + (user.active ? 'Active' : 'Inactive') + '</span>' + (user.mustChangePassword ? '<div class="subtle">Password change required</div>' : '') + '</td><td>' + safe(user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString('en-IN') : 'Never') + '</td><td><button class="table-button" data-edit-user="' + safe(user.id) + '">Manage</button></td></tr>').join('');
+  const auditRows = (authState.auditRecords || []).slice(0, 12).map((record) => '<tr><td>' + safe(new Date(record.createdAt).toLocaleString('en-IN')) + '</td><td><strong>' + safe(record.actorName) + '</strong><div class="subtle">' + safe(record.actorRole) + '</div></td><td>' + safe(record.action) + '</td><td>' + safe(record.targetType + (record.targetId ? ' · ' + record.targetId : '')) + '</td></tr>').join('');
+  const active = users.filter((user) => user.active).length;
+  return head('ADMINISTRATION', 'User management', 'Create accounts, assign roles, link workers to production profiles and review recent security-sensitive actions.', '<button class="primary-button" data-add-user>＋ Add user</button>') +
+    '<div class="user-admin-grid"><article class="user-admin-stat"><span>ACCOUNTS</span><strong>' + users.length + '</strong></article><article class="user-admin-stat"><span>ACTIVE USERS</span><strong>' + active + '</strong></article><article class="user-admin-stat"><span>INACTIVE USERS</span><strong>' + (users.length - active) + '</strong></article></div>' +
+    '<section class="content-card"><div class="toolbar"><strong>User accounts</strong><span class="subtle">New users must change their temporary password at first sign-in</span></div>' +
+    (rows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>USER</th><th>ROLE / WORKER</th><th>STATUS</th><th>LAST SIGN-IN</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>' : '<div class="empty-state">No user accounts found.</div>') + '</section>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong>Recent audit activity</strong><span class="subtle">Latest 12 recorded events</span></div>' +
+    (auditRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>TIME</th><th>ACTOR</th><th>ACTION</th><th>RECORD</th></tr></thead><tbody>' + auditRows + '</tbody></table></div>' : '<div class="empty-state">No audit activity recorded yet.</div>') + '</section>';
+}
+
+function authStateReloadUsers() {
+  const state = window.FactoryFlowAuth.state;
+  state.usersLoaded = false;
+  state.adminUsers = [];
+  state.auditRecords = [];
+  if (app.view === 'users') render();
+}
+
+function addWorkspaceUser() {
+  const workerOptions = '<option value="">Not linked to a worker</option>' + workers.map((worker) => '<option value="' + safe(worker.id) + '">' + safe(worker.name + ' · ' + worker.skill) + '</option>').join('');
+  openModal('<h2 id="modalTitle">Create user account</h2><p>Assign the least-privileged role needed. Worker accounts must be linked to an active worker profile.</p><form id="addUserForm" class="form-grid"><label>Full name<input required name="name" maxlength="100"></label><label>Email address<input required name="email" type="email"></label><label>Role<select required name="role"><option value="manager">Manager</option><option value="supervisor">Production supervisor</option><option value="worker">Worker</option><option value="admin">Administrator</option></select></label><label id="newUserWorkerLabel" hidden>Worker profile<select name="workerId">' + workerOptions + '</select></label><label>Temporary password<input required name="password" type="password" minlength="12" autocomplete="new-password" placeholder="12+ characters, uppercase, lowercase and number"></label><p class="subtle">The new user must change this password at first sign-in. Share temporary credentials through a separate secure channel.</p><p id="addUserError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Create account</button></div></form>');
+  const roleSelect = ui('#addUserForm [name="role"]');
+  const workerLabel = ui('#newUserWorkerLabel');
+  const updateWorkerVisibility = () => {
+    workerLabel.hidden = roleSelect.value !== 'worker';
+    ui('#addUserForm [name="workerId"]').required = roleSelect.value === 'worker';
+  };
+  roleSelect.addEventListener('change', updateWorkerVisibility);
+  updateWorkerVisibility();
+  ui('#addUserForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    try {
+      await window.FactoryFlowAuth.request('/api/users', {
+        method: 'POST',
+        body: JSON.stringify({ name: data.get('name'), email: data.get('email'), role: data.get('role'), workerId: data.get('workerId'), password: data.get('password') })
+      });
+      closeModal();
+      authStateReloadUsers();
+      notify('Account created. The new user must change their password on first sign-in.');
+    } catch (error) {
+      const node = ui('#addUserError');
+      node.textContent = error.message;
+      node.hidden = false;
+    }
+  });
+}
+
+function manageWorkspaceUser(userId) {
+  const user = (window.FactoryFlowAuth.state.adminUsers || []).find((item) => item.id === userId);
+  if (!user) return;
+  const workerOptions = '<option value="">Not linked</option>' + workers.map((worker) => '<option value="' + safe(worker.id) + '"' + (worker.id === user.workerId ? ' selected' : '') + '>' + safe(worker.name + ' · ' + worker.skill) + '</option>').join('');
+  openModal('<h2 id="modalTitle">Manage user</h2><p>' + safe(user.email) + '</p><form id="editUserForm" class="form-grid"><label>Full name<input required name="name" maxlength="100" value="' + safe(user.name) + '"></label><label>Role<select name="role"><option value="admin"' + (user.role === 'admin' ? ' selected' : '') + '>Administrator</option><option value="manager"' + (user.role === 'manager' ? ' selected' : '') + '>Manager</option><option value="supervisor"' + (user.role === 'supervisor' ? ' selected' : '') + '>Production supervisor</option><option value="worker"' + (user.role === 'worker' ? ' selected' : '') + '>Worker</option></select></label><label id="editUserWorkerLabel">Worker profile<select name="workerId">' + workerOptions + '</select></label><label>Account status<select name="active"><option value="active"' + (user.active ? ' selected' : '') + '>Active</option><option value="inactive"' + (!user.active ? ' selected' : '') + '>Inactive</option></select></label><p class="subtle">Deactivating an account or changing its role revokes existing sessions. You cannot deactivate your own administrator account.</p><p id="editUserError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save user</button></div></form>');
+  const roleSelect = ui('#editUserForm [name="role"]');
+  const workerLabel = ui('#editUserWorkerLabel');
+  const updateWorkerVisibility = () => { workerLabel.hidden = roleSelect.value !== 'worker'; };
+  roleSelect.addEventListener('change', updateWorkerVisibility);
+  updateWorkerVisibility();
+  ui('#editUserForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    try {
+      await window.FactoryFlowAuth.request('/api/users/' + encodeURIComponent(user.id), {
+        method: 'PATCH',
+        body: JSON.stringify({ name: data.get('name'), role: data.get('role'), workerId: data.get('workerId'), active: data.get('active') === 'active' })
+      });
+      closeModal();
+      authStateReloadUsers();
+      notify('User account updated.');
+    } catch (error) {
+      const node = ui('#editUserError');
+      node.textContent = error.message;
+      node.hidden = false;
+    }
+  });
+}
+
 function costingPage() {
   const rows = jobs.map((job) => ({ job, cost: window.FactoryFlowCosting.calculateJobCost(job, movements) }));
   const quotedRevenue = rows.reduce((total, row) => total + (row.cost.revenueConfigured ? row.cost.revenue : 0), 0);
