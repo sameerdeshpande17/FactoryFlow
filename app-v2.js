@@ -117,42 +117,39 @@ async function syncWorkspace() {
 
 async function hydrateWorkspace() {
   if (location.protocol === 'file:') {
-    setDataStatus('Local mode', 'offline');
-    workspaceReady = true;
+    setDataStatus('Authenticated server required', 'offline');
+    workspaceReady = false;
     return;
   }
   setDataStatus('Connecting…', 'pending');
   try {
-    const response = await fetch('/api/bootstrap', { headers: { Accept: 'application/json' } });
-    if (!response.ok) throw new Error('Workspace is unavailable.');
-    const payload = await response.json();
+    const payload = await window.FactoryFlowAuth.request('/api/bootstrap', {
+      headers: { Accept: 'application/json' }
+    });
     if (payload.auth) window.FactoryFlowAuth.update(payload.auth);
     const remote = payload.state || {};
-    const hasRemoteData = Object.keys(remote).some((key) => Array.isArray(remote[key]) && remote[key].length);
-    if (hasRemoteData) {
-      quotes.splice(0, quotes.length, ...remote.quotes);
-      jobs.splice(0, jobs.length, ...remote.jobs);
-      purchases.splice(0, purchases.length, ...remote.purchases);
-      materials.splice(0, materials.length, ...remote.materials);
-      deliveries.splice(0, deliveries.length, ...(remote.deliveries || []));
-      receipts.splice(0, receipts.length, ...(remote.receipts || []));
-      movements.splice(0, movements.length, ...(remote.movements || []));
-      requirements.splice(0, requirements.length, ...(remote.requirements || []));
-      if (Array.isArray(remote.workers)) workers.splice(0, workers.length, ...remote.workers);
-      if (Array.isArray(remote.schedules)) schedules.splice(0, schedules.length, ...remote.schedules);
-      if (Array.isArray(remote.productionLogs)) productionLogs.splice(0, productionLogs.length, ...remote.productionLogs);
-      if (Array.isArray(remote.qcInspections)) qcInspections.splice(0, qcInspections.length, ...remote.qcInspections);
-      if (Array.isArray(remote.reworkLogs)) reworkLogs.splice(0, reworkLogs.length, ...remote.reworkLogs);
-      if (Array.isArray(remote.downtimeLogs)) downtimeLogs.splice(0, downtimeLogs.length, ...remote.downtimeLogs);
-    }
+    const replace = (target, key) => target.splice(0, target.length, ...(Array.isArray(remote[key]) ? remote[key] : []));
+    replace(quotes, 'quotes');
+    replace(jobs, 'jobs');
+    replace(purchases, 'purchases');
+    replace(materials, 'materials');
+    replace(deliveries, 'deliveries');
+    replace(receipts, 'receipts');
+    replace(movements, 'movements');
+    replace(requirements, 'requirements');
+    replace(workers, 'workers');
+    replace(schedules, 'schedules');
+    replace(productionLogs, 'productionLogs');
+    replace(qcInspections, 'qcInspections');
+    replace(reworkLogs, 'reworkLogs');
+    replace(downtimeLogs, 'downtimeLogs');
     window.FactoryFlowInventory.ensureStockMetadata(materials);
     workspaceReady = true;
-    save(hasRemoteData ? false : true);
+    save(false);
     setDataStatus('Synced', 'online');
-    render();
   } catch {
-    workspaceReady = true;
-    setDataStatus('Local mode', 'offline');
+    workspaceReady = false;
+    setDataStatus('Sign-in required', 'offline');
   }
 }
 
