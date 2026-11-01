@@ -409,20 +409,26 @@ async function handleApi(request, response, pathname) {
       if (target.id === current.user.id && body.active === false) {
         return sendJson(response, 400, { error: 'You cannot deactivate your own account.' });
       }
-      if (body.role !== undefined) auth.validateRole(body.role);
+      const nextRole = body.role !== undefined ? auth.validateRole(body.role) : target.role;
+      const nextActive = body.active !== undefined ? body.active : target.active !== false;
+      if (typeof nextActive !== 'boolean') return sendJson(response, 400, { error: 'Account status must be active or inactive.' });
+      const nextWorkerId = body.workerId !== undefined ? String(body.workerId || '').trim() : target.workerId || '';
+      if (nextRole === 'worker' && !store.workers.some((worker) => worker.id === nextWorkerId && worker.active !== false)) return sendJson(response, 400, { error: 'Worker accounts must be linked to an active worker profile.' });
       if (body.name !== undefined) {
         const name = String(body.name).trim();
         if (!name || name.length > 100) return sendJson(response, 400, { error: 'Enter a valid user name.' });
-        target.name = name;
       }
-      if (body.role !== undefined) target.role = body.role;
-      if (body.workerId !== undefined) target.workerId = String(body.workerId || '').trim();
-      if (target.role === 'worker' && !store.workers.some((worker) => worker.id === target.workerId && worker.active !== false)) return sendJson(response, 400, { error: 'Worker accounts must be linked to an active worker profile.' });
-      if (body.active !== undefined) target.active = Boolean(body.active);
+      const activeAdminsAfter = store.users.filter((item) => item.id === target.id
+        ? nextRole === 'admin' && nextActive
+        : item.role === 'admin' && item.active !== false);
+      if (!activeAdminsAfter.length) return sendJson(response, 400, { error: 'At least one active administrator must remain.' });
+      const roleChanged = target.role !== nextRole;
+      if (body.name !== undefined) target.name = String(body.name).trim();
+      target.role = nextRole;
+      target.workerId = nextWorkerId;
+      target.active = nextActive;
       target.updatedAt = new Date().toISOString();
-      if (target.active === false || (body.role !== undefined)) sessions.revokeUser(target.id);
-      const activeAdmins = store.users.filter((item) => item.role === 'admin' && item.active !== false);
-      if (!activeAdmins.length) return sendJson(response, 400, { error: 'At least one active administrator must remain.' });
+      if (target.active === false || roleChanged) sessions.revokeUser(target.id);
       appendAudit(store, current.user, 'users.updated', 'user', target.id, { role: target.role, active: target.active }, request);
       writeStore(store);
       return sendJson(response, 200, { user: auth.sanitizeUser(target) });
