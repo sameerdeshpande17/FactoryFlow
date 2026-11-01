@@ -50,5 +50,7 @@
   "productionLogs": [],
   "qcInspections": [],
   "reworkLogs": [],
-  "downtimeLogs": []
+  "downtimeLogs": [],
+  "users": [],
+  "auditLogs": []
 }
