@@ -23,7 +23,7 @@ async function freePort() {
 before(async () => {
   const root = path.join(__dirname, '..');
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'factoryflow-test-'));
-  for (const file of ['server.js', 'auth.js', 'facilities.js', 'forecasting.js', 'inventory.js', 'execution.js', 'analytics.js']) {
+  for (const file of ['server.js', 'auth.js', 'facilities.js', 'forecasting.js', 'inventory.js', 'scheduling.js', 'scheduler-optimizer.js', 'execution.js', 'analytics.js']) {
     fs.copyFileSync(path.join(root, file), path.join(tempDir, file));
   }
   fs.mkdirSync(path.join(tempDir, 'data'));
@@ -141,7 +141,7 @@ test('authenticates users, enforces role access, persists operations and protect
     quotes: [{ id: 'QT-PRIVATE', customer: 'Private Customer' }],
     jobs: [
       { id: 'JB-WORKER', customer: 'Worker Customer', item: 'Assigned carton', qty: 20, worker: 'Test Worker', status: 'In production', progress: 0 },
-      { id: 'JB-OTHER', customer: 'Other Customer', item: 'Other pouch', qty: 50, worker: 'Other Worker', status: 'In production', progress: 0 }
+      { id: 'JB-OTHER', customer: 'Other Customer', item: 'Other pouch', qty: 50, worker: 'Other Worker', status: 'In production', progress: 0, estimatedHours: 12, priority: 'High', requiredSkill: 'Finishing', dueDate: '2026-11-05' }
     ],
     purchases: [
       { id: 'PO-PRIVATE', supplier: 'Private Supplier', material: 'Private ink' },
@@ -183,6 +183,38 @@ test('authenticates users, enforces role access, persists operations and protect
   });
   assert.equal(sync.status, 200);
 
+  const schedulePreview = await fetch(baseUrl + '/api/scheduling/optimize', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ startDate: '2026-11-02', horizonDays: 5, includeWeekends: false })
+  });
+  assert.equal(schedulePreview.status, 200);
+  const schedulePreviewPayload = await json(schedulePreview);
+  assert.equal(schedulePreviewPayload.facilityId, 'FAC-001');
+  assert.ok(schedulePreviewPayload.plan.proposals.length > 0);
+  assert.ok(schedulePreviewPayload.plan.proposals.every((item) => item.jobId === 'JB-OTHER' && item.workerId === 'WRK-OTHER'));
+  assert.ok(schedulePreviewPayload.plan.jobPlans.some((item) => item.status === 'Needs estimate' && item.jobId === 'JB-WORKER'));
+
+  const scheduleApply = await fetch(baseUrl + '/api/scheduling/optimize/apply', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ startDate: '2026-11-02', horizonDays: 5, includeWeekends: false })
+  });
+  assert.equal(scheduleApply.status, 201);
+  const scheduleApplyPayload = await json(scheduleApply);
+  assert.ok(scheduleApplyPayload.appliedSessions.length > 0);
+  assert.ok(scheduleApplyPayload.appliedSessions.every((item) => item.facilityId === 'FAC-001' && item.optimizerPlanId === scheduleApplyPayload.planId));
+
+  const duplicateScheduleApply = await fetch(baseUrl + '/api/scheduling/optimize/apply', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ startDate: '2026-11-02', horizonDays: 5, includeWeekends: false })
+  });
+  assert.equal(duplicateScheduleApply.status, 409);
+
+  const scheduleBootstrap = await json(await fetch(baseUrl + '/api/bootstrap', { headers: { Cookie: adminCookie, 'X-Facility-ID': 'FAC-001' } }));
+  assert.ok(scheduleBootstrap.state.schedules.some((session) => session.optimizerPlanId === scheduleApplyPayload.planId));
+  
   const mainForecastResponse = await fetch(baseUrl + '/api/inventory/forecast', {
     headers: { Cookie: adminCookie, 'X-Facility-ID': 'FAC-001' }
   });
@@ -247,7 +279,7 @@ test('authenticates users, enforces role access, persists operations and protect
 
   const puneState = {
     quotes: [],
-    jobs: [{ id: 'JB-PUNE', customer: 'Pune Foods', item: 'Pune carton run', qty: 100, status: 'In production', progress: 0 }],
+    jobs: [{ id: 'JB-PUNE', customer: 'Pune Foods', item: 'Pune carton run', qty: 100, status: 'In production', progress: 0, estimatedHours: 10, requiredSkill: 'Printing', priority: 'Urgent', dueDate: '2026-11-06' }],
     purchases: [],
     materials: [{ sku: 'RM-PUNE', item: 'Pune kraft paper', onHand: '50 kg', stock: 50, capacity: 50, status: 'Critical' }],
     deliveries: [],
@@ -276,6 +308,16 @@ test('authenticates users, enforces role access, persists operations and protect
     headers: { Cookie: adminCookie, 'X-Facility-ID': puneFacility.id }
   }));
   assert.deepEqual(puneForecast.forecast.items.map((item) => item.materialSku), ['RM-PUNE']);
+
+  const puneSchedulePreview = await fetch(baseUrl + '/api/scheduling/optimize', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-Facility-ID': puneFacility.id, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ startDate: '2026-11-02', horizonDays: 5, includeWeekends: false })
+  });
+  assert.equal(puneSchedulePreview.status, 200);
+  const puneSchedulePayload = await json(puneSchedulePreview);
+  assert.ok(puneSchedulePayload.plan.proposals.length > 0);
+  assert.ok(puneSchedulePayload.plan.proposals.every((item) => item.jobId === 'JB-PUNE' && item.workerId === 'WRK-PUNE'));
 
   const mainFacilityProduction = await fetch(baseUrl + '/api/operations/production', {
     method: 'POST',
@@ -365,6 +407,18 @@ test('authenticates users, enforces role access, persists operations and protect
   assert.deepEqual(managerBootstrap.state.auditLogs, []);
   assert.equal(managerBootstrap.facilities.length, 1);
   assert.equal(managerBootstrap.facilities[0].id, 'FAC-001');
+  const managerWrongFacilityPreview = await fetch(baseUrl + '/api/scheduling/optimize', {
+    method: 'POST',
+    headers: { Cookie: managerCookie, 'X-Facility-ID': puneFacility.id, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ startDate: '2026-11-02', horizonDays: 5 })
+  });
+  assert.equal(managerWrongFacilityPreview.status, 403);
+  const managerWrongFacilityApply = await fetch(baseUrl + '/api/scheduling/optimize/apply', {
+    method: 'POST',
+    headers: { Cookie: managerCookie, 'X-CSRF-Token': managerCsrf, 'X-Facility-ID': puneFacility.id, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ startDate: '2026-11-02', horizonDays: 5 })
+  });
+  assert.equal(managerWrongFacilityApply.status, 403);
   const managerFacilitySummary = await json(await fetch(baseUrl + '/api/facilities/summary', { headers: { Cookie: managerCookie } }));
   assert.equal(managerFacilitySummary.facilityCount, 1);
   assert.deepEqual(managerFacilitySummary.summaries.map((item) => item.facilityId), ['FAC-001']);
@@ -452,6 +506,18 @@ test('authenticates users, enforces role access, persists operations and protect
 
   const workerBootstrap = await fetch(baseUrl + '/api/bootstrap', { headers: { Cookie: workerCookie } });
   assert.equal(workerBootstrap.status, 200);
+  const workerSchedulePreview = await fetch(baseUrl + '/api/scheduling/optimize', {
+    method: 'POST',
+    headers: { Cookie: workerCookie, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ startDate: '2026-11-02', horizonDays: 5 })
+  });
+  assert.equal(workerSchedulePreview.status, 200);
+  const workerScheduleApply = await fetch(baseUrl + '/api/scheduling/optimize/apply', {
+    method: 'POST',
+    headers: { Cookie: workerCookie, 'X-CSRF-Token': workerCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ startDate: '2026-11-02', horizonDays: 5 })
+  });
+  assert.equal(workerScheduleApply.status, 403);
 
   const workerForecastDenied = await fetch(baseUrl + '/api/inventory/forecast', {
     headers: { Cookie: workerCookie, 'X-Facility-ID': 'FAC-001' }

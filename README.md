@@ -40,6 +40,7 @@ Opening index.html directly is still supported as a browser-only fallback, but c
 - Role-based access for administrators, managers, production supervisors, and workers, with server-enforced permissions and worker-scoped workspace data
 - Multiple factory facilities under one organization, with facility-specific jobs, inventory, workers, schedules, production/QC records, downtime and delivery proofs
 - Inventory demand forecasting from weighted recent and lookback consumption, supplier lead times, safety stock, review periods, open purchase commitments, coverage estimates and stockout risk
+- Explainable production schedule optimization that ranks active jobs by deadline and priority, allocates estimated remaining work against worker skills, availability and daily capacity, and previews deadline/capacity gaps before an explicit apply action
 - Per-material supplier lead-time, safety-stock, review-period, minimum-order, pack-multiple and preferred-supplier settings
 - Idempotent forecast-generated draft purchase orders with duplicate-draft protection, supplier suggestions, cost estimates and an auditable forecast snapshot; drafts require manual review and confirmation
 - Facility assignment per user, secure facility switching, administrator facility management, and consolidated cross-facility operational summaries

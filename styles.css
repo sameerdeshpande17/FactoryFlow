@@ -198,3 +198,21 @@ body.auth-required .app-shell { visibility: hidden; }
 /* Inventory demand forecast */
 .forecast-actions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 130px; }
 .forecast-actions .table-button { white-space: nowrap; }
+
+
+/* Explainable production schedule optimization */
+.optimizer-panel { margin-top: 20px; }
+.optimizer-controls { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; padding: 14px 0 18px; }
+.optimizer-controls label { min-width: 150px; display: grid; gap: 6px; color: var(--muted); font-size: 10px; font-weight: 700; }
+.optimizer-controls select { width: 100%; min-height: 38px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--ink); }
+.optimizer-controls .optimizer-weekend { min-width: auto; display: flex; flex-direction: row; align-items: center; padding: 10px 4px; gap: 7px; }
+.optimizer-weekend input { accent-color: var(--green); }
+.optimizer-summary { margin: 4px 0 14px; }
+.optimizer-result-block { margin-top: 16px; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+.optimizer-result-block > .toolbar { padding: 12px 14px; }
+.optimizer-result-block .table-scroll { border-top: 1px solid var(--line); }
+.optimizer-apply-row { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; padding-top: 16px; margin-top: 16px; border-top: 1px solid var(--line); }
+.optimizer-apply-row .subtle { max-width: 480px; }
+.optimizer-result-block ul { padding: 4px 28px 14px; color: var(--muted); font-size: 11px; }
+.optimizer-result-block li { margin: 6px 0; }
+@media (max-width: 650px) { .optimizer-controls { align-items: stretch; flex-direction: column; } .optimizer-controls label { width: 100%; } .optimizer-apply-row { align-items: stretch; flex-direction: column; } }

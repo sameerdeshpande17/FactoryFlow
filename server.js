@@ -7,6 +7,7 @@ const execution = require('./execution.js');
 const analytics = require('./analytics.js');
 const facilityModel = require('./facilities.js');
 const forecasting = require('./forecasting.js');
+const scheduleOptimizer = require('./scheduler-optimizer.js');
 
 const root = __dirname;
 const dataDirectory = path.join(root, 'data');
@@ -541,6 +542,85 @@ async function handleApi(request, response, pathname) {
     try {
       requirePermission(current, 'audit.view');
       return sendJson(response, 200, { records: store.auditLogs.slice(-500).reverse() });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  if (pathname === '/api/scheduling/optimize' && request.method === 'POST') {
+    try {
+      requirePermission(current, 'schedule.view');
+      const body = await readJson(request);
+      const roleProjected = projectStoreForUser(store, current.user);
+      const scoped = facilityModel.projectStoreForFacility(roleProjected, current.facility.id);
+      const plan = scheduleOptimizer.optimizeSchedule(
+        scoped.jobs,
+        scoped.workers,
+        scoped.schedules,
+        scoped.productionLogs,
+        body
+      );
+      return sendJson(response, 200, { facilityId: current.facility.id, plan });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  if (pathname === '/api/scheduling/optimize/apply' && request.method === 'POST') {
+    try {
+      requireCsrf(request, current);
+      requirePermission(current, 'schedule.manage');
+      const body = await readJson(request);
+
+      // Re-read and revalidate the user/facility before committing a preview.
+      const latest = readStore();
+      const latestUser = latest.users.find((item) => item.id === current.user.id && item.active !== false);
+      if (!latestUser) return sendJson(response, 401, { error: 'Your account is no longer active. Sign in again.' });
+      requirePermission({ user: latestUser }, 'schedule.manage');
+      const latestFacility = facilityModel.resolveFacility(latestUser, latest.facilities, latest, current.facility.id);
+      if (!latestFacility || latestFacility.id !== current.facility.id) {
+        return sendJson(response, 403, { error: 'Your access to the selected facility has changed. Refresh the workspace.' });
+      }
+      const scoped = facilityModel.projectStoreForFacility(latest, latestFacility.id);
+      const plan = scheduleOptimizer.optimizeSchedule(
+        scoped.jobs,
+        scoped.workers,
+        scoped.schedules,
+        scoped.productionLogs,
+        body
+      );
+      if (!plan.proposals.length) {
+        return sendJson(response, 409, { error: 'There are no feasible new sessions to apply. Review missing estimates, worker capacity and the planning horizon.', plan });
+      }
+
+      const now = new Date().toISOString();
+      const planId = 'OP-' + cryptoId();
+      const appliedSessions = plan.proposals.map((proposal) => ({
+        id: 'SC-' + cryptoId(),
+        facilityId: latestFacility.id,
+        optimizerPlanId: planId,
+        jobId: proposal.jobId,
+        workerId: proposal.workerId,
+        workerName: proposal.workerName,
+        date: proposal.date,
+        hours: proposal.hours,
+        note: proposal.note,
+        createdAt: now
+      }));
+
+      latest.schedules.push(...appliedSessions);
+      appendAudit(latest, latestUser, 'schedule.optimizer_applied', 'schedule', planId, {
+        facilityId: latestFacility.id,
+        sessionCount: appliedSessions.length,
+        scheduledHours: plan.summary.scheduledHours,
+        startDate: plan.options.startDate,
+        horizonDays: plan.options.horizonDays,
+        includeWeekends: plan.options.includeWeekends,
+        deadlineRiskCount: plan.summary.deadlineRiskCount
+      }, request);
+      writeStore(latest);
+      return sendJson(response, 201, {
+        facilityId: latestFacility.id,
+        planId,
+        appliedSessions,
+        summary: plan.summary
+      });
     } catch (error) { return publicAuthError(error, response); }
   }
 
