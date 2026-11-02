@@ -338,3 +338,18 @@ test('buildAnalytics exposes machine OEE without changing existing production ag
   assert.equal(result.machineOee.machinesWithOee, 2);
   assert.ok(result.machineOee.machines.every((item) => item.oeePercent !== null));
 });
+
+test('caps OEE performance factor at 100% while exposing rates above ideal for calibration', () => {
+  const result = analytics.buildMachineOee({
+    machines: [{ id: 'MCH-1', name: 'Press', capacityHoursPerDay: 8, idealUnitsPerHour: 50, maintenanceWindows: [] }],
+    schedules: [{ id: 'SC-1', machineId: 'MCH-1', date: '2026-11-02', hours: 2 }],
+    productionLogs: [{ id: 'PR-1', scheduleId: 'SC-1', productionDate: '2026-11-02', producedQty: 120, goodQty: 120 }],
+    downtimeLogs: [],
+    fromDate: '2026-11-02',
+    toDate: '2026-11-02'
+  });
+  assert.equal(result.machines[0].rawPerformancePercent, 120);
+  assert.equal(result.machines[0].performancePercent, 100);
+  assert.equal(result.machines[0].performanceCapped, true);
+  assert.equal(result.machines[0].oeePercent, 100);
+});
