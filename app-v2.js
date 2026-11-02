@@ -68,7 +68,7 @@ const titles = {
   dashboard: ['JOB-WORK OS', 'Overview'], quotes: ['SALES', 'Quotes'], jobs: ['JOB CONTROL', 'Jobs'],
   purchases: ['PURCHASING', 'Purchase orders'], materials: ['RAW MATERIAL', 'Materials'],
   workers: ['PARTNERS', 'Job workers'], invoices: ['FINANCE', 'GST invoices'],
-  marketplace: ['B2B NETWORK', 'Marketplace'], users: ['ADMINISTRATION', 'User management'], planning: ['PRODUCTION', 'Material planning'], schedule: ['PRODUCTION', 'Production schedule'], execution: ['PRODUCTION', 'Production execution & QC'], analytics: ['MANAGEMENT', 'Production analytics'], costing: ['FINANCE', 'Job costing'], settings: ['WORKSPACE', 'Settings']
+  marketplace: ['B2B NETWORK', 'Marketplace'], facilities: ['ORGANIZATION', 'Factory facilities'], users: ['ADMINISTRATION', 'User management'], planning: ['PRODUCTION', 'Material planning'], schedule: ['PRODUCTION', 'Production schedule'], execution: ['PRODUCTION', 'Production execution & QC'], analytics: ['MANAGEMENT', 'Production analytics'], costing: ['FINANCE', 'Job costing'], settings: ['WORKSPACE', 'Settings']
 };
 
 function save(shouldSync = true) {
@@ -123,10 +123,23 @@ async function hydrateWorkspace() {
   }
   setDataStatus('Connecting…', 'pending');
   try {
-    const payload = await window.FactoryFlowAuth.request('/api/bootstrap', {
-      headers: { Accept: 'application/json' }
+    let payload;
+    try {
+      payload = await window.FactoryFlowAuth.request('/api/bootstrap', {
+        headers: { Accept: 'application/json' }
+      });
+    } catch (error) {
+      if (!/not assigned to an active factory facility/i.test(error.message)) throw error;
+      window.FactoryFlowAuth.clearActiveFacility();
+      payload = await window.FactoryFlowAuth.request('/api/bootstrap', {
+        headers: { Accept: 'application/json' }
+      });
+    }
+    if (payload.auth) window.FactoryFlowAuth.update({
+      ...payload.auth,
+      facilities: payload.facilities || [],
+      activeFacilityId: payload.activeFacilityId || ''
     });
-    if (payload.auth) window.FactoryFlowAuth.update(payload.auth);
     const remote = payload.state || {};
     const replace = (target, key) => target.splice(0, target.length, ...(Array.isArray(remote[key]) ? remote[key] : []));
     replace(quotes, 'quotes');
@@ -820,6 +833,142 @@ function exportAnalyticsCsv() {
   downloadCsv('factoryflow-production-analytics.csv', rows);
 }
 
+function facilitiesPage() {
+  const state = window.FactoryFlowAuth.state;
+  if (!state.facilitySummariesLoaded) {
+    state.facilitySummariesLoaded = true;
+    window.FactoryFlowAuth.request('/api/facilities/summary').then((result) => {
+      state.facilitySummaries = result.summaries || [];
+      if (app.view === 'facilities') render();
+    }).catch((error) => {
+      state.facilitySummariesLoaded = false;
+      notify(error.message);
+    });
+  }
+  const rows = (state.facilitySummaries || []).map((item) => {
+    const selected = item.facilityId === state.activeFacilityId;
+    return '<tr><td><strong>' + safe(item.facilityName) + '</strong><div class="subtle">' + safe(item.code + (item.city ? ' · ' + item.city : '')) + '</div></td>' +
+      '<td>' + item.activeJobs.toLocaleString('en-IN') + '</td>' +
+      '<td>' + item.activeWorkers.toLocaleString('en-IN') + '</td>' +
+      '<td>' + item.producedQty.toLocaleString('en-IN') + '</td>' +
+      '<td>' + (item.unitsPerActualHour === null ? '—' : item.unitsPerActualHour.toLocaleString('en-IN')) + '</td>' +
+      '<td>' + item.stockAlerts + '</td><td>' + item.downtimeHours.toFixed(2) + ' hrs</td>' +
+      '<td>' + (item.onTimeDeliveryPercent === null ? '—' : item.onTimeDeliveryPercent.toFixed(1) + '%') + '</td>' +
+      '<td><div class="facility-row-actions">' + (selected ? '<span class="status on-track">Selected</span>' : '<button class="table-button" data-use-facility="' + safe(item.facilityId) + '">Open facility</button>') +
+      (window.FactoryFlowAuth.has('facilities.manage') ? '<button class="table-button" data-edit-facility="' + safe(item.facilityId) + '">Manage</button>' : '') + '</div></td></tr>';
+  }).join('');
+  const summaries = state.facilitySummaries || [];
+  const activeJobs = summaries.reduce((sum, item) => sum + item.activeJobs, 0);
+  const produced = summaries.reduce((sum, item) => sum + item.producedQty, 0);
+  const alerts = summaries.reduce((sum, item) => sum + item.stockAlerts, 0);
+  const downtime = summaries.reduce((sum, item) => sum + item.downtimeHours, 0);
+  return head('ORGANIZATION', 'Factory facilities', 'Manage separate factory sites and compare output, staffing, inventory alerts and downtime across your assigned facilities.',
+    window.FactoryFlowAuth.has('facilities.manage') ? '<button class="primary-button" data-add-facility>＋ Add facility</button>' : '') +
+    '<div class="facility-overview-grid">' +
+      '<article class="facility-overview-stat"><span>FACILITIES</span><strong>' + summaries.length + '</strong><small>Active sites in your access scope</small></article>' +
+      '<article class="facility-overview-stat"><span>ACTIVE JOBS</span><strong>' + activeJobs.toLocaleString('en-IN') + '</strong><small>Across assigned factories</small></article>' +
+      '<article class="facility-overview-stat"><span>PRODUCTION OUTPUT</span><strong>' + produced.toLocaleString('en-IN') + '</strong><small>Recorded units across all sites</small></article>' +
+      '<article class="facility-overview-stat"><span>STOCK ALERTS</span><strong>' + alerts + '</strong><small>Critical and low-stock materials</small></article>' +
+      '<article class="facility-overview-stat"><span>DOWNTIME</span><strong>' + downtime.toFixed(2) + ' hrs</strong><small>Recorded facility downtime</small></article>' +
+    '</div>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong>Facility comparison</strong><span class="subtle">Summary only; detailed records remain facility-scoped</span></div>' +
+    (rows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>FACILITY</th><th>ACTIVE JOBS</th><th>ACTIVE WORKERS</th><th>PRODUCED</th><th>UNITS / HR</th><th>STOCK ALERTS</th><th>DOWNTIME</th><th>ON-TIME DELIVERY</th><th>ACTIONS</th></tr></thead><tbody>' + rows + '</tbody></table></div>' : '<div class="empty-state">No facilities are assigned to your account.</div>') + '</section>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong>How facility isolation works</strong></div><p class="subtle">Jobs, workers, schedules, materials, purchases, production logs, QC records, deliveries and downtime are stored with a facility ID. Switching facilities reloads the workspace from the server. A user can only switch to facilities assigned to their account.</p></section>';
+}
+
+function facilityCheckboxOptions(selectedIds = []) {
+  const selected = new Set(selectedIds);
+  return (window.FactoryFlowAuth.state.facilities || []).map((facility) =>
+    '<label class="facility-check"><input type="checkbox" name="facilityIds" value="' + safe(facility.id) + '"' + (selected.has(facility.id) ? ' checked' : '') + '><span><strong>' + safe(facility.name) + '</strong><small>' + safe(facility.code + (facility.city ? ' · ' + facility.city : '')) + '</small></span></label>'
+  ).join('');
+}
+
+function addFacility() {
+  openModal('<h2 id="modalTitle">Add factory facility</h2><p>Create a separate site for its own jobs, stock, teams, schedules and production history.</p><form id="facilityForm" class="form-grid"><label>Facility name<input required name="name" maxlength="100" placeholder="e.g. Pune Plant"></label><label>Facility code<input required name="code" maxlength="12" placeholder="e.g. PUNE-01"></label><label>City<input name="city" maxlength="100" placeholder="Pune"></label><label>Address<input name="address" maxlength="250" placeholder="Industrial estate / address"></label><label>Time zone<input name="timezone" maxlength="80" value="Asia/Kolkata"></label><p class="subtle">A new facility starts with empty operational collections. Existing records stay in the Main facility unless explicitly transferred in a future workflow.</p><p id="facilityError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Create facility</button></div></form>');
+  ui('#facilityForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    try {
+      const result = await window.FactoryFlowAuth.request('/api/facilities', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: data.get('name'),
+          code: data.get('code'),
+          city: data.get('city'),
+          address: data.get('address'),
+          timezone: data.get('timezone')
+        })
+      });
+      window.FactoryFlowAuth.state.facilities.push(result.facility);
+      window.FactoryFlowAuth.state.facilitySummariesLoaded = false;
+      window.FactoryFlowAuth.applyNavigation();
+      closeModal();
+      render();
+      notify(result.facility.name + ' created. Assign users to this facility from User management.');
+    } catch (error) {
+      const node = ui('#facilityError');
+      node.textContent = error.message;
+      node.hidden = false;
+    }
+  });
+}
+
+function manageFacility(facilityId) {
+  const facility = (window.FactoryFlowAuth.state.facilities || []).find((item) => item.id === facilityId);
+  if (!facility) return;
+  openModal('<h2 id="modalTitle">Manage facility</h2><p>' + safe(facility.code) + ' · Facility data is retained when a site is deactivated.</p><form id="editFacilityForm" class="form-grid"><label>Facility name<input required name="name" maxlength="100" value="' + safe(facility.name) + '"></label><label>Facility code<input required name="code" maxlength="12" value="' + safe(facility.code) + '"></label><label>City<input name="city" maxlength="100" value="' + safe(facility.city || '') + '"></label><label>Address<input name="address" maxlength="250" value="' + safe(facility.address || '') + '"></label><label>Time zone<input name="timezone" maxlength="80" value="' + safe(facility.timezone || 'Asia/Kolkata') + '"></label><label class="facility-inline-check"><input type="checkbox" name="active"' + (facility.active !== false ? ' checked' : '') + '> Facility is active</label><label class="facility-inline-check"><input type="checkbox" name="isDefault"' + (facility.isDefault ? ' checked' : '') + '> Make this the default facility</label><p class="subtle">The default facility cannot be deactivated. Deactivated facilities are hidden from switching and new assignments; their records are retained.</p><p id="facilityError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save facility</button></div></form>');
+  ui('#editFacilityForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    try {
+      const result = await window.FactoryFlowAuth.request('/api/facilities/' + encodeURIComponent(facility.id), {
+        method: 'PATCH',
+        body: JSON.stringify({
+          name: data.get('name'),
+          code: data.get('code'),
+          city: data.get('city'),
+          address: data.get('address'),
+          timezone: data.get('timezone'),
+          active: data.get('active') === 'on',
+          isDefault: data.get('isDefault') === 'on'
+        })
+      });
+      const facilityState = window.FactoryFlowAuth.state;
+      const index = facilityState.facilities.findIndex((item) => item.id === facility.id);
+      if (index >= 0) facilityState.facilities.splice(index, 1, result.facility);
+      facilityState.facilities.forEach((item) => { item.isDefault = item.id === result.facility.id ? result.facility.isDefault : result.facility.isDefault ? false : item.isDefault; });
+      facilityState.facilitySummariesLoaded = false;
+      window.FactoryFlowAuth.applyNavigation();
+      closeModal();
+      if (!result.facility.active && facilityState.activeFacilityId === facility.id) {
+        const nextFacility = facilityState.facilities.find((item) => item.isDefault && item.active !== false) || facilityState.facilities.find((item) => item.active !== false);
+        if (nextFacility) return switchActiveFacility(nextFacility.id);
+      }
+      render();
+      notify('Facility settings saved.');
+    } catch (error) {
+      const node = ui('#facilityError');
+      node.textContent = error.message;
+      node.hidden = false;
+    }
+  });
+}
+
+async function switchActiveFacility(facilityId) {
+  try {
+    window.FactoryFlowAuth.setActiveFacility(facilityId);
+    workspaceReady = false;
+    await hydrateWorkspace();
+    if (!workspaceReady) throw new Error('Could not load this facility. Check your facility access.');
+    window.FactoryFlowAuth.applyNavigation();
+    render();
+    notify('Switched to ' + ((window.FactoryFlowAuth.state.facilities || []).find((item) => item.id === facilityId)?.name || 'selected facility') + '.');
+  } catch (error) {
+    notify(error.message);
+    window.FactoryFlowAuth.applyNavigation();
+  }
+}
+
 function usersPage() {
   const authState = window.FactoryFlowAuth.state;
   if (!authState.usersLoaded) {
@@ -854,27 +1003,46 @@ function authStateReloadUsers() {
 }
 
 function addWorkspaceUser() {
-  const workerOptions = '<option value="">Not linked to a worker</option>' + workers.map((worker) => '<option value="' + safe(worker.id) + '">' + safe(worker.name + ' · ' + worker.skill) + '</option>').join('');
-  openModal('<h2 id="modalTitle">Create user account</h2><p>Assign the least-privileged role needed. Worker accounts must be linked to an active worker profile.</p><form id="addUserForm" class="form-grid"><label>Full name<input required name="name" maxlength="100"></label><label>Email address<input required name="email" type="email"></label><label>Role<select required name="role"><option value="manager">Manager</option><option value="supervisor">Production supervisor</option><option value="worker">Worker</option><option value="admin">Administrator</option></select></label><label id="newUserWorkerLabel" hidden>Worker profile<select name="workerId">' + workerOptions + '</select></label><label>Temporary password<input required name="password" type="password" minlength="12" autocomplete="new-password" placeholder="12+ characters, uppercase, lowercase and number"></label><p class="subtle">The new user must change this password at first sign-in. Share temporary credentials through a separate secure channel.</p><p id="addUserError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Create account</button></div></form>');
+  const workerOptions = '<option value="">Not linked to a worker</option>' + workers.map((worker) => '<option value="' + safe(worker.id) + '">' + safe(worker.name + ' · ' + worker.skill + ' · ' + (worker.facilityId || 'Main')) + '</option>').join('');
+  const facilityChoices = facilityCheckboxOptions([window.FactoryFlowAuth.state.activeFacilityId]);
+  openModal('<h2 id="modalTitle">Create user account</h2><p>Assign the least-privileged role needed. Worker accounts must be linked to an active worker profile.</p><form id="addUserForm" class="form-grid"><label>Full name<input required name="name" maxlength="100"></label><label>Email address<input required name="email" type="email"></label><label>Role<select required name="role"><option value="manager">Manager</option><option value="supervisor">Production supervisor</option><option value="worker">Worker</option><option value="admin">Administrator</option></select></label><label id="newUserWorkerLabel" hidden>Worker profile<select name="workerId">' + workerOptions + '</select></label><div id="newUserFacilityLabel" class="facility-assignment"><strong>Facility access</strong><p class="subtle">Select the factories this account is allowed to access. Administrators have organization-wide access.</p><div id="newUserFacilityChoices" class="facility-check-list">' + facilityChoices + '</div></div><label>Temporary password<input required name="password" type="password" minlength="12" autocomplete="new-password" placeholder="12+ characters, uppercase, lowercase and number"></label><p class="subtle">The new user must change this password at first sign-in. Share temporary credentials through a separate secure channel.</p><p id="addUserError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Create account</button></div></form>');
   const roleSelect = ui('#addUserForm [name="role"]');
   const workerLabel = ui('#newUserWorkerLabel');
-  const updateWorkerVisibility = () => {
-    workerLabel.hidden = roleSelect.value !== 'worker';
-    ui('#addUserForm [name="workerId"]').required = roleSelect.value === 'worker';
+  const facilityLabel = ui('#newUserFacilityLabel');
+  const workerSelect = ui('#addUserForm [name="workerId"]');
+  const updateFacilitySelection = () => {
+    const workerAccount = roleSelect.value === 'worker';
+    const adminAccount = roleSelect.value === 'admin';
+    workerLabel.hidden = !workerAccount;
+    workerSelect.required = workerAccount;
+    facilityLabel.hidden = adminAccount;
+    const selectedWorker = workers.find((item) => item.id === workerSelect.value);
+    ui('#newUserFacilityChoices').querySelectorAll('input[name="facilityIds"]').forEach((input) => {
+      input.disabled = false;
+      if (workerAccount) input.checked = Boolean(selectedWorker && input.value === selectedWorker.facilityId);
+    });
   };
-  roleSelect.addEventListener('change', updateWorkerVisibility);
-  updateWorkerVisibility();
+  roleSelect.addEventListener('change', updateFacilitySelection);
+  workerSelect.addEventListener('change', updateFacilitySelection);
+  updateFacilitySelection();
   ui('#addUserForm').addEventListener('submit', async (event) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     try {
       await window.FactoryFlowAuth.request('/api/users', {
         method: 'POST',
-        body: JSON.stringify({ name: data.get('name'), email: data.get('email'), role: data.get('role'), workerId: data.get('workerId'), password: data.get('password') })
+        body: JSON.stringify({
+          name: data.get('name'),
+          email: data.get('email'),
+          role: data.get('role'),
+          workerId: data.get('workerId'),
+          facilityIds: data.getAll('facilityIds'),
+          password: data.get('password')
+        })
       });
       closeModal();
       authStateReloadUsers();
-      notify('Account created. The new user must change their password on first sign-in.');
+      notify('Account created. The new user must change their password at first sign-in.');
     } catch (error) {
       const node = ui('#addUserError');
       node.textContent = error.message;
@@ -886,20 +1054,41 @@ function addWorkspaceUser() {
 function manageWorkspaceUser(userId) {
   const user = (window.FactoryFlowAuth.state.adminUsers || []).find((item) => item.id === userId);
   if (!user) return;
-  const workerOptions = '<option value="">Not linked</option>' + workers.map((worker) => '<option value="' + safe(worker.id) + '"' + (worker.id === user.workerId ? ' selected' : '') + '>' + safe(worker.name + ' · ' + worker.skill) + '</option>').join('');
-  openModal('<h2 id="modalTitle">Manage user</h2><p>' + safe(user.email) + '</p><form id="editUserForm" class="form-grid"><label>Full name<input required name="name" maxlength="100" value="' + safe(user.name) + '"></label><label>Role<select name="role"><option value="admin"' + (user.role === 'admin' ? ' selected' : '') + '>Administrator</option><option value="manager"' + (user.role === 'manager' ? ' selected' : '') + '>Manager</option><option value="supervisor"' + (user.role === 'supervisor' ? ' selected' : '') + '>Production supervisor</option><option value="worker"' + (user.role === 'worker' ? ' selected' : '') + '>Worker</option></select></label><label id="editUserWorkerLabel">Worker profile<select name="workerId">' + workerOptions + '</select></label><label>Account status<select name="active"><option value="active"' + (user.active ? ' selected' : '') + '>Active</option><option value="inactive"' + (!user.active ? ' selected' : '') + '>Inactive</option></select></label><p class="subtle">Deactivating an account or changing its role revokes existing sessions. You cannot deactivate your own administrator account.</p><p id="editUserError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save user</button></div></form>');
+  const workerOptions = '<option value="">Not linked</option>' + workers.map((worker) => '<option value="' + safe(worker.id) + '"' + (worker.id === user.workerId ? ' selected' : '') + '>' + safe(worker.name + ' · ' + worker.skill + ' · ' + (worker.facilityId || 'Main')) + '</option>').join('');
+  const facilityChoices = facilityCheckboxOptions(user.facilityIds || []);
+  openModal('<h2 id="modalTitle">Manage user</h2><p>' + safe(user.email) + '</p><form id="editUserForm" class="form-grid"><label>Full name<input required name="name" maxlength="100" value="' + safe(user.name) + '"></label><label>Role<select name="role"><option value="admin"' + (user.role === 'admin' ? ' selected' : '') + '>Administrator</option><option value="manager"' + (user.role === 'manager' ? ' selected' : '') + '>Manager</option><option value="supervisor"' + (user.role === 'supervisor' ? ' selected' : '') + '>Production supervisor</option><option value="worker"' + (user.role === 'worker' ? ' selected' : '') + '>Worker</option></select></label><label id="editUserWorkerLabel">Worker profile<select name="workerId">' + workerOptions + '</select></label><div id="editUserFacilityLabel" class="facility-assignment"><strong>Facility access</strong><p class="subtle">An account can only access facilities selected here. Administrator accounts have global access.</p><div id="editUserFacilityChoices" class="facility-check-list">' + facilityChoices + '</div></div><label>Account status<select name="active"><option value="active"' + (user.active ? ' selected' : '') + '>Active</option><option value="inactive"' + (!user.active ? ' selected' : '') + '>Inactive</option></select></label><p class="subtle">Changing a role, facility assignment or account status revokes existing sessions. You cannot deactivate your own administrator account.</p><p id="editUserError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save user</button></div></form>');
   const roleSelect = ui('#editUserForm [name="role"]');
   const workerLabel = ui('#editUserWorkerLabel');
-  const updateWorkerVisibility = () => { workerLabel.hidden = roleSelect.value !== 'worker'; };
-  roleSelect.addEventListener('change', updateWorkerVisibility);
-  updateWorkerVisibility();
+  const workerSelect = ui('#editUserForm [name="workerId"]');
+  const facilityLabel = ui('#editUserFacilityLabel');
+  const updateFacilitySelection = () => {
+    const workerAccount = roleSelect.value === 'worker';
+    const adminAccount = roleSelect.value === 'admin';
+    workerLabel.hidden = !workerAccount;
+    workerSelect.required = workerAccount;
+    facilityLabel.hidden = adminAccount;
+    const selectedWorker = workers.find((item) => item.id === workerSelect.value);
+    ui('#editUserFacilityChoices').querySelectorAll('input[name="facilityIds"]').forEach((input) => {
+      input.disabled = false;
+      if (workerAccount) input.checked = Boolean(selectedWorker && input.value === selectedWorker.facilityId);
+    });
+  };
+  roleSelect.addEventListener('change', updateFacilitySelection);
+  workerSelect.addEventListener('change', updateFacilitySelection);
+  updateFacilitySelection();
   ui('#editUserForm').addEventListener('submit', async (event) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     try {
       await window.FactoryFlowAuth.request('/api/users/' + encodeURIComponent(user.id), {
         method: 'PATCH',
-        body: JSON.stringify({ name: data.get('name'), role: data.get('role'), workerId: data.get('workerId'), active: data.get('active') === 'active' })
+        body: JSON.stringify({
+          name: data.get('name'),
+          role: data.get('role'),
+          workerId: data.get('workerId'),
+          facilityIds: data.getAll('facilityIds'),
+          active: data.get('active') === 'active'
+        })
       });
       closeModal();
       authStateReloadUsers();
@@ -971,13 +1160,13 @@ function settingsPage() {
 }
 
 function render() {
-  const permissions = { dashboard: 'dashboard.view', quotes: 'quotes.view', jobs: 'jobs.view', purchases: 'purchases.view', materials: 'materials.view', workers: 'workers.view', invoices: 'invoices.view', marketplace: 'marketplace.view', planning: 'planning.view', schedule: 'schedule.view', execution: 'execution.view', analytics: 'analytics.view', costing: 'costing.view', settings: 'settings.view', users: 'users.manage' };
+  const permissions = { dashboard: 'dashboard.view', quotes: 'quotes.view', jobs: 'jobs.view', purchases: 'purchases.view', materials: 'materials.view', workers: 'workers.view', invoices: 'invoices.view', marketplace: 'marketplace.view', facilities: 'facilities.view', planning: 'planning.view', schedule: 'schedule.view', execution: 'execution.view', analytics: 'analytics.view', costing: 'costing.view', settings: 'settings.view', users: 'users.manage' };
   if (!window.FactoryFlowAuth.has(permissions[app.view])) app.view = 'dashboard';
   const label = titles[app.view];
   ui('#pageKicker').textContent = label[0];
   ui('#pageTitle').textContent = label[1];
   all('.nav-link[data-view]').forEach((button) => button.classList.toggle('active', button.dataset.view === app.view));
-  const pages = { dashboard: window.FactoryFlowAuth.state.user.role === 'worker' ? workerDashboard : window.FactoryFlowAuth.state.user.role === 'supervisor' ? supervisorDashboard : dashboard, quotes: quotesPage, jobs: jobsPage, purchases: purchasesPage, materials: materialsPage, workers: workersPage, invoices: invoicesPage, marketplace: marketplacePage, planning: planningPage, schedule: schedulePage, execution: executionPage, analytics: analyticsPage, costing: costingPage, settings: settingsPage, users: usersPage };
+  const pages = { dashboard: window.FactoryFlowAuth.state.user.role === 'worker' ? workerDashboard : window.FactoryFlowAuth.state.user.role === 'supervisor' ? supervisorDashboard : dashboard, quotes: quotesPage, jobs: jobsPage, purchases: purchasesPage, materials: materialsPage, workers: workersPage, invoices: invoicesPage, marketplace: marketplacePage, facilities: facilitiesPage, planning: planningPage, schedule: schedulePage, execution: executionPage, analytics: analyticsPage, costing: costingPage, settings: settingsPage, users: usersPage };
   ui('#view').innerHTML = pages[app.view]();
   bind();
 }
@@ -1480,6 +1669,9 @@ function bind() {
     save();
     render();
   });
+  all('[data-add-facility]').forEach((button) => button.addEventListener('click', addFacility));
+  all('[data-edit-facility]').forEach((button) => button.addEventListener('click', () => manageFacility(button.dataset.editFacility)));
+  all('[data-use-facility]').forEach((button) => button.addEventListener('click', () => switchActiveFacility(button.dataset.useFacility)));
   all('[data-add-user]').forEach((button) => button.addEventListener('click', addWorkspaceUser));
   all('[data-edit-user]').forEach((button) => button.addEventListener('click', () => manageWorkspaceUser(button.dataset.editUser)));
   all('[data-consume-job]').forEach((button) => button.addEventListener('click', () => consumeMaterials(button.dataset.consumeJob)));
@@ -1528,13 +1720,15 @@ async function startFactoryFlowApplication() {
     const pagePermissions = {
       dashboard: 'dashboard.view', quotes: 'quotes.view', jobs: 'jobs.view',
       purchases: 'purchases.view', materials: 'materials.view', workers: 'workers.view',
-      invoices: 'invoices.view', marketplace: 'marketplace.view', planning: 'planning.view',
+      invoices: 'invoices.view', marketplace: 'marketplace.view', facilities: 'facilities.view', planning: 'planning.view',
       schedule: 'schedule.view', execution: 'execution.view', analytics: 'analytics.view',
       costing: 'costing.view', settings: 'settings.view', users: 'users.manage'
     };
     all('.nav-link[data-view]').forEach((button) => button.addEventListener('click', () => {
       if (window.FactoryFlowAuth.has(pagePermissions[button.dataset.view])) goto(button.dataset.view);
     }));
+    const facilitySwitcher = ui('#facilitySwitcher');
+    if (facilitySwitcher) facilitySwitcher.addEventListener('change', () => switchActiveFacility(facilitySwitcher.value));
     ui('#mobileMenu').addEventListener('click', () => ui('.sidebar').classList.toggle('open'));
     ui('#modalClose').addEventListener('click', closeModal);
     ui('#modalBackdrop').addEventListener('click', (event) => { if (event.target.id === 'modalBackdrop') closeModal(); });

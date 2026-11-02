@@ -38,6 +38,8 @@ Opening index.html directly is still supported as a browser-only fallback, but c
 - Machine/workstation downtime logging by time, machine, reason, reporter, and optional job reference, with machine and reason summaries
 - Production output captures actual hours worked and can link to a scheduled session; legacy records without actual hours are excluded from throughput rates and flagged in analytics
 - Role-based access for administrators, managers, production supervisors, and workers, with server-enforced permissions and worker-scoped workspace data
+- Multiple factory facilities under one organization, with facility-specific jobs, inventory, workers, schedules, production/QC records, downtime and delivery proofs
+- Facility assignment per user, secure facility switching, administrator facility management, and consolidated cross-facility operational summaries
 - Salted scrypt password hashes, HttpOnly SameSite session cookies, CSRF checks, first-admin setup, forced password change for provisioned accounts, login throttling, and audit history
 - Responsive layout for desktop and mobile screens
 

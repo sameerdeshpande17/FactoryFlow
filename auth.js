@@ -15,7 +15,7 @@ const ROLE_PERMISSIONS = Object.freeze({
     'execution.view', 'execution.record', 'execution.qc',
     'analytics.view', 'analytics.downtime', 'costing.view', 'costing.manage',
     'workers.view', 'workers.manage', 'invoices.view', 'invoices.manage',
-    'marketplace.view', 'settings.view', 'users.manage', 'audit.view'
+    'marketplace.view', 'settings.view', 'users.manage', 'audit.view', 'facilities.view', 'facilities.manage'
   ],
   manager: [
     'dashboard.view', 'quotes.view', 'quotes.manage', 'jobs.view', 'jobs.manage',
@@ -24,12 +24,12 @@ const ROLE_PERMISSIONS = Object.freeze({
     'execution.view', 'execution.record', 'execution.qc',
     'analytics.view', 'analytics.downtime', 'costing.view', 'costing.manage',
     'workers.view', 'workers.manage', 'invoices.view', 'invoices.manage',
-    'marketplace.view', 'settings.view'
+    'marketplace.view', 'settings.view', 'facilities.view'
   ],
   supervisor: [
     'dashboard.view', 'jobs.view', 'materials.view', 'planning.view',
     'schedule.view', 'execution.view', 'execution.record', 'execution.qc',
-    'analytics.view', 'analytics.downtime', 'workers.view'
+    'analytics.view', 'analytics.downtime', 'workers.view', 'facilities.view'
   ],
   worker: [
     'dashboard.view', 'jobs.view', 'schedule.view', 'execution.view', 'execution.record'
@@ -135,6 +135,7 @@ function createUser(input, users, options = {}) {
     email,
     role,
     workerId: role === 'worker' ? workerId : '',
+    facilityIds: Array.isArray(input.facilityIds) ? [...new Set(input.facilityIds.map((id) => String(id).trim()).filter(Boolean))] : [],
     passwordHash,
     active: true,
     mustChangePassword: Boolean(options.mustChangePassword),
@@ -154,6 +155,7 @@ function sanitizeUser(user) {
     role: user.role,
     roleLabel: ROLES[user.role] || 'Unknown',
     workerId: user.workerId || '',
+    facilityIds: Array.isArray(user.facilityIds) ? [...user.facilityIds] : [],
     active: user.active !== false,
     mustChangePassword: Boolean(user.mustChangePassword),
     createdAt: user.createdAt,

@@ -52,5 +52,6 @@
   "reworkLogs": [],
   "downtimeLogs": [],
   "users": [],
-  "auditLogs": []
+  "auditLogs": [],
+  "facilities": []
 }
