@@ -183,6 +183,43 @@ test('authenticates users, enforces role access, persists operations and protect
   });
   assert.equal(sync.status, 200);
 
+  const createMachine = await fetch(baseUrl + '/api/machines', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      code: 'FINISH-01',
+      name: 'Finishing line 01',
+      type: 'Finishing line',
+      location: 'Shop floor A',
+      capacityHoursPerDay: 8,
+      supportedSkills: ['Finishing']
+    })
+  });
+  assert.equal(createMachine.status, 201);
+  const createdMachine = (await json(createMachine)).machine;
+  assert.equal(createdMachine.facilityId, 'FAC-001');
+  assert.equal(createdMachine.code, 'FINISH-01');
+
+  const duplicateMachine = await fetch(baseUrl + '/api/machines', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code: 'finish-01', name: 'Duplicate line', capacityHoursPerDay: 8 })
+  });
+  assert.equal(duplicateMachine.status, 400);
+
+  const maintenanceWindow = await fetch(baseUrl + '/api/machines/' + encodeURIComponent(createdMachine.id) + '/maintenance', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ startDate: '2026-11-02', endDate: '2026-11-02', reason: 'Preventive maintenance' })
+  });
+  assert.equal(maintenanceWindow.status, 201);
+  assert.equal((await json(maintenanceWindow)).machine.maintenanceWindows.length, 1);
+
+  const mainMachineList = await json(await fetch(baseUrl + '/api/machines', {
+    headers: { Cookie: adminCookie, 'X-Facility-ID': 'FAC-001' }
+  }));
+  assert.deepEqual(mainMachineList.machines.map((item) => item.id), [createdMachine.id]);
+
   const schedulePreview = await fetch(baseUrl + '/api/scheduling/optimize', {
     method: 'POST',
     headers: { Cookie: adminCookie, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
@@ -192,7 +229,9 @@ test('authenticates users, enforces role access, persists operations and protect
   const schedulePreviewPayload = await json(schedulePreview);
   assert.equal(schedulePreviewPayload.facilityId, 'FAC-001');
   assert.ok(schedulePreviewPayload.plan.proposals.length > 0);
-  assert.ok(schedulePreviewPayload.plan.proposals.every((item) => item.jobId === 'JB-OTHER' && item.workerId === 'WRK-OTHER'));
+  assert.ok(schedulePreviewPayload.plan.proposals.every((item) => item.jobId === 'JB-OTHER' && item.workerId === 'WRK-OTHER' && item.machineId === createdMachine.id));
+  assert.ok(schedulePreviewPayload.plan.proposals.every((item) => item.date !== '2026-11-02'));
+  assert.ok(schedulePreviewPayload.plan.dailyMachineLoads.length > 0);
   assert.ok(schedulePreviewPayload.plan.jobPlans.some((item) => item.status === 'Needs estimate' && item.jobId === 'JB-WORKER'));
 
   const scheduleApply = await fetch(baseUrl + '/api/scheduling/optimize/apply', {
@@ -203,7 +242,7 @@ test('authenticates users, enforces role access, persists operations and protect
   assert.equal(scheduleApply.status, 201);
   const scheduleApplyPayload = await json(scheduleApply);
   assert.ok(scheduleApplyPayload.appliedSessions.length > 0);
-  assert.ok(scheduleApplyPayload.appliedSessions.every((item) => item.facilityId === 'FAC-001' && item.optimizerPlanId === scheduleApplyPayload.planId));
+  assert.ok(scheduleApplyPayload.appliedSessions.every((item) => item.facilityId === 'FAC-001' && item.optimizerPlanId === scheduleApplyPayload.planId && item.machineId === createdMachine.id));
 
   const duplicateScheduleApply = await fetch(baseUrl + '/api/scheduling/optimize/apply', {
     method: 'POST',
