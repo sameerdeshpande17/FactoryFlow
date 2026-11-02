@@ -23,7 +23,7 @@ async function freePort() {
 before(async () => {
   const root = path.join(__dirname, '..');
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'factoryflow-test-'));
-  for (const file of ['server.js', 'auth.js', 'facilities.js', 'execution.js', 'analytics.js']) {
+  for (const file of ['server.js', 'auth.js', 'facilities.js', 'forecasting.js', 'inventory.js', 'execution.js', 'analytics.js']) {
     fs.copyFileSync(path.join(root, file), path.join(tempDir, file));
   }
   fs.mkdirSync(path.join(tempDir, 'data'));
@@ -143,11 +143,25 @@ test('authenticates users, enforces role access, persists operations and protect
       { id: 'JB-WORKER', customer: 'Worker Customer', item: 'Assigned carton', qty: 20, worker: 'Test Worker', status: 'In production', progress: 0 },
       { id: 'JB-OTHER', customer: 'Other Customer', item: 'Other pouch', qty: 50, worker: 'Other Worker', status: 'In production', progress: 0 }
     ],
-    purchases: [{ id: 'PO-PRIVATE', supplier: 'Private Supplier', material: 'Private ink' }],
-    materials: [{ sku: 'RM-TEST', item: 'Kraft paper', onHand: '100 kg', stock: 100, capacity: 100, unitCost: 10 }],
+    purchases: [
+      { id: 'PO-PRIVATE', supplier: 'Private Supplier', material: 'Private ink' },
+      { id: 'PO-INCOMING', supplier: 'Pioneer Inks', material: 'Water-based ink', materialSku: 'RM-TEST', quantity: 10, receivedQty: 0, unit: 'kg', status: 'Confirmed' },
+    ],
+    materials: [
+      { sku: 'RM-TEST', item: 'Water-based ink', onHand: '20 kg', stock: 20, capacity: 100, unitCost: 12, reorderLevel: 30, leadTimeDays: 5, safetyStockDays: 2, reviewPeriodDays: 7, minimumOrderQty: 25, orderMultiple: 10, preferredSupplier: 'Pioneer Inks' },
+      { sku: 'RM-NOHISTORY', item: 'Kraft paper with no usage history', onHand: '40 kg', stock: 40, capacity: 100, reorderLevel: 30, unitCost: 5 }
+    ],
     deliveries: [],
     receipts: [],
-    movements: [],
+    movements: Array.from({ length: 14 }, (_, index) => ({
+      id: 'MV-FORECAST-' + index,
+      type: 'Consumption',
+      direction: 'OUT',
+      materialSku: 'RM-TEST',
+      quantity: 10,
+      unit: 'kg',
+      createdAt: new Date(Date.now() - (index + 0.5) * 24 * 60 * 60 * 1000).toISOString()
+    })),
     requirements: [],
     workers: [
       { id: 'WRK-TEST', name: 'Test Worker', skill: 'Printing', capacityHoursPerDay: 8, active: true, unavailableDates: [] },
@@ -168,6 +182,68 @@ test('authenticates users, enforces role access, persists operations and protect
     body: JSON.stringify(state)
   });
   assert.equal(sync.status, 200);
+
+  const mainForecastResponse = await fetch(baseUrl + '/api/inventory/forecast', {
+    headers: { Cookie: adminCookie, 'X-Facility-ID': 'FAC-001' }
+  });
+  assert.equal(mainForecastResponse.status, 200);
+  const mainForecastPayload = await json(mainForecastResponse);
+  const inkForecast = mainForecastPayload.forecast.items.find((item) => item.materialSku === 'RM-TEST');
+  assert.ok(inkForecast);
+  assert.equal(inkForecast.incomingQty, 10);
+  assert.equal(inkForecast.averageDailyDemand, 6.8);
+  assert.equal(inkForecast.recommendedOrderQty, 70);
+  assert.equal(inkForecast.preferredSupplier, 'Pioneer Inks');
+  assert.equal(mainForecastPayload.forecast.items.find((item) => item.materialSku === 'RM-NOHISTORY').dataQuality, 'No history');
+
+  const forecastSettings = await fetch(baseUrl + '/api/materials/RM-TEST/forecast-settings', {
+    method: 'PATCH',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      leadTimeDays: 8,
+      safetyStockDays: 2,
+      reviewPeriodDays: 7,
+      minimumOrderQty: 20,
+      orderMultiple: 20,
+      preferredSupplier: 'Pioneer Inks'
+    })
+  });
+  assert.equal(forecastSettings.status, 200);
+  assert.equal((await json(forecastSettings)).material.leadTimeDays, 8);
+
+  const refreshedForecast = await json(await fetch(baseUrl + '/api/inventory/forecast', {
+    headers: { Cookie: adminCookie, 'X-Facility-ID': 'FAC-001' }
+  }));
+  const updatedInkForecast = refreshedForecast.forecast.items.find((item) => item.materialSku === 'RM-TEST');
+  assert.equal(updatedInkForecast.recommendedOrderQty, 100);
+
+  const forecastDraft = await fetch(baseUrl + '/api/procurement/drafts', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ materialSku: 'RM-TEST' })
+  });
+  assert.equal(forecastDraft.status, 201);
+  const forecastDraftPayload = await json(forecastDraft);
+  assert.equal(forecastDraftPayload.purchase.quantity, 100);
+  assert.equal(forecastDraftPayload.purchase.status, 'Draft');
+  assert.equal(forecastDraftPayload.purchase.forecastGenerated, true);
+  assert.equal(forecastDraftPayload.purchase.supplier, 'Pioneer Inks');
+  assert.equal(forecastDraftPayload.purchase.facilityId, 'FAC-001');
+
+  const duplicateForecastDraft = await fetch(baseUrl + '/api/procurement/drafts', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ materialSku: 'RM-TEST' })
+  });
+  assert.equal(duplicateForecastDraft.status, 200);
+  assert.equal((await json(duplicateForecastDraft)).purchase.id, forecastDraftPayload.purchase.id);
+
+  const noShortageDraft = await fetch(baseUrl + '/api/procurement/drafts', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ materialSku: 'RM-NOHISTORY' })
+  });
+  assert.equal(noShortageDraft.status, 409);
 
   const puneState = {
     quotes: [],
@@ -191,6 +267,15 @@ test('authenticates users, enforces role access, persists operations and protect
     body: JSON.stringify(puneState)
   });
   assert.equal(puneSync.status, 200);
+
+  const mainForecastAfterPune = await json(await fetch(baseUrl + '/api/inventory/forecast', {
+    headers: { Cookie: adminCookie, 'X-Facility-ID': 'FAC-001' }
+  }));
+  assert.equal(mainForecastAfterPune.forecast.items.some((item) => item.materialSku === 'RM-PUNE'), false);
+  const puneForecast = await json(await fetch(baseUrl + '/api/inventory/forecast', {
+    headers: { Cookie: adminCookie, 'X-Facility-ID': puneFacility.id }
+  }));
+  assert.deepEqual(puneForecast.forecast.items.map((item) => item.materialSku), ['RM-PUNE']);
 
   const mainFacilityProduction = await fetch(baseUrl + '/api/operations/production', {
     method: 'POST',
@@ -367,6 +452,11 @@ test('authenticates users, enforces role access, persists operations and protect
 
   const workerBootstrap = await fetch(baseUrl + '/api/bootstrap', { headers: { Cookie: workerCookie } });
   assert.equal(workerBootstrap.status, 200);
+
+  const workerForecastDenied = await fetch(baseUrl + '/api/inventory/forecast', {
+    headers: { Cookie: workerCookie, 'X-Facility-ID': 'FAC-001' }
+  });
+  assert.equal(workerForecastDenied.status, 403);
   const workerState = await json(workerBootstrap);
   assert.deepEqual(workerState.state.quotes, []);
   assert.deepEqual(workerState.state.purchases, []);

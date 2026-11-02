@@ -59,19 +59,25 @@ window.FactoryFlowInventory.ensureStockMetadata(materials);
 const app = { view: 'dashboard', filter: 'All', language: localStorage.getItem('ff-language') || 'en' };
 let workspaceReady = false;
 let syncInFlight = false;
+let inventoryForecast = null;
+let forecastLoading = false;
+let forecastRequestId = 0;
 const ui = (selector) => document.querySelector(selector);
 const all = (selector) => [...document.querySelectorAll(selector)];
 const currency = (value) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(value);
-const stClass = (value) => ({ Sent: 'setup', Viewed: 'on-track', 'Follow up': 'delayed', Accepted: 'running', 'In production': 'running', 'With worker': 'on-track', 'Material pending': 'delayed', 'QC review': 'setup', 'In transit': 'on-track', Confirmed: 'running', 'Part received': 'setup', Received: 'in-stock', Draft: 'setup', Cancelled: 'critical', 'In stock': 'in-stock', 'Low stock': 'low', Critical: 'critical', Paid: 'in-stock', Overdue: 'critical', 'Due soon': 'low' }[value] || 'setup');
+const stClass = (value) => ({ Sent: 'setup', Viewed: 'on-track', 'Follow up': 'delayed', Accepted: 'running', 'In production': 'running', 'With worker': 'on-track', 'Material pending': 'delayed', 'QC review': 'setup', 'In transit': 'on-track', Confirmed: 'running', 'Part received': 'setup', Received: 'in-stock', Draft: 'setup', Cancelled: 'critical', 'In stock': 'in-stock', 'Low stock': 'low', Critical: 'critical', Paid: 'in-stock', Overdue: 'critical', 'Due soon': 'low', 'Critical': 'critical', 'Reorder': 'low', 'Watch': 'low', 'Healthy': 'on-track', 'No history': 'setup', 'Needs data': 'critical' }[value] || 'setup');
 
 const titles = {
   dashboard: ['JOB-WORK OS', 'Overview'], quotes: ['SALES', 'Quotes'], jobs: ['JOB CONTROL', 'Jobs'],
   purchases: ['PURCHASING', 'Purchase orders'], materials: ['RAW MATERIAL', 'Materials'],
   workers: ['PARTNERS', 'Job workers'], invoices: ['FINANCE', 'GST invoices'],
-  marketplace: ['B2B NETWORK', 'Marketplace'], facilities: ['ORGANIZATION', 'Factory facilities'], users: ['ADMINISTRATION', 'User management'], planning: ['PRODUCTION', 'Material planning'], schedule: ['PRODUCTION', 'Production schedule'], execution: ['PRODUCTION', 'Production execution & QC'], analytics: ['MANAGEMENT', 'Production analytics'], costing: ['FINANCE', 'Job costing'], settings: ['WORKSPACE', 'Settings']
+  marketplace: ['B2B NETWORK', 'Marketplace'], facilities: ['ORGANIZATION', 'Factory facilities'], forecast: ['INVENTORY INTELLIGENCE', 'Demand forecast & reorder'], users: ['ADMINISTRATION', 'User management'], planning: ['PRODUCTION', 'Material planning'], schedule: ['PRODUCTION', 'Production schedule'], execution: ['PRODUCTION', 'Production execution & QC'], analytics: ['MANAGEMENT', 'Production analytics'], costing: ['FINANCE', 'Job costing'], settings: ['WORKSPACE', 'Settings']
 };
 
 function save(shouldSync = true) {
+  inventoryForecast = null;
+  forecastLoading = false;
+  forecastRequestId += 1;
   localStorage.setItem('ff-quotes', JSON.stringify(quotes));
   localStorage.setItem('ff-jobs', JSON.stringify(jobs));
   localStorage.setItem('ff-deliveries', JSON.stringify(deliveries));
@@ -157,6 +163,9 @@ async function hydrateWorkspace() {
     replace(reworkLogs, 'reworkLogs');
     replace(downtimeLogs, 'downtimeLogs');
     window.FactoryFlowInventory.ensureStockMetadata(materials);
+    inventoryForecast = null;
+    forecastLoading = false;
+    forecastRequestId += 1;
     workspaceReady = true;
     save(false);
     setDataStatus('Synced', 'online');
@@ -267,6 +276,136 @@ function purchasesPage() {
   return head('PURCHASING', 'Purchase orders', 'Keep every raw-material commitment and delivery date visible.', '<button class="primary-button" data-new="purchase">＋ New purchase order</button>') + '<section class="content-card"><div class="toolbar"><strong style="font-size:12px">Open purchase orders</strong><button class="secondary-button" data-go="marketplace">◇ Find suppliers</button></div><div class="table-scroll"><table class="data-table"><thead><tr><th>PO</th><th>SUPPLIER</th><th>MATERIAL</th><th>AMOUNT</th><th>DELIVERY</th><th>STATUS</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div></section>';
 }
 
+function loadInventoryForecast(force = false) {
+  if (forecastLoading || (inventoryForecast && !force)) return;
+  forecastLoading = true;
+  const requestId = ++forecastRequestId;
+  const facilityId = window.FactoryFlowAuth.state.activeFacilityId;
+  window.FactoryFlowAuth.request('/api/inventory/forecast').then((payload) => {
+    if (requestId !== forecastRequestId || facilityId !== window.FactoryFlowAuth.state.activeFacilityId) return;
+    inventoryForecast = payload.forecast;
+    forecastLoading = false;
+    if (app.view === 'forecast') render();
+  }).catch((error) => {
+    if (requestId !== forecastRequestId || facilityId !== window.FactoryFlowAuth.state.activeFacilityId) return;
+    forecastLoading = false;
+    if (app.view === 'forecast') {
+      ui('#view').innerHTML = head('INVENTORY INTELLIGENCE', 'Demand forecast & reorder', 'Forecast material demand and prepare controlled purchase drafts.', '<button class="secondary-button" data-refresh-forecast>↻ Retry</button>') +
+        '<section class="content-card"><div class="empty-state"><h2>Forecast unavailable</h2><p>' + safe(error.message) + '</p></div></section>';
+      bind();
+    }
+  });
+}
+
+function refreshInventoryForecast() {
+  inventoryForecast = null;
+  loadInventoryForecast(true);
+  render();
+}
+
+function forecastPage() {
+  if (!inventoryForecast && !forecastLoading) loadInventoryForecast();
+  if (!inventoryForecast) {
+    return head('INVENTORY INTELLIGENCE', 'Demand forecast & reorder', 'Use recent material consumption, supplier lead times and open purchase commitments to plan replenishment.', '') +
+      '<section class="content-card"><div class="empty-state"><h2>' + (forecastLoading ? 'Calculating inventory forecast…' : 'Loading inventory forecast…') + '</h2><p>Demand estimates are based on recorded consumption history and current open purchase orders.</p></div></section>';
+  }
+  const report = inventoryForecast;
+  const spendLabel = report.estimatedSpend === null ? 'Unit costs needed' : currency(report.estimatedSpend);
+  const rows = report.items.map((item) => {
+    const demand = item.averageDailyDemand > 0
+      ? Number(item.averageDailyDemand).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' ' + safe(item.unit) + '/day'
+      : 'No usage history';
+    const coverage = item.coverageDays === null ? '—' : Number(item.coverageDays).toFixed(1) + ' days';
+    const order = Number(item.recommendedOrderQty || 0) > 0
+      ? Number(item.recommendedOrderQty).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' ' + safe(item.unit)
+      : '—';
+    const cost = item.recommendedOrderCost === null || item.recommendedOrderCost === undefined
+      ? (item.recommendedOrderQty > 0 ? 'Not estimated' : '—')
+      : currency(item.recommendedOrderCost);
+    const configure = window.FactoryFlowAuth.has('materials.manage')
+      ? '<button class="table-button" data-forecast-settings="' + safe(item.materialSku) + '">Configure</button>'
+      : '';
+    const draft = item.reorderRecommended && item.recommendedOrderQty > 0 && window.FactoryFlowAuth.has('purchases.manage')
+      ? '<button class="table-button" data-draft-forecast="' + safe(item.materialSku) + '">Create draft PO</button>'
+      : item.reorderRecommended ? '<span class="status low">Reorder</span>' : '';
+    const issueNote = item.issues && item.issues.length
+      ? '<div class="subtle">' + safe(item.issues.length + ' data issue(s)') + '</div>'
+      : '';
+    return '<tr><td><div class="item-name">' + safe(item.material) + '</div><div class="subtle">' + safe(item.materialSku) + ' · ' + safe(item.dataQuality) + '</div>' + issueNote + '</td>' +
+      '<td>' + safe(item.onHandQty === null ? 'Invalid stock' : Number(item.onHandQty).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' ' + item.unit) + '</td>' +
+      '<td>' + demand + (item.recentDailyDemand > 0 ? '<div class="subtle">Recent ' + Number(item.recentDailyDemand).toFixed(2) + '/day</div>' : '') + '</td>' +
+      '<td>' + Number(item.leadTimeDays || 0) + ' days<div class="subtle">Safety ' + Number(item.safetyStockDays || 0) + ' days</div></td>' +
+      '<td>' + (item.incomingQty > 0 ? Number(item.incomingQty).toLocaleString('en-IN', { maximumFractionDigits: 2 }) + ' ' + safe(item.unit) : '—') + '</td>' +
+      '<td>' + coverage + '</td><td>' + status(item.status) + '</td><td><strong>' + order + '</strong></td><td>' + cost + '</td>' +
+      '<td><div class="forecast-actions">' + configure + draft + '</div></td></tr>';
+  }).join('');
+  const historyText = report.lookbackDays + '-day consumption window · weighted recent 7-day usage · updated ' + new Date(report.generatedAt).toLocaleString('en-IN');
+  return head('INVENTORY INTELLIGENCE', 'Demand forecast & reorder', 'Estimate when materials may run short and create controlled procurement drafts before production is interrupted.', '<button class="secondary-button" data-refresh-forecast>↻ Refresh forecast</button>') +
+    '<div class="inventory-grid"><article class="inventory-stat"><span>TRACKED MATERIALS</span><strong>' + report.materialCount + '</strong><small>In the selected facility</small></article>' +
+    '<article class="inventory-stat"><span>REORDER RECOMMENDATIONS</span><strong>' + report.reorderCount + '</strong><small>After open purchase commitments</small></article>' +
+    '<article class="inventory-stat"><span>CRITICAL STOCK RISK</span><strong>' + report.criticalCount + '</strong><small>Projected to run out before supplier lead time</small></article>' +
+    '<article class="inventory-stat"><span>ESTIMATED REORDER VALUE</span><strong>' + spendLabel + '</strong><small>Based on configured unit costs</small></article></div>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Material demand and replenishment</strong><span class="subtle">' + safe(historyText) + '</span></div>' +
+    (rows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>MATERIAL</th><th>ON HAND</th><th>DAILY DEMAND</th><th>LEAD / SAFETY</th><th>INCOMING</th><th>COVERAGE</th><th>RISK</th><th>RECOMMENDED ORDER</th><th>EST. COST</th><th>ACTIONS</th></tr></thead><tbody>' + rows + '</tbody></table></div>' : '<div class="empty-state"><h2>No tracked materials</h2><p>Add materials before generating a demand forecast.</p></div>') + '</section>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">How recommendations are calculated</strong></div><p class="subtle">Demand is estimated from recorded material consumption in the selected lookback window, weighted toward recent usage. Reorder points cover supplier lead time plus safety stock; the recommended order also covers the review period. Confirmed, in-transit and partially received purchase orders reduce the recommendation. Draft orders are excluded until confirmed.</p><p class="subtle">Materials without recorded consumption use their existing reorder level and are clearly marked “No history”. Forecasts are advisory estimates, not demand commitments.</p></section>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Data quality</strong><span class="subtle">' + report.noHistoryCount + ' material(s) without history · ' + report.watchCount + ' watch item(s)</span></div><p class="subtle">Check incomplete movement history, unusual unit mismatches and missing unit costs before converting a forecast recommendation into a purchase order.</p></section>';
+}
+
+function configureForecastSettings(materialSku) {
+  const material = materials.find((item) => item.sku === materialSku);
+  if (!material) return;
+  const lead = Number.isInteger(Number(material.leadTimeDays)) ? Number(material.leadTimeDays) : 7;
+  const safety = Number.isInteger(Number(material.safetyStockDays)) ? Number(material.safetyStockDays) : 7;
+  const review = Number.isInteger(Number(material.reviewPeriodDays)) ? Number(material.reviewPeriodDays) : 7;
+  const minimum = Number.isFinite(Number(material.minimumOrderQty)) ? Number(material.minimumOrderQty) : 0;
+  const multiple = Number.isFinite(Number(material.orderMultiple)) && Number(material.orderMultiple) > 0 ? Number(material.orderMultiple) : 1;
+  openModal('<h2 id="modalTitle">Forecast settings · ' + safe(material.sku) + '</h2><p>' + safe(material.item) + '</p><form id="forecastSettingsForm" class="form-grid"><div class="form-row"><label>Supplier lead time (days)<input required name="leadTimeDays" type="number" min="0" max="365" step="1" value="' + lead + '"></label><label>Safety stock (days)<input required name="safetyStockDays" type="number" min="0" max="365" step="1" value="' + safety + '"></label></div><label>Review period (days)<input required name="reviewPeriodDays" type="number" min="1" max="90" step="1" value="' + review + '"></label><div class="form-row"><label>Minimum order quantity<input required name="minimumOrderQty" type="number" min="0" step="0.01" value="' + minimum + '"></label><label>Order multiple / pack size<input required name="orderMultiple" type="number" min="0.001" step="0.01" value="' + multiple + '"></label></div><label>Preferred supplier<input name="preferredSupplier" maxlength="120" value="' + safe(material.preferredSupplier || '') + '" placeholder="Supplier name"></label><p class="subtle">Order quantities are rounded up to the supplier’s minimum and pack multiple. These settings affect recommendations, not purchase orders already placed.</p><p id="forecastSettingsError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save forecast settings</button></div></form>');
+  ui('#forecastSettingsForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const body = {
+      leadTimeDays: Number(data.get('leadTimeDays')),
+      safetyStockDays: Number(data.get('safetyStockDays')),
+      reviewPeriodDays: Number(data.get('reviewPeriodDays')),
+      minimumOrderQty: Number(data.get('minimumOrderQty')),
+      orderMultiple: Number(data.get('orderMultiple')),
+      preferredSupplier: data.get('preferredSupplier').trim()
+    };
+    try {
+      const result = await window.FactoryFlowAuth.request('/api/materials/' + encodeURIComponent(material.sku) + '/forecast-settings', {
+        method: 'PATCH',
+        body: JSON.stringify(body)
+      });
+      Object.assign(material, result.material);
+      inventoryForecast = null;
+      closeModal();
+      render();
+      notify('Forecast settings saved for ' + material.item + '.');
+    } catch (error) {
+      const node = ui('#forecastSettingsError');
+      node.textContent = error.message;
+      node.hidden = false;
+    }
+  });
+}
+
+async function createForecastDraft(materialSku) {
+  try {
+    const result = await window.FactoryFlowAuth.request('/api/procurement/drafts', {
+      method: 'POST',
+      body: JSON.stringify({ materialSku })
+    });
+    if (!purchases.some((purchase) => purchase.id === result.purchase.id)) purchases.unshift(result.purchase);
+    inventoryForecast = null;
+    save(false);
+    goto('purchases');
+    notify(result.existing ? 'Forecast draft already exists: ' + result.purchase.id : 'Draft ' + result.purchase.id + ' created. Review supplier and delivery date before confirming.');
+  } catch (error) {
+    notify(error.message);
+    refreshInventoryForecast();
+  }
+}
+
 function materialsPage() {
   const low = materials.filter((item) => item.status !== 'In stock').length;
   const rows = materials.map((item) => {
@@ -276,7 +415,8 @@ function materialsPage() {
       : 'Not set';
     return '<tr><td class="order-code">' + safe(item.sku) + '</td><td class="item-name">' + safe(item.item) + '</td><td>' + safe(item.category) + '</td><td>' + safe(item.location) + '</td><td>' + safe(item.onHand) + '</td><td><div class="stock-bar ' + (item.status === 'Critical' ? 'critical' : item.status === 'Low stock' ? 'warn' : '') + '"><i style="width:' + item.stock + '%"></i></div></td><td>' + status(item.status) + '</td><td>' + cost + '' + (window.FactoryFlowAuth.has('materials.manage') ? '<div><button class="table-button" data-unit-cost="' + safe(item.sku) + '">Set cost</button></div>' : '') + '</td></tr>';
   }).join('');
-  return head('RAW MATERIAL', 'Material you can trust', 'See stock health early, before a job worker or customer has to wait.', window.FactoryFlowAuth.has('purchases.manage') ? '<button class="primary-button" data-new="purchase">＋ Purchase material</button>' : '') + '<div class="inventory-grid"><article class="inventory-stat"><span>TRACKED MATERIALS</span><strong>' + materials.length + '</strong><small>Inventory records</small></article><article class="inventory-stat"><span>REORDER ALERTS</span><strong>' + low + '</strong><small>Needs a purchase order today</small></article><article class="inventory-stat"><span>STOCK MOVEMENTS</span><strong>' + movements.length + '</strong><small>Receipts and production usage</small></article></div><section class="content-card"><div class="toolbar"><strong style="font-size:12px">Stock by material</strong>' + (window.FactoryFlowAuth.has('materials.manage') ? '<button class="secondary-button" data-action="receive">＋ Receive material</button>' : '') + '</div><div class="table-scroll"><table class="data-table"><thead><tr><th>SKU</th><th>MATERIAL</th><th>CATEGORY</th><th>LOCATION</th><th>ON HAND</th><th>STOCK LEVEL</th><th>STATUS</th><th>UNIT COST</th></tr></thead><tbody>' + rows + '</tbody></table></div></section>' +
+  const actions = '<button class="secondary-button" data-go="forecast">Demand forecast →</button>' + (window.FactoryFlowAuth.has('purchases.manage') ? '<button class="primary-button" data-new="purchase">＋ Purchase material</button>' : '');
+  return head('RAW MATERIAL', 'Material you can trust', 'See stock health early, before a job worker or customer has to wait.', actions) + '<div class="inventory-grid"><article class="inventory-stat"><span>TRACKED MATERIALS</span><strong>' + materials.length + '</strong><small>Inventory records</small></article><article class="inventory-stat"><span>REORDER ALERTS</span><strong>' + low + '</strong><small>Needs a purchase order today</small></article><article class="inventory-stat"><span>STOCK MOVEMENTS</span><strong>' + movements.length + '</strong><small>Receipts and production usage</small></article></div><section class="content-card"><div class="toolbar"><strong style="font-size:12px">Stock by material</strong>' + (window.FactoryFlowAuth.has('materials.manage') ? '<button class="secondary-button" data-action="receive">＋ Receive material</button>' : '') + '</div><div class="table-scroll"><table class="data-table"><thead><tr><th>SKU</th><th>MATERIAL</th><th>CATEGORY</th><th>LOCATION</th><th>ON HAND</th><th>STOCK LEVEL</th><th>STATUS</th><th>UNIT COST</th></tr></thead><tbody>' + rows + '</tbody></table></div></section>' +
   '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Recent material receipts</strong><span class="subtle">' + receipts.length + ' recorded</span></div>' +
   (receipts.length ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>RECEIPT</th><th>PURCHASE ORDER</th><th>SUPPLIER / MATERIAL</th><th>QUANTITY</th><th>STOCK AFTER</th><th>REFERENCE</th><th>DATE</th></tr></thead><tbody>' + receipts.slice(0, 10).map((receipt) => '<tr><td class="order-code">' + safe(receipt.id) + '</td><td>' + safe(receipt.purchaseId) + '</td><td><div class="item-name">' + safe(receipt.supplier) + '</div><div class="subtle">' + safe(receipt.material) + '</div></td><td>' + receipt.quantity + ' ' + safe(receipt.unit) + '</td><td>' + safe(receipt.stockAfter || '—') + '</td><td>' + safe(receipt.reference || '—') + '</td><td>' + new Date(receipt.receivedAt).toLocaleDateString('en-IN') + '</td></tr>').join('') + '</tbody></table></div>' : '<div class="empty-state"><h2>No receipts recorded</h2><p>Use “Receive material” to record the next supplier delivery.</p></div>') + '</section>' +
   '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Stock movement history</strong><span class="subtle">' + movements.length + ' movements</span></div>' +
@@ -1160,13 +1300,13 @@ function settingsPage() {
 }
 
 function render() {
-  const permissions = { dashboard: 'dashboard.view', quotes: 'quotes.view', jobs: 'jobs.view', purchases: 'purchases.view', materials: 'materials.view', workers: 'workers.view', invoices: 'invoices.view', marketplace: 'marketplace.view', facilities: 'facilities.view', planning: 'planning.view', schedule: 'schedule.view', execution: 'execution.view', analytics: 'analytics.view', costing: 'costing.view', settings: 'settings.view', users: 'users.manage' };
+  const permissions = { dashboard: 'dashboard.view', quotes: 'quotes.view', jobs: 'jobs.view', purchases: 'purchases.view', materials: 'materials.view', forecast: 'materials.view', workers: 'workers.view', invoices: 'invoices.view', marketplace: 'marketplace.view', facilities: 'facilities.view', planning: 'planning.view', schedule: 'schedule.view', execution: 'execution.view', analytics: 'analytics.view', costing: 'costing.view', settings: 'settings.view', users: 'users.manage' };
   if (!window.FactoryFlowAuth.has(permissions[app.view])) app.view = 'dashboard';
   const label = titles[app.view];
   ui('#pageKicker').textContent = label[0];
   ui('#pageTitle').textContent = label[1];
   all('.nav-link[data-view]').forEach((button) => button.classList.toggle('active', button.dataset.view === app.view));
-  const pages = { dashboard: window.FactoryFlowAuth.state.user.role === 'worker' ? workerDashboard : window.FactoryFlowAuth.state.user.role === 'supervisor' ? supervisorDashboard : dashboard, quotes: quotesPage, jobs: jobsPage, purchases: purchasesPage, materials: materialsPage, workers: workersPage, invoices: invoicesPage, marketplace: marketplacePage, facilities: facilitiesPage, planning: planningPage, schedule: schedulePage, execution: executionPage, analytics: analyticsPage, costing: costingPage, settings: settingsPage, users: usersPage };
+  const pages = { dashboard: window.FactoryFlowAuth.state.user.role === 'worker' ? workerDashboard : window.FactoryFlowAuth.state.user.role === 'supervisor' ? supervisorDashboard : dashboard, quotes: quotesPage, jobs: jobsPage, purchases: purchasesPage, materials: materialsPage, forecast: forecastPage, workers: workersPage, invoices: invoicesPage, marketplace: marketplacePage, facilities: facilitiesPage, planning: planningPage, schedule: schedulePage, execution: executionPage, analytics: analyticsPage, costing: costingPage, settings: settingsPage, users: usersPage };
   ui('#view').innerHTML = pages[app.view]();
   bind();
 }
@@ -1693,6 +1833,9 @@ function bind() {
     ui('#scheduleJobPicker').addEventListener('submit', (event) => { event.preventDefault(); const jobId = new FormData(event.currentTarget).get('jobId'); closeModal(); scheduleProduction(jobId); });
   }));
   all('[data-shortage-po]').forEach((button) => button.addEventListener('click', () => createShortagePurchaseOrder(button.dataset.shortagePo)));
+  all('[data-refresh-forecast]').forEach((button) => button.addEventListener('click', refreshInventoryForecast));
+  all('[data-forecast-settings]').forEach((button) => button.addEventListener('click', () => configureForecastSettings(button.dataset.forecastSettings)));
+  all('[data-draft-forecast]').forEach((button) => button.addEventListener('click', () => createForecastDraft(button.dataset.draftForecast)));
   all('[data-plan-create]').forEach((button) => button.addEventListener('click', () => {
     const active = window.FactoryFlowPlanning.activeJobs(jobs);
     if (!active.length) return notify('Create an active production job before planning materials.');
@@ -1719,7 +1862,7 @@ async function startFactoryFlowApplication() {
     window.FactoryFlowAuth.applyNavigation();
     const pagePermissions = {
       dashboard: 'dashboard.view', quotes: 'quotes.view', jobs: 'jobs.view',
-      purchases: 'purchases.view', materials: 'materials.view', workers: 'workers.view',
+      purchases: 'purchases.view', materials: 'materials.view', forecast: 'materials.view', workers: 'workers.view',
       invoices: 'invoices.view', marketplace: 'marketplace.view', facilities: 'facilities.view', planning: 'planning.view',
       schedule: 'schedule.view', execution: 'execution.view', analytics: 'analytics.view',
       costing: 'costing.view', settings: 'settings.view', users: 'users.manage'

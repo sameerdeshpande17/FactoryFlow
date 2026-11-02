@@ -6,6 +6,7 @@ const auth = require('./auth.js');
 const execution = require('./execution.js');
 const analytics = require('./analytics.js');
 const facilityModel = require('./facilities.js');
+const forecasting = require('./forecasting.js');
 
 const root = __dirname;
 const dataDirectory = path.join(root, 'data');
@@ -696,6 +697,109 @@ async function handleApi(request, response, pathname) {
       writeStore(store);
       const scoped = facilityModel.projectStoreForFacility(store, current.facility.id);
       return sendJson(response, 201, { record, downtimeLogs: scoped.downtimeLogs });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  if (pathname === '/api/inventory/forecast' && request.method === 'GET') {
+    try {
+      requirePermission(current, 'materials.view');
+      const query = new URL(request.url, 'http://factoryflow.local').searchParams;
+      const options = {};
+      if (query.has('lookbackDays')) options.lookbackDays = Number(query.get('lookbackDays'));
+      const scoped = facilityModel.projectStoreForFacility(store, current.facility.id);
+      const forecast = forecasting.forecastInventory(scoped.materials, scoped.movements, scoped.purchases, options);
+      return sendJson(response, 200, { facilityId: current.facility.id, forecast });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  const forecastSettingsMatch = /^\/api\/materials\/([^/]+)\/forecast-settings$/.exec(pathname);
+  if (forecastSettingsMatch && request.method === 'PATCH') {
+    try {
+      requireCsrf(request, current);
+      requirePermission(current, 'materials.manage');
+      const body = await readJson(request);
+      const sku = decodeURIComponent(forecastSettingsMatch[1]);
+      const material = store.materials.find((item) => item.sku === sku && item.facilityId === current.facility.id);
+      if (!material) return sendJson(response, 404, { error: 'Material not found in the selected facility.' });
+      const settings = forecasting.validateSettings(body, material);
+      Object.assign(material, settings, { forecastSettingsUpdatedAt: new Date().toISOString() });
+      appendAudit(store, current.user, 'inventory.forecast_settings_updated', 'material', material.sku, settings, request);
+      writeStore(store);
+      return sendJson(response, 200, { material });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  if (pathname === '/api/procurement/drafts' && request.method === 'POST') {
+    try {
+      requireCsrf(request, current);
+      requirePermission(current, 'purchases.manage');
+      const body = await readJson(request);
+      const materialSku = String(body.materialSku || '').trim();
+      if (!materialSku || materialSku.length > 120) return sendJson(response, 400, { error: 'Choose a valid material SKU.' });
+
+      // Re-read after the request body is received so a second click cannot create a duplicate draft.
+      const latest = readStore();
+      const latestUser = latest.users.find((item) => item.id === current.user.id && item.active !== false);
+      if (!latestUser) return sendJson(response, 401, { error: 'Your account is no longer active. Sign in again.' });
+      requirePermission({ user: latestUser }, 'purchases.manage');
+      const latestFacility = facilityModel.resolveFacility(latestUser, latest.facilities, latest, current.facility.id);
+      if (!latestFacility || latestFacility.id !== current.facility.id) {
+        return sendJson(response, 403, { error: 'Your access to the selected facility has changed. Refresh the workspace.' });
+      }
+      const scoped = facilityModel.projectStoreForFacility(latest, latestFacility.id);
+      const material = scoped.materials.find((item) => item.sku === materialSku);
+      if (!material) return sendJson(response, 404, { error: 'Material not found in the selected facility.' });
+
+      const materialName = String(material.item || '').trim().toLocaleLowerCase();
+      const existingDraft = scoped.purchases.find((purchase) =>
+        purchase.status === 'Draft' &&
+        (purchase.materialSku === materialSku ||
+          (!purchase.materialSku && String(purchase.material || '').trim().toLocaleLowerCase() === materialName))
+      );
+      if (existingDraft) {
+        return sendJson(response, 200, { purchase: existingDraft, existing: true, message: 'A forecast purchase draft already exists for this material.' });
+      }
+
+      const forecast = forecasting.forecastInventory(scoped.materials, scoped.movements, scoped.purchases);
+      const recommendation = forecast.items.find((item) => item.materialSku === materialSku);
+      if (!recommendation || !recommendation.reorderRecommended || recommendation.recommendedOrderQty <= 0) {
+        return sendJson(response, 409, { error: 'This material does not currently have a purchase recommendation. Refresh the forecast and review stock or incoming orders.' });
+      }
+
+      const purchase = {
+        id: 'PO-AUTO-' + cryptoId().replace(/-/g, '').slice(0, 10).toUpperCase(),
+        facilityId: latestFacility.id,
+        supplier: recommendation.preferredSupplier || 'Supplier to assign',
+        material: recommendation.material,
+        materialSku: recommendation.materialSku,
+        quantity: recommendation.recommendedOrderQty,
+        receivedQty: 0,
+        unit: recommendation.unit,
+        amount: recommendation.recommendedOrderCost,
+        delivery: 'To schedule',
+        status: 'Draft',
+        planningGenerated: true,
+        forecastGenerated: true,
+        forecastSnapshot: {
+          generatedAt: forecast.generatedAt,
+          lookbackDays: forecast.lookbackDays,
+          averageDailyDemand: recommendation.averageDailyDemand,
+          leadTimeDays: recommendation.leadTimeDays,
+          safetyStockDays: recommendation.safetyStockDays,
+          reorderPoint: recommendation.reorderPoint,
+          incomingQty: recommendation.incomingQty
+        },
+        createdAt: new Date().toISOString()
+      };
+      latest.purchases.unshift(purchase);
+      appendAudit(latest, latestUser, 'procurement.forecast_draft_created', 'purchase', purchase.id, {
+        materialSku: purchase.materialSku,
+        quantity: purchase.quantity,
+        unit: purchase.unit,
+        estimatedAmount: purchase.amount
+      }, request);
+      writeStore(latest);
+      return sendJson(response, 201, { purchase, existing: false });
     } catch (error) { return publicAuthError(error, response); }
   }
 

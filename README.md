@@ -39,6 +39,9 @@ Opening index.html directly is still supported as a browser-only fallback, but c
 - Production output captures actual hours worked and can link to a scheduled session; legacy records without actual hours are excluded from throughput rates and flagged in analytics
 - Role-based access for administrators, managers, production supervisors, and workers, with server-enforced permissions and worker-scoped workspace data
 - Multiple factory facilities under one organization, with facility-specific jobs, inventory, workers, schedules, production/QC records, downtime and delivery proofs
+- Inventory demand forecasting from weighted recent and lookback consumption, supplier lead times, safety stock, review periods, open purchase commitments, coverage estimates and stockout risk
+- Per-material supplier lead-time, safety-stock, review-period, minimum-order, pack-multiple and preferred-supplier settings
+- Idempotent forecast-generated draft purchase orders with duplicate-draft protection, supplier suggestions, cost estimates and an auditable forecast snapshot; drafts require manual review and confirmation
 - Facility assignment per user, secure facility switching, administrator facility management, and consolidated cross-facility operational summaries
 - Salted scrypt password hashes, HttpOnly SameSite session cookies, CSRF checks, first-admin setup, forced password change for provisioned accounts, login throttling, and audit history
 - Responsive layout for desktop and mobile screens
