@@ -64,6 +64,9 @@
     const capacityHoursPerDay = Number(input.capacityHoursPerDay === undefined
       ? current && current.capacityHoursPerDay
       : input.capacityHoursPerDay);
+    const idealUnitsPerHour = input.idealUnitsPerHour === undefined || input.idealUnitsPerHour === null || input.idealUnitsPerHour === ''
+      ? Number(current && current.idealUnitsPerHour) || 0
+      : Number(input.idealUnitsPerHour);
     const active = input.active === undefined ? (current ? current.active !== false : true) : input.active;
     const supportedSkills = input.supportedSkills === undefined
       ? list(current && current.supportedSkills)
@@ -76,6 +79,9 @@
       throw new Error('Daily machine capacity must be between 0.25 and 24 hours.');
     }
     if (typeof active !== 'boolean') throw new Error('Machine status must be active or inactive.');
+    if (!Number.isFinite(idealUnitsPerHour) || idealUnitsPerHour < 0 || (idealUnitsPerHour > 0 && idealUnitsPerHour < 0.01) || idealUnitsPerHour > 1000000) {
+      throw new Error('Ideal output rate must be zero (not configured) or between 0.01 and 1,000,000 units per hour.');
+    }
     if (list(machines).some((machine) => machine.id !== (current && current.id) && String(machine.code || '').toUpperCase() === code)) {
       throw new Error('A machine with this code already exists in this facility.');
     }
@@ -110,6 +116,7 @@
       type,
       location,
       capacityHoursPerDay,
+      idealUnitsPerHour,
       supportedSkills,
       active,
       maintenanceWindows

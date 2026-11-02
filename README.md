@@ -36,6 +36,7 @@ Opening index.html directly is still supported as a browser-only fallback, but c
 - QC inspections, defect dispositions, rework and reinspection tracking, and a controlled release-for-delivery gate
 - Production analytics with date-filtered output trends, yield, QC pass/fail rates, worker productivity, planned-versus-actual hours for linked sessions, delivery timeliness, and job performance
 - Machine/workstation downtime logging by time, machine, reason, reporter, and optional job reference, with machine and reason summaries
+- Machine-level OEE analytics with availability, performance against configurable ideal throughput, good-unit quality, scheduled-day capacity utilization, merged downtime, and explainable bottleneck signals
 - Production output captures actual hours worked and can link to a scheduled session; legacy records without actual hours are excluded from throughput rates and flagged in analytics
 - Role-based access for administrators, managers, production supervisors, and workers, with server-enforced permissions and worker-scoped workspace data
 - Multiple factory facilities under one organization, with facility-specific jobs, inventory, workers, schedules, production/QC records, downtime and delivery proofs
@@ -70,3 +71,20 @@ Sessions are held in server memory and have a fixed eight-hour lifetime from sig
 2. Connect WhatsApp sharing to an approved WhatsApp Business workflow.
 3. Generate compliant GST PDF quotes, invoices, and delivery challans.
 4. Integrate supplier verification, payments, and financing partners.
+
+
+## Machine OEE and performance data
+
+Machine OEE is calculated as **Availability × Performance × Quality** for the selected reporting period.
+
+- **Availability** = scheduled machine-hours remaining after recorded downtime ÷ scheduled machine-hours.
+- **Performance** = recorded produced units ÷ (configured ideal units per hour × run hours).
+- **Quality** = good units ÷ produced units, using the production output records linked to each machine.
+- **OEE** = availability × performance × quality. Machines without an ideal throughput rate or complete component data show OEE as unavailable instead of receiving an assumed score.
+- **Capacity utilization** is a separate measure: scheduled hours divided by daily machine capacity on dates with scheduled work. It is not treated as a 24/7 calendar.
+
+Set each machine’s **Ideal output rate (units/hour)** in Machines & equipment to enable its performance and OEE calculation. Use a representative sustainable rate for that machine and operation. If actual output exceeds the configured ideal rate, raw performance is shown for review while the OEE product caps the performance factor at 100%.
+
+Downtime intervals are merged to avoid counting overlapping records twice and are capped at the machine’s scheduled hours for that date. Since schedule records store a date and total hours rather than exact shift start/end times, this is a daily estimate rather than shift-time overlap. Sessions recorded inside planned maintenance windows are excluded from planned OEE time and surfaced as a scheduling conflict.
+
+The bottleneck watchlist currently uses review thresholds of at least 85% scheduled capacity utilization, below 80% availability, below 85% performance, or below 98% good-unit yield. These are product review thresholds, not universal manufacturing standards. QC inspections remain job-level unless explicitly linked to a machine; machine quality uses recorded production good/produced quantities rather than attributing job-level QC inspections to individual equipment.
