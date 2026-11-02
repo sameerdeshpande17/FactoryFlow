@@ -1100,6 +1100,7 @@ function analyticsPage() {
       (item.bottleneckSignals.length ? '<div class="machine-alert-copy">' + safe(item.bottleneckSignals.join(' · ')) + '</div>' : '') +
       (item.performanceCapped ? '<div class="machine-alert-copy">Performance exceeded ideal rate; OEE calculation capped it at 100%.</div>' : '') + '</td>' +
     '<td><strong>' + machinePercent(item.oeePercent) + '</strong></td>' +
+    '<td>' + (item.idealUnitsPerHour === null ? 'Not configured' : Number(item.idealUnitsPerHour).toLocaleString('en-IN') + ' units/hr') + '</td>' +
     '<td>' + machinePercent(item.availabilityPercent) + '</td>' +
     '<td>' + (item.rawPerformancePercent === null ? '—' : Number(item.rawPerformancePercent).toFixed(1) + '%') + '</td>' +
     '<td>' + machinePercent(item.qualityPercent) + '</td>' +
@@ -1121,7 +1122,7 @@ function analyticsPage() {
       '<article><span>PERFORMANCE</span><strong>' + machinePercent(machineOee.totals.rawPerformancePercent) + '</strong><small>Actual output / ideal output</small></article>' +
       '<article><span>QUALITY</span><strong>' + machinePercent(machineOee.totals.qualityPercent) + '</strong><small>Good units / produced units</small></article></div>' +
       '<div class="machine-oee-definition subtle">OEE uses ' + formatHours(machineOee.totals.eligiblePlannedHours) + ' of planned time for machines with an ideal rate. Logged downtime intervals are merged and capped to each machine’s scheduled hours for that day. Performance above 100% is capped in OEE and flagged for rate review.</div>' +
-      '<div class="table-scroll"><table class="data-table"><thead><tr><th>MACHINE / BOTTLENECK SIGNALS</th><th>OEE</th><th>AVAILABILITY</th><th>PERFORMANCE</th><th>QUALITY</th><th>CAPACITY UTILIZATION</th><th>DOWNTIME</th><th>PRODUCED</th></tr></thead><tbody>' + machineOeeRows + '</tbody></table></div>' +
+      '<div class="table-scroll"><table class="data-table"><thead><tr><th>MACHINE / BOTTLENECK SIGNALS</th><th>OEE</th><th>IDEAL RATE</th><th>AVAILABILITY</th><th>PERFORMANCE</th><th>QUALITY</th><th>CAPACITY UTILIZATION</th><th>DOWNTIME</th><th>PRODUCED</th></tr></thead><tbody>' + machineOeeRows + '</tbody></table></div>' +
       '<div class="machine-oee-subgrid"><section><div class="toolbar"><strong>Daily machine effectiveness</strong></div>' +
         (machineTrendRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>DATE</th><th>PLANNED</th><th>DOWNTIME</th><th>RUN</th><th>PRODUCED</th><th>OEE</th></tr></thead><tbody>' + machineTrendRows + '</tbody></table></div>' : '<div class="empty-state">No scheduled machine days in this date range.</div>') +
       '</section><section><div class="toolbar"><strong>Bottleneck watchlist</strong><span class="subtle">' + machineOee.bottlenecks.length + ' machine(s) with signals</span></div>' +
