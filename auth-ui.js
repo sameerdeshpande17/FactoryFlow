@@ -226,6 +226,7 @@
       jobs: 'jobs.view',
       purchases: 'purchases.view',
       materials: 'materials.view',
+      forecast: 'materials.view',
       planning: 'planning.view',
       schedule: 'schedule.view',
       execution: 'execution.view',

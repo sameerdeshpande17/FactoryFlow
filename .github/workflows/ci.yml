@@ -11,6 +11,7 @@ on:
       - feat/production-analytics-performance
       - feat/auth-rbac-user-management
       - feat/multi-facility-workspaces
+      - feat/inventory-forecasting-procurement-automation
   pull_request:
     branches:
       - main
