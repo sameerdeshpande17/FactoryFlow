@@ -79,7 +79,7 @@
       throw new Error('Daily machine capacity must be between 0.25 and 24 hours.');
     }
     if (typeof active !== 'boolean') throw new Error('Machine status must be active or inactive.');
-    if (!Number.isFinite(idealUnitsPerHour) || idealUnitsPerHour < 0 || idealUnitsPerHour > 1000000) {
+    if (!Number.isFinite(idealUnitsPerHour) || idealUnitsPerHour < 0 || (idealUnitsPerHour > 0 && idealUnitsPerHour < 0.01) || idealUnitsPerHour > 1000000) {
       throw new Error('Ideal output rate must be zero (not configured) or between 0.01 and 1,000,000 units per hour.');
     }
     if (list(machines).some((machine) => machine.id !== (current && current.id) && String(machine.code || '').toUpperCase() === code)) {
