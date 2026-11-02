@@ -81,7 +81,6 @@
     const schedules = Array.isArray(input.schedules) ? input.schedules : [];
     const productionLogs = Array.isArray(input.productionLogs) ? input.productionLogs : [];
     const downtimeLogs = Array.isArray(input.downtimeLogs) ? input.downtimeLogs : [];
-    const machines = Array.isArray(input.machines) ? input.machines : [];
     const fromDate = input.fromDate || '';
     const toDate = input.toDate || '';
     if ((fromDate && !validDate(fromDate)) || (toDate && !validDate(toDate))) {
@@ -332,9 +331,10 @@
       bottlenecks: machineRows.filter((item) => item.bottleneck),
       notes: [
         'OEE requires scheduled machine sessions, recorded good/produced quantities, and an ideal units-per-hour rate for each included machine.',
-        'Availability uses scheduled machine-hours. Recorded downtime intervals are merged to avoid double-counting and capped at scheduled hours per machine-day.',
+        'Availability uses scheduled machine-hours. Downtime intervals are merged to avoid double-counting and capped per machine-day; sessions do not store exact shift times, so downtime is not aligned to individual shifts.',
         'Performance above 100% is capped at 100% for the OEE product and separately flagged as an ideal-rate calibration issue.',
-        'Capacity utilization is measured against daily capacity on days with scheduled work; it is not an assumed 24/7 calendar.'
+        'Capacity utilization is measured against daily capacity on days with scheduled work; it is not an assumed 24/7 calendar.',
+        'Bottleneck watchlist signals use review thresholds: capacity utilization at least 85%, availability below 80%, performance below 85%, or good-unit yield below 98%.'
       ]
     };
   }
@@ -346,6 +346,7 @@
     const schedules = Array.isArray(input.schedules) ? input.schedules : [];
     const jobs = Array.isArray(input.jobs) ? input.jobs : [];
     const downtimeLogs = Array.isArray(input.downtimeLogs) ? input.downtimeLogs : [];
+    const machines = Array.isArray(input.machines) ? input.machines : [];
     const fromDate = input.fromDate || '';
     const toDate = input.toDate || '';
     const groupBy = ['day', 'week', 'month'].includes(input.groupBy) ? input.groupBy : 'day';
