@@ -1118,7 +1118,7 @@ function analyticsPage() {
     (machineOee.machineCount ? '<div class="machine-oee-kpis">' +
       '<article><span>OVERALL OEE</span><strong>' + machinePercent(machineOee.totals.oeePercent) + '</strong><small>Rated machines only</small></article>' +
       '<article><span>AVAILABILITY</span><strong>' + machinePercent(machineOee.totals.availabilityPercent) + '</strong><small>Run hours / planned hours</small></article>' +
-      '<article><span>PERFORMANCE</span><strong>' + machinePercent(machineOee.totals.performancePercent) + '</strong><small>Actual output / ideal output</small></article>' +
+      '<article><span>PERFORMANCE</span><strong>' + machinePercent(machineOee.totals.rawPerformancePercent) + '</strong><small>Actual output / ideal output</small></article>' +
       '<article><span>QUALITY</span><strong>' + machinePercent(machineOee.totals.qualityPercent) + '</strong><small>Good units / produced units</small></article></div>' +
       '<div class="machine-oee-definition subtle">OEE uses ' + formatHours(machineOee.totals.eligiblePlannedHours) + ' of planned time for machines with an ideal rate. Logged downtime intervals are merged and capped to each machine’s scheduled hours for that day. Performance above 100% is capped in OEE and flagged for rate review.</div>' +
       '<div class="table-scroll"><table class="data-table"><thead><tr><th>MACHINE / BOTTLENECK SIGNALS</th><th>OEE</th><th>AVAILABILITY</th><th>PERFORMANCE</th><th>QUALITY</th><th>CAPACITY UTILIZATION</th><th>DOWNTIME</th><th>PRODUCED</th></tr></thead><tbody>' + machineOeeRows + '</tbody></table></div>' +
