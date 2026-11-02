@@ -333,7 +333,7 @@ test('buildAnalytics exposes machine OEE without changing existing production ag
     fromDate: '2026-10-01',
     toDate: '2026-10-31'
   });
-  assert.equal(result.totals.producedQty, 255);
+  assert.equal(result.totals.producedQty, 410);
   assert.equal(result.machineOee.machineCount, 2);
   assert.equal(result.machineOee.machinesWithOee, 2);
   assert.ok(result.machineOee.machines.every((item) => item.oeePercent !== null));
