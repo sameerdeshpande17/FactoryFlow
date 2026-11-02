@@ -45,6 +45,7 @@ const productionLogs = JSON.parse(localStorage.getItem('ff-production-logs') || 
 const qcInspections = JSON.parse(localStorage.getItem('ff-qc-inspections') || 'null') || [];
 const reworkLogs = JSON.parse(localStorage.getItem('ff-rework-logs') || 'null') || [];
 const downtimeLogs = JSON.parse(localStorage.getItem('ff-downtime-logs') || 'null') || [];
+const machines = JSON.parse(localStorage.getItem('ff-machines') || 'null') || [];
 const analyticsFilters = JSON.parse(localStorage.getItem('ff-analytics-filters') || 'null') || { fromDate: '', toDate: '', groupBy: 'day' };
 
 const materials = [
@@ -74,7 +75,7 @@ const titles = {
   dashboard: ['JOB-WORK OS', 'Overview'], quotes: ['SALES', 'Quotes'], jobs: ['JOB CONTROL', 'Jobs'],
   purchases: ['PURCHASING', 'Purchase orders'], materials: ['RAW MATERIAL', 'Materials'],
   workers: ['PARTNERS', 'Job workers'], invoices: ['FINANCE', 'GST invoices'],
-  marketplace: ['B2B NETWORK', 'Marketplace'], facilities: ['ORGANIZATION', 'Factory facilities'], forecast: ['INVENTORY INTELLIGENCE', 'Demand forecast & reorder'], users: ['ADMINISTRATION', 'User management'], planning: ['PRODUCTION', 'Material planning'], schedule: ['PRODUCTION', 'Production schedule'], execution: ['PRODUCTION', 'Production execution & QC'], analytics: ['MANAGEMENT', 'Production analytics'], costing: ['FINANCE', 'Job costing'], settings: ['WORKSPACE', 'Settings']
+  marketplace: ['B2B NETWORK', 'Marketplace'], facilities: ['ORGANIZATION', 'Factory facilities'], forecast: ['INVENTORY INTELLIGENCE', 'Demand forecast & reorder'], users: ['ADMINISTRATION', 'User management'], machines: ['EQUIPMENT', 'Machines & equipment'], planning: ['PRODUCTION', 'Material planning'], schedule: ['PRODUCTION', 'Production schedule'], execution: ['PRODUCTION', 'Production execution & QC'], analytics: ['MANAGEMENT', 'Production analytics'], costing: ['FINANCE', 'Job costing'], settings: ['WORKSPACE', 'Settings']
 };
 
 function save(shouldSync = true) {
@@ -96,6 +97,7 @@ function save(shouldSync = true) {
   localStorage.setItem('ff-qc-inspections', JSON.stringify(qcInspections));
   localStorage.setItem('ff-rework-logs', JSON.stringify(reworkLogs));
   localStorage.setItem('ff-downtime-logs', JSON.stringify(downtimeLogs));
+  localStorage.setItem('ff-machines', JSON.stringify(machines));
   localStorage.setItem('ff-analytics-filters', JSON.stringify(analyticsFilters));
   localStorage.setItem('ff-language', app.language);
   ui('#quoteBadge').textContent = quotes.filter((quote) => quote.status === 'Follow up').length || '0';
@@ -117,7 +119,7 @@ async function syncWorkspace() {
   try {
     await window.FactoryFlowAuth.request('/api/sync', {
       method: 'POST',
-      body: JSON.stringify({ quotes, jobs, purchases, materials, deliveries, receipts, movements, requirements, workers, schedules, productionLogs, qcInspections, reworkLogs, downtimeLogs })
+      body: JSON.stringify({ quotes, jobs, purchases, materials, deliveries, receipts, movements, requirements, workers, schedules, productionLogs, qcInspections, reworkLogs, downtimeLogs, machines })
     });
     setDataStatus('Synced', 'online');
   } catch {
@@ -171,6 +173,7 @@ async function hydrateWorkspace() {
     replace(qcInspections, 'qcInspections');
     replace(reworkLogs, 'reworkLogs');
     replace(downtimeLogs, 'downtimeLogs');
+    replace(machines, 'machines');
     window.FactoryFlowInventory.ensureStockMetadata(materials);
     inventoryForecast = null;
     scheduleOptimization = null;
@@ -1450,6 +1453,139 @@ function workersPage() {
     (recentSessions.length ? '<div class="schedule-list">' + recentSessions + '</div>' : '<div class="empty-state"><h2>No scheduled sessions</h2><p>Schedule a job to start tracking worker capacity.</p></div>') + '</section>';
 }
 
+
+function machinesPage() {
+  const canManage = window.FactoryFlowAuth.has('machines.manage');
+  const today = localDateISO();
+  const active = machines.filter((machine) => machine.active !== false);
+  const capacity = active.reduce((sum, machine) => sum + (Number(machine.capacityHoursPerDay) || 0), 0);
+  const unavailableToday = active.filter((machine) => !window.FactoryFlowMachines.isAvailableOn(machine, today)).length;
+  const futureWindows = machines.flatMap((machine) => (machine.maintenanceWindows || [])
+    .filter((window) => window.endDate >= today)
+    .map((window) => ({ ...window, machineName: machine.name, machineId: machine.id })))
+    .sort((a, b) => a.startDate.localeCompare(b.startDate));
+  const rows = machines.map((machine) => {
+    const available = window.FactoryFlowMachines.isAvailableOn(machine, today);
+    const skills = (machine.supportedSkills || []).join(', ') || 'General purpose';
+    const upcoming = (machine.maintenanceWindows || []).filter((item) => item.endDate >= today).length;
+    return '<tr><td><strong>' + safe(machine.name) + '</strong><div class="subtle">' + safe(machine.code) + '</div></td>' +
+      '<td>' + safe(machine.type || '—') + '<div class="subtle">' + safe(machine.location || 'Location not set') + '</div></td>' +
+      '<td>' + safe(skills) + '</td><td>' + Number(machine.capacityHoursPerDay).toFixed(1) + ' hrs/day</td>' +
+      '<td>' + status(machine.active === false ? 'Inactive' : available ? 'Available today' : 'Maintenance') + '<div class="subtle">' + upcoming + ' upcoming window(s)</div></td>' +
+      '<td><div class="machine-actions">' + (canManage ? '<button class="table-button" data-edit-machine="' + safe(machine.id) + '">Edit</button><button class="table-button" data-add-maintenance="' + safe(machine.id) + '">Maintenance</button>' : '—') + '</div></td></tr>';
+  }).join('');
+  const maintenanceRows = futureWindows.map((item) =>
+    '<tr><td><strong>' + safe(item.machineName) + '</strong><div class="subtle">' + safe(item.id) + '</div></td><td>' + safe(item.startDate) + ' → ' + safe(item.endDate) + '</td><td>' + safe(item.reason) + (item.notes ? '<div class="subtle">' + safe(item.notes) + '</div>' : '') + '</td><td>' +
+    (canManage ? '<button class="table-button" data-machine-id="' + safe(item.machineId) + '" data-remove-maintenance="' + safe(item.id) + '">Remove</button>' : '—') + '</td></tr>'
+  ).join('');
+  return head('EQUIPMENT', 'Machines & equipment', 'Register production equipment, set operating capacity, maintain operation compatibility, and block maintenance dates from future plans.',
+      canManage ? '<button class="primary-button" data-add-machine>＋ Add machine</button>' : '') +
+    '<div class="inventory-grid"><article class="inventory-stat"><span>REGISTERED MACHINES</span><strong>' + machines.length + '</strong><small>Across the selected facility</small></article>' +
+    '<article class="inventory-stat"><span>ACTIVE EQUIPMENT</span><strong>' + active.length + '</strong><small>Eligible for new assignments</small></article>' +
+    '<article class="inventory-stat"><span>DAILY MACHINE CAPACITY</span><strong>' + capacity.toFixed(1) + '</strong><small>Available machine-hours per operating day</small></article>' +
+    '<article class="inventory-stat"><span>NOT AVAILABLE TODAY</span><strong>' + (machines.length - active.filter((machine) => window.FactoryFlowMachines.isAvailableOn(machine, today)).length) + '</strong><small>' + unavailableToday + ' active machine(s) in maintenance</small></article></div>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Equipment register</strong><span class="subtle">' + machines.length + ' machine(s)</span></div>' +
+    (rows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>MACHINE</th><th>TYPE / LOCATION</th><th>SUPPORTED OPERATIONS</th><th>CAPACITY</th><th>STATUS</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>' :
+      '<div class="empty-state"><h2>No machines registered</h2><p>Add machines to enable machine-aware production planning, capacity checks and maintenance scheduling.</p>' + (canManage ? '<button class="primary-button" data-add-machine>＋ Register first machine</button>' : '') + '</div>') + '</section>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Planned maintenance</strong><span class="subtle">' + futureWindows.length + ' upcoming window(s)</span></div>' +
+    (maintenanceRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>MACHINE</th><th>WINDOW</th><th>REASON / NOTES</th><th></th></tr></thead><tbody>' + maintenanceRows + '</tbody></table></div>' :
+      '<div class="empty-state"><p>No upcoming maintenance windows are recorded.</p></div>') + '</section>';
+}
+
+function editMachine(machineId) {
+  if (!window.FactoryFlowAuth.has('machines.manage')) return;
+  const machine = machineId ? machines.find((item) => item.id === machineId) : null;
+  if (machineId && !machine) return notify('Machine not found in this facility.');
+  const skills = machine ? (machine.supportedSkills || []).join(', ') : '';
+  openModal('<h2 id="modalTitle">' + (machine ? 'Edit machine' : 'Register machine') + '</h2>' +
+    '<form id="machineForm" class="form-grid"><div class="form-row"><label>Machine code<input required name="code" maxlength="20" value="' + safe(machine ? machine.code : '') + '" placeholder="e.g. PRESS-01"></label>' +
+    '<label>Machine name<input required name="name" maxlength="100" value="' + safe(machine ? machine.name : '') + '" placeholder="e.g. Flexo Press 01"></label></div>' +
+    '<div class="form-row"><label>Equipment type<input name="type" maxlength="80" value="' + safe(machine ? machine.type || '' : '') + '" placeholder="e.g. Flexographic printer"></label>' +
+    '<label>Location<input name="location" maxlength="100" value="' + safe(machine ? machine.location || '' : '') + '" placeholder="e.g. Shop floor A"></label></div>' +
+    '<label>Daily operating capacity (hours)<input required type="number" name="capacityHoursPerDay" min="0.25" max="24" step="0.25" value="' + (machine ? Number(machine.capacityHoursPerDay) : 8) + '"></label>' +
+    '<label>Supported operations / skills<input name="supportedSkills" maxlength="500" value="' + safe(skills) + '" placeholder="Printing, lamination, cutting"></label>' +
+    '<small class="subtle">Leave supported operations blank for a general-purpose machine. Use comma-separated names that match a job’s required skill.</small>' +
+    (machine ? '<label class="facility-inline-check"><input type="checkbox" name="active"' + (machine.active !== false ? ' checked' : '') + '> Machine active and eligible for new work</label>' : '') +
+    '<p id="machineError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save machine</button></div></form>');
+  ui('#machineForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const payload = {
+      code: data.get('code'), name: data.get('name'), type: data.get('type'),
+      location: data.get('location'), capacityHoursPerDay: Number(data.get('capacityHoursPerDay')),
+      supportedSkills: data.get('supportedSkills').split(',').map((value) => value.trim()).filter(Boolean)
+    };
+    if (machine) payload.active = ui('#machineForm [name="active"]').checked;
+    try {
+      const result = await window.FactoryFlowAuth.request(machine ? '/api/machines/' + encodeURIComponent(machine.id) : '/api/machines', {
+        method: machine ? 'PATCH' : 'POST',
+        body: JSON.stringify(payload)
+      });
+      const index = machines.findIndex((item) => item.id === result.machine.id);
+      if (index < 0) machines.push(result.machine);
+      else machines[index] = result.machine;
+      save(false);
+      closeModal();
+      render();
+      notify(result.machine.name + ' saved.');
+    } catch (error) {
+      const node = ui('#machineError');
+      node.textContent = error.message;
+      node.hidden = false;
+    }
+  });
+}
+
+function addMachineMaintenance(machineId) {
+  if (!window.FactoryFlowAuth.has('machines.manage')) return;
+  const machine = machines.find((item) => item.id === machineId);
+  if (!machine) return notify('Machine not found in this facility.');
+  const today = localDateISO();
+  openModal('<h2 id="modalTitle">Plan maintenance · ' + safe(machine.name) + '</h2>' +
+    '<p>All optimizer proposals for this machine will avoid the selected date range, including both start and end dates.</p>' +
+    '<form id="machineMaintenanceForm" class="form-grid"><div class="form-row"><label>Start date<input required type="date" name="startDate" value="' + today + '"></label>' +
+    '<label>End date<input required type="date" name="endDate" value="' + today + '"></label></div>' +
+    '<label>Maintenance reason<input required maxlength="120" name="reason" placeholder="e.g. Preventive maintenance"></label>' +
+    '<label>Notes<input maxlength="500" name="notes" placeholder="Service ticket, parts, technician"></label>' +
+    '<p id="maintenanceError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save maintenance window</button></div></form>');
+  ui('#machineMaintenanceForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    try {
+      const result = await window.FactoryFlowAuth.request('/api/machines/' + encodeURIComponent(machine.id) + '/maintenance', {
+        method: 'POST',
+        body: JSON.stringify({ startDate: data.get('startDate'), endDate: data.get('endDate'), reason: data.get('reason'), notes: data.get('notes') })
+      });
+      const index = machines.findIndex((item) => item.id === result.machine.id);
+      if (index >= 0) machines[index] = result.machine;
+      save(false);
+      closeModal();
+      render();
+      notify('Maintenance window saved for ' + machine.name + '.');
+    } catch (error) {
+      const node = ui('#maintenanceError');
+      node.textContent = error.message;
+      node.hidden = false;
+    }
+  });
+}
+
+async function removeMachineMaintenance(machineId, windowId) {
+  if (!window.FactoryFlowAuth.has('machines.manage')) return;
+  const machine = machines.find((item) => item.id === machineId);
+  if (!machine) return notify('Machine not found in this facility.');
+  try {
+    const result = await window.FactoryFlowAuth.request('/api/machines/' + encodeURIComponent(machineId) + '/maintenance/' + encodeURIComponent(windowId), { method: 'DELETE' });
+    const index = machines.findIndex((item) => item.id === result.machine.id);
+    if (index >= 0) machines[index] = result.machine;
+    save(false);
+    render();
+    notify('Maintenance window removed.');
+  } catch (error) {
+    notify(error.message);
+  }
+}
+
 function invoicesPage() {
   const invoices = invoiceRecords;
   const rows = invoices.map((invoice) => '<tr><td class="order-code">' + invoice.id + '<div class="subtle">GST 18%</div></td><td><div class="item-name">' + invoice.customer + '</div><div class="subtle">' + invoice.job + '</div></td><td>' + currency(invoice.amount) + '</td><td>' + invoice.due + '</td><td>' + status(invoice.status) + '</td><td>' + (invoice.status === 'Paid' ? '<span class="subtle">Received</span>' : '<button class="table-button" data-reminder="' + invoice.id + '">WhatsApp reminder</button>') + '</td></tr>').join('');
@@ -1467,13 +1603,13 @@ function settingsPage() {
 }
 
 function render() {
-  const permissions = { dashboard: 'dashboard.view', quotes: 'quotes.view', jobs: 'jobs.view', purchases: 'purchases.view', materials: 'materials.view', forecast: 'materials.view', workers: 'workers.view', invoices: 'invoices.view', marketplace: 'marketplace.view', facilities: 'facilities.view', planning: 'planning.view', schedule: 'schedule.view', execution: 'execution.view', analytics: 'analytics.view', costing: 'costing.view', settings: 'settings.view', users: 'users.manage' };
+  const permissions = { dashboard: 'dashboard.view', quotes: 'quotes.view', jobs: 'jobs.view', purchases: 'purchases.view', materials: 'materials.view', forecast: 'materials.view', workers: 'workers.view', invoices: 'invoices.view', marketplace: 'marketplace.view', facilities: 'facilities.view', planning: 'planning.view', schedule: 'schedule.view', execution: 'execution.view', analytics: 'analytics.view', costing: 'costing.view', settings: 'settings.view', users: 'users.manage', machines: 'machines.view' };
   if (!window.FactoryFlowAuth.has(permissions[app.view])) app.view = 'dashboard';
   const label = titles[app.view];
   ui('#pageKicker').textContent = label[0];
   ui('#pageTitle').textContent = label[1];
   all('.nav-link[data-view]').forEach((button) => button.classList.toggle('active', button.dataset.view === app.view));
-  const pages = { dashboard: window.FactoryFlowAuth.state.user.role === 'worker' ? workerDashboard : window.FactoryFlowAuth.state.user.role === 'supervisor' ? supervisorDashboard : dashboard, quotes: quotesPage, jobs: jobsPage, purchases: purchasesPage, materials: materialsPage, forecast: forecastPage, workers: workersPage, invoices: invoicesPage, marketplace: marketplacePage, facilities: facilitiesPage, planning: planningPage, schedule: schedulePage, execution: executionPage, analytics: analyticsPage, costing: costingPage, settings: settingsPage, users: usersPage };
+  const pages = { dashboard: window.FactoryFlowAuth.state.user.role === 'worker' ? workerDashboard : window.FactoryFlowAuth.state.user.role === 'supervisor' ? supervisorDashboard : dashboard, quotes: quotesPage, jobs: jobsPage, purchases: purchasesPage, materials: materialsPage, forecast: forecastPage, workers: workersPage, invoices: invoicesPage, marketplace: marketplacePage, facilities: facilitiesPage, planning: planningPage, schedule: schedulePage, execution: executionPage, analytics: analyticsPage, costing: costingPage, settings: settingsPage, users: usersPage, machines: machinesPage };
   ui('#view').innerHTML = pages[app.view]();
   bind();
 }
@@ -1987,6 +2123,10 @@ function bind() {
     render();
   });
   all('[data-add-facility]').forEach((button) => button.addEventListener('click', addFacility));
+  all('[data-add-machine]').forEach((button) => button.addEventListener('click', () => editMachine()));
+  all('[data-edit-machine]').forEach((button) => button.addEventListener('click', () => editMachine(button.dataset.editMachine)));
+  all('[data-add-maintenance]').forEach((button) => button.addEventListener('click', () => addMachineMaintenance(button.dataset.addMaintenance)));
+  all('[data-remove-maintenance]').forEach((button) => button.addEventListener('click', () => removeMachineMaintenance(button.dataset.machineId, button.dataset.removeMaintenance)));
   all('[data-edit-facility]').forEach((button) => button.addEventListener('click', () => manageFacility(button.dataset.editFacility)));
   all('[data-use-facility]').forEach((button) => button.addEventListener('click', () => switchActiveFacility(button.dataset.useFacility)));
   all('[data-add-user]').forEach((button) => button.addEventListener('click', addWorkspaceUser));
@@ -2046,7 +2186,7 @@ async function startFactoryFlowApplication() {
       purchases: 'purchases.view', materials: 'materials.view', forecast: 'materials.view', workers: 'workers.view',
       invoices: 'invoices.view', marketplace: 'marketplace.view', facilities: 'facilities.view', planning: 'planning.view',
       schedule: 'schedule.view', execution: 'execution.view', analytics: 'analytics.view',
-      costing: 'costing.view', settings: 'settings.view', users: 'users.manage'
+      costing: 'costing.view', settings: 'settings.view', users: 'users.manage', machines: 'machines.view'
     };
     all('.nav-link[data-view]').forEach((button) => button.addEventListener('click', () => {
       if (window.FactoryFlowAuth.has(pagePermissions[button.dataset.view])) goto(button.dataset.view);
