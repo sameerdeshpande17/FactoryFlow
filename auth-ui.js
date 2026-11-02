@@ -221,6 +221,7 @@
   function applyNavigation() {
     const viewPermissions = {
       facilities: 'facilities.view',
+      machines: 'machines.view',
       dashboard: 'dashboard.view',
       quotes: 'quotes.view',
       jobs: 'jobs.view',
