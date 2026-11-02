@@ -211,3 +211,145 @@ test('returns null rates instead of dividing by zero for an empty dataset', () =
   assert.equal(result.onTimeDelivery.onTimePercent, null);
   assert.deepEqual(result.productionTrend, []);
 });
+
+test('calculates machine OEE from scheduled time, merged downtime, ideal throughput and good yield', () => {
+  const result = analytics.buildMachineOee({
+    machines: [
+      { id: 'MCH-101', code: 'PRESS-A', name: 'Press A', capacityHoursPerDay: 8, idealUnitsPerHour: 100, active: true, maintenanceWindows: [] },
+      { id: 'MCH-102', code: 'CUT-B', name: 'Cutter B', capacityHoursPerDay: 8, idealUnitsPerHour: 0, active: true, maintenanceWindows: [] }
+    ],
+    schedules: [
+      { id: 'SC-1', machineId: 'MCH-101', date: '2026-11-02', hours: 8 },
+      { id: 'SC-2', machineId: 'MCH-101', date: '2026-11-03', hours: 8 },
+      { id: 'SC-3', machineId: 'MCH-102', date: '2026-11-02', hours: 4 }
+    ],
+    productionLogs: [
+      { id: 'PR-1', scheduleId: 'SC-1', productionDate: '2026-11-02', producedQty: 500, goodQty: 475 },
+      { id: 'PR-2', scheduleId: 'SC-2', productionDate: '2026-11-03', producedQty: 660, goodQty: 627 }
+    ],
+    downtimeLogs: [
+      { id: 'DT-1', machineId: 'MCH-101', startAt: '2026-11-02T10:00', endAt: '2026-11-02T11:00' },
+      { id: 'DT-2', machineId: 'MCH-101', startAt: '2026-11-02T10:30', endAt: '2026-11-02T11:30' }
+    ],
+    fromDate: '2026-11-02',
+    toDate: '2026-11-03'
+  });
+  const press = result.machines.find((item) => item.machineId === 'MCH-101');
+  const cutter = result.machines.find((item) => item.machineId === 'MCH-102');
+  assert.equal(press.plannedHours, 16);
+  assert.equal(press.recordedDowntimeHours, 1.5);
+  assert.equal(press.effectiveDowntimeHours, 1.5);
+  assert.equal(press.runHours, 14.5);
+  assert.equal(press.producedQty, 1160);
+  assert.equal(press.goodQty, 1102);
+  assert.equal(press.availabilityPercent, 90.63);
+  assert.equal(press.rawPerformancePercent, 80);
+  assert.equal(press.qualityPercent, 95);
+  assert.equal(press.oeePercent, 68.88);
+  assert.equal(press.capacityUtilizationPercent, 100);
+  assert.equal(press.bottleneck, true);
+  assert.equal(cutter.oeePercent, null);
+  assert.equal(result.machineCount, 2);
+  assert.equal(result.machinesWithOee, 1);
+  assert.equal(result.totals.oeePercent, press.oeePercent);
+  assert.ok(result.dailyTrend.length === 2);
+});
+
+test('does not count overlapping downtime twice and caps lost time at scheduled hours per day', () => {
+  const result = analytics.buildMachineOee({
+    machines: [{ id: 'MCH-1', name: 'Press', capacityHoursPerDay: 8, idealUnitsPerHour: 60, maintenanceWindows: [] }],
+    schedules: [{ id: 'SC-1', machineId: 'MCH-1', date: '2026-11-02', hours: 2 }],
+    productionLogs: [{ id: 'PR-1', scheduleId: 'SC-1', productionDate: '2026-11-02', producedQty: 20, goodQty: 18 }],
+    downtimeLogs: [
+      { id: 'DT-1', machineId: 'MCH-1', startAt: '2026-11-02T08:00', endAt: '2026-11-02T10:00' },
+      { id: 'DT-2', machineId: 'MCH-1', startAt: '2026-11-02T09:00', endAt: '2026-11-02T12:00' }
+    ],
+    fromDate: '2026-11-02',
+    toDate: '2026-11-02'
+  });
+  assert.equal(result.machines[0].recordedDowntimeHours, 4);
+  assert.equal(result.machines[0].effectiveDowntimeHours, 2);
+  assert.equal(result.machines[0].runHours, 0);
+  assert.equal(result.machines[0].availabilityPercent, 0);
+  assert.equal(result.machines[0].oeePercent, null);
+});
+
+test('excludes sessions inside planned maintenance from OEE planned time and flags the conflict', () => {
+  const result = analytics.buildMachineOee({
+    machines: [{
+      id: 'MCH-1', name: 'Press', capacityHoursPerDay: 8, idealUnitsPerHour: 50,
+      maintenanceWindows: [{ startDate: '2026-11-02', endDate: '2026-11-02', reason: 'Service' }]
+    }],
+    schedules: [{ id: 'SC-1', machineId: 'MCH-1', date: '2026-11-02', hours: 4 }],
+    productionLogs: [],
+    downtimeLogs: [],
+    fromDate: '2026-11-02',
+    toDate: '2026-11-02'
+  });
+  assert.equal(result.machines[0].plannedHours, 0);
+  assert.equal(result.machines[0].maintenanceConflictHours, 4);
+  assert.ok(result.machines[0].bottleneckSignals.includes('Sessions overlap planned maintenance'));
+});
+
+test('filters machine OEE to the requested date range and handles unlinked production safely', () => {
+  const result = analytics.buildMachineOee({
+    machines: [{ id: 'MCH-1', name: 'Press', capacityHoursPerDay: 8, idealUnitsPerHour: 10, maintenanceWindows: [] }],
+    schedules: [
+      { id: 'SC-OLD', machineId: 'MCH-1', date: '2026-11-01', hours: 8 },
+      { id: 'SC-IN', machineId: 'MCH-1', date: '2026-11-02', hours: 8 }
+    ],
+    productionLogs: [
+      { id: 'PR-OLD', scheduleId: 'SC-OLD', productionDate: '2026-11-01', producedQty: 100, goodQty: 100 },
+      { id: 'PR-IN', scheduleId: 'SC-IN', productionDate: '2026-11-02', producedQty: 80, goodQty: 72 },
+      { id: 'PR-UNLINKED', productionDate: '2026-11-02', producedQty: 999, goodQty: 999 }
+    ],
+    downtimeLogs: [],
+    fromDate: '2026-11-02',
+    toDate: '2026-11-02'
+  });
+  assert.equal(result.machines[0].plannedHours, 8);
+  assert.equal(result.machines[0].producedQty, 80);
+  assert.equal(result.machines[0].goodQty, 72);
+  assert.equal(result.machines[0].oeePercent, 90);
+});
+
+test('buildAnalytics exposes machine OEE without changing existing production aggregates', () => {
+  const data = fixture();
+  const result = analytics.buildAnalytics({
+    ...data,
+    machines: [{ id: 'MCH-1', name: 'Flexo 1', capacityHoursPerDay: 8, idealUnitsPerHour: 40, active: true, maintenanceWindows: [] },
+      { id: 'MCH-2', name: 'Laminator', capacityHoursPerDay: 8, idealUnitsPerHour: 30, active: true, maintenanceWindows: [] }],
+    schedules: [
+      ...data.schedules,
+      { id: 'SC-M1', machineId: 'MCH-1', jobId: 'JB-1', date: '2026-10-05', hours: 5 },
+      { id: 'SC-M2', machineId: 'MCH-2', jobId: 'JB-2', date: '2026-10-12', hours: 4 }
+    ],
+    productionLogs: [
+      ...data.productionLogs,
+      { id: 'PR-M1', scheduleId: 'SC-M1', productionDate: '2026-10-05', producedQty: 100, goodQty: 90, rejectedQty: 10 },
+      { id: 'PR-M2', scheduleId: 'SC-M2', productionDate: '2026-10-12', producedQty: 80, goodQty: 76, rejectedQty: 4 }
+    ],
+    downtimeLogs: data.downtimeLogs.map((item) => ({ ...item, machineId: item.machineName === 'Flexo 1' ? 'MCH-1' : 'MCH-2' })),
+    fromDate: '2026-10-01',
+    toDate: '2026-10-31'
+  });
+  assert.equal(result.totals.producedQty, 410);
+  assert.equal(result.machineOee.machineCount, 2);
+  assert.equal(result.machineOee.machinesWithOee, 2);
+  assert.ok(result.machineOee.machines.every((item) => item.oeePercent !== null));
+});
+
+test('caps OEE performance factor at 100% while exposing rates above ideal for calibration', () => {
+  const result = analytics.buildMachineOee({
+    machines: [{ id: 'MCH-1', name: 'Press', capacityHoursPerDay: 8, idealUnitsPerHour: 50, maintenanceWindows: [] }],
+    schedules: [{ id: 'SC-1', machineId: 'MCH-1', date: '2026-11-02', hours: 2 }],
+    productionLogs: [{ id: 'PR-1', scheduleId: 'SC-1', productionDate: '2026-11-02', producedQty: 120, goodQty: 120 }],
+    downtimeLogs: [],
+    fromDate: '2026-11-02',
+    toDate: '2026-11-02'
+  });
+  assert.equal(result.machines[0].rawPerformancePercent, 120);
+  assert.equal(result.machines[0].performancePercent, 100);
+  assert.equal(result.machines[0].performanceCapped, true);
+  assert.equal(result.machines[0].oeePercent, 100);
+});
