@@ -758,36 +758,57 @@ function executionPage() {
 
 function scheduleProduction(jobId) {
   const job = jobs.find((item) => item.id === jobId);
-  if (!job || ['Delivered', 'QC review', 'Cancelled'].includes(job.status)) {
-    notify('Only active jobs can be scheduled.');
-    return;
-  }
+  if (!job || ['Delivered', 'QC review', 'Cancelled'].includes(job.status)) return notify('Only active jobs can be scheduled.');
   const activeWorkers = workers.filter((worker) => worker.active !== false);
-  if (!activeWorkers.length) {
-    notify('Activate a worker before scheduling production.');
-    return;
-  }
+  if (!activeWorkers.length) return notify('Activate a worker before scheduling production.');
+  const activeMachines = machines.filter((machine) => machine.active !== false);
   const preferred = activeWorkers.find((worker) => worker.name === job.worker) || activeWorkers[0];
   const workerOptions = activeWorkers.map((worker) => '<option value="' + safe(worker.id) + '"' + (preferred.id === worker.id ? ' selected' : '') + '>' + safe(worker.name + ' · ' + worker.skill + ' · ' + worker.capacityHoursPerDay + ' hrs/day') + '</option>').join('');
+  const machineOptions = '<option value="">Choose a machine</option>' + activeMachines.map((machine) =>
+    '<option value="' + safe(machine.id) + '"' + (job.machineId === machine.id ? ' selected' : '') + '>' + safe(machine.code + ' · ' + machine.name + ' · ' + machine.capacityHoursPerDay + ' hrs/day') + '</option>'
+  ).join('');
   const today = localDateISO();
-  openModal('<h2 id="modalTitle">Schedule production · ' + safe(job.id) + '</h2><p>' + safe(job.customer + ' · ' + job.item) + '</p><form id="scheduleForm" class="form-grid"><label>Job worker<select required name="workerId">' + workerOptions + '</select></label><div class="form-row"><label>Production date<input required name="date" type="date" value="' + today + '"></label><label>Planned hours<input required name="hours" type="number" min="0.25" max="24" step="0.25" value="4"></label></div><label>Target completion date<input name="dueDate" type="date" value="' + safe(job.dueDate || '') + '"></label><label>Operation / notes<input name="note" placeholder="e.g. Printing shift, carton cutting"></label><p class="subtle">Daily worker capacity is checked before saving. Sessions that fall after a job deadline are allowed but flagged as deadline risks.</p><p id="scheduleError" class="form-error" hidden></p><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="primary-button" type="submit">Save production session</button></div></form>');
+  openModal('<h2 id="modalTitle">Schedule production · ' + safe(job.id) + '</h2><p>' + safe(job.customer + ' · ' + job.item) + '</p><form id="scheduleForm" class="form-grid"><label>Job worker<select required name="workerId">' + workerOptions + '</select></label>' +
+    (activeMachines.length ? '<label>Machine / equipment<select required name="machineId">' + machineOptions + '</select></label>' : '') +
+    '<div class="form-row"><label>Production date<input required name="date" type="date" value="' + today + '"></label><label>Planned hours<input required name="hours" type="number" min="0.25" max="24" step="0.25" value="4"></label></div><label>Target completion date<input name="dueDate" type="date" value="' + safe(job.dueDate || '') + '"></label><label>Operation / notes<input name="note" placeholder="e.g. Printing shift, carton cutting"></label><p class="subtle">Daily worker and machine capacity are checked before saving. Maintenance and machine downtime block new assignments.</p><p id="scheduleError" class="form-error" hidden></p><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="primary-button" type="submit">Save production session</button></div></form>');
   ui('#scheduleForm').addEventListener('submit', (event) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
     try {
+      const date = data.get('date');
+      const hours = Number(data.get('hours'));
+      const machineId = data.get('machineId') || '';
+      let selectedMachine = null;
+      if (activeMachines.length) {
+        selectedMachine = activeMachines.find((machine) => machine.id === machineId);
+        if (!selectedMachine) throw new Error('Choose an active machine for this production session.');
+        if (!window.FactoryFlowMachines.isAvailableOn(selectedMachine, date)) {
+          throw new Error(selectedMachine.name + ' is inactive or under maintenance on ' + date + '.');
+        }
+        const nameKey = String(selectedMachine.name || '').trim().toLocaleLowerCase();
+        const down = downtimeLogs.some((record) => {
+          const matches = record.machineId ? record.machineId === selectedMachine.id : String(record.machineName || '').trim().toLocaleLowerCase() === nameKey;
+          return matches && String(record.startAt || '').slice(0, 10) <= date && String(record.endAt || '').slice(0, 10) >= date;
+        });
+        if (down) throw new Error(selectedMachine.name + ' has a recorded downtime window on ' + date + '.');
+        const used = schedules.filter((session) => session.machineId === selectedMachine.id && session.date === date)
+          .reduce((sum, session) => sum + (Number(session.hours) || 0), 0);
+        if (used + hours > Number(selectedMachine.capacityHoursPerDay) + 1e-9) {
+          throw new Error(selectedMachine.name + ' would exceed its daily capacity (' + used.toFixed(1) + ' / ' + selectedMachine.capacityHoursPerDay + ' hrs already assigned).');
+        }
+      }
       const result = window.FactoryFlowScheduling.scheduleSession(schedules, jobs, workers, {
-        jobId: job.id,
-        workerId: data.get('workerId'),
-        date: data.get('date'),
-        hours: Number(data.get('hours')),
-        dueDate: data.get('dueDate'),
-        note: data.get('note')
+        jobId: job.id, workerId: data.get('workerId'), date, hours,
+        dueDate: data.get('dueDate'), note: data.get('note')
       });
-      if (job.dueDate) job.due = new Date(job.dueDate + 'T00:00:00').toLocaleDateString('en-IN');
+      if (selectedMachine) {
+        result.session.machineId = selectedMachine.id;
+        result.session.machineName = selectedMachine.name;
+      }
       save();
       closeModal();
       goto('schedule');
-      notify(result.session.id + ' scheduled with ' + result.worker.name + '. ' + result.remainingCapacity.toFixed(1) + ' worker hours remain for that day.');
+      notify(result.session.id + ' scheduled with ' + result.worker.name + (selectedMachine ? ' on ' + selectedMachine.name : '') + '. ' + result.remainingCapacity.toFixed(1) + ' worker hours remain for that day.');
     } catch (error) {
       const element = ui('#scheduleError');
       element.textContent = error.message;
@@ -922,8 +943,9 @@ function configureJobSchedule(jobId) {
   openModal('<h2 id="modalTitle">Scheduling inputs · ' + safe(job.id) + '</h2><p>' + safe(job.customer + ' · ' + job.item) + '</p><form id="jobSchedulingForm" class="form-grid">' +
     '<label>Estimated total production hours<input required name="estimatedHours" type="number" min="0.25" max="100000" step="0.25" value="' + (Number(job.estimatedHours) > 0 ? Number(job.estimatedHours) : '') + '" placeholder="e.g. 24"></label>' +
     '<div class="form-row"><label>Job priority<select name="priority">' + ['Low', 'Normal', 'High', 'Urgent'].map((value) => '<option value="' + value + '"' + ((job.priority || 'Normal') === value ? ' selected' : '') + '>' + value + '</option>').join('') + '</select></label><label>Required operation / skill<input name="requiredSkill" maxlength="100" value="' + safe(job.requiredSkill || '') + '" placeholder="e.g. Printing"></label></div>' +
+    '<label>Preferred machine (optional)<select name="machineId"><option value="">Any compatible machine</option>' + machines.filter((machine) => machine.active !== false).map((machine) => '<option value="' + safe(machine.id) + '"' + (job.machineId === machine.id ? ' selected' : '') + '>' + safe(machine.code + ' · ' + machine.name) + '</option>').join('') + '</select></label>' +
     '<label>Target completion date<input name="dueDate" type="date" value="' + safe(dueDate) + '"></label>' +
-    '<p class="subtle">The estimate represents total production hours for this job. Recorded actual hours and already committed future sessions are subtracted by the optimizer. Required skill should match a worker profile’s skill.</p>' +
+    '<p class="subtle">The estimate represents total production hours. Actual hours and committed sessions are subtracted. With machines registered, the optimizer also checks supported operations, daily machine capacity, maintenance, downtime and any preferred machine.</p>' +
     '<p id="jobSchedulingError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save planning inputs</button></div></form>');
   ui('#jobSchedulingForm').addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -945,6 +967,7 @@ function configureJobSchedule(jobId) {
     job.estimatedHours = estimatedHours;
     job.priority = data.get('priority');
     job.requiredSkill = data.get('requiredSkill').trim();
+    job.machineId = data.get('machineId') || '';
     job.dueDate = due;
     if (due) job.due = new Date(due + 'T00:00:00').toLocaleDateString('en-IN');
     save(false);
@@ -965,7 +988,7 @@ function scheduleOptimizerPanel() {
     const plan = scheduleOptimization.plan;
     const summary = plan.summary;
     const proposalRows = plan.proposals.map((item) =>
-      '<tr><td>' + safe(item.date) + '</td><td class="order-code">' + safe(item.jobId) + '</td><td>' + safe(item.workerName) + '</td><td>' + Number(item.hours).toFixed(1) + ' hrs</td><td>' + safe(item.priority) + '</td></tr>'
+      '<tr><td>' + safe(item.date) + '</td><td class="order-code">' + safe(item.jobId) + '</td><td>' + safe(item.workerName) + '</td><td>' + safe(item.machineName || '—') + '</td><td>' + Number(item.hours).toFixed(1) + ' hrs</td><td>' + safe(item.priority) + '</td></tr>'
     ).join('');
     const jobRows = plan.jobPlans.map((item) => {
       const estimateAction = item.status === 'Needs estimate' && canApply
@@ -981,9 +1004,11 @@ function scheduleOptimizerPanel() {
       '<article class="inventory-stat"><span>PROPOSED SESSIONS</span><strong>' + summary.proposedSessionCount + '</strong><small>' + Number(summary.scheduledHours).toFixed(1) + ' worker hours</small></article>' +
       '<article class="inventory-stat"><span>FULLY SCHEDULED JOBS</span><strong>' + summary.scheduledJobCount + '</strong><small>' + summary.partialJobCount + ' partially scheduled</small></article>' +
       '<article class="inventory-stat"><span>UNSCHEDULED HOURS</span><strong>' + Number(summary.unscheduledHours).toFixed(1) + '</strong><small>' + summary.capacityGapCount + ' jobs with capacity gaps</small></article>' +
-      '<article class="inventory-stat"><span>DEADLINE RISKS</span><strong>' + summary.deadlineRiskCount + '</strong><small>' + (summary.onTimePercent === null ? 'No dated jobs to score' : summary.onTimePercent.toFixed(1) + '% dated jobs projected on time') + '</small></article></div>' +
+      '<article class="inventory-stat"><span>DEADLINE RISKS</span><strong>' + summary.deadlineRiskCount + '</strong><small>' + (summary.onTimePercent === null ? 'No dated jobs to score' : summary.onTimePercent.toFixed(1) + '% dated jobs projected on time') + '</small></article>' +
+      '<article class="inventory-stat"><span>MACHINES USED</span><strong>' + (summary.machinesUsed || 0) + '</strong><small>' + (summary.machineCapacityConflicts || 0) + ' machine-day capacity conflicts</small></article></div>' +
+      ((plan.dailyMachineLoads || []).some((item) => item.proposedHours > 0) ? '<section class="optimizer-result-block"><div class="toolbar"><strong>Machine capacity after proposals</strong><span class="subtle">Committed + proposed machine-hours</span></div><div class="table-scroll"><table class="data-table"><thead><tr><th>DATE</th><th>MACHINE</th><th>COMMITTED</th><th>PROPOSED</th><th>TOTAL / CAPACITY</th></tr></thead><tbody>' + plan.dailyMachineLoads.filter((item) => item.proposedHours > 0).map((item) => '<tr><td>' + safe(item.date) + '</td><td>' + safe(item.machineName) + '</td><td>' + Number(item.committedHours).toFixed(1) + ' hrs</td><td>' + Number(item.proposedHours).toFixed(1) + ' hrs</td><td>' + Number(item.totalHours).toFixed(1) + ' / ' + Number(item.capacityHours).toFixed(1) + ' hrs</td></tr>').join('') + '</tbody></table></div></section>' : '') +
       '<section class="optimizer-result-block"><div class="toolbar"><strong>Suggested production sessions</strong><span class="subtle">Preview only · ' + plan.options.startDate + ' · ' + plan.options.horizonDays + ' days</span></div>' +
-      (proposalRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>DATE</th><th>JOB</th><th>WORKER</th><th>HOURS</th><th>PRIORITY</th></tr></thead><tbody>' + proposalRows + '</tbody></table></div>' : '<div class="empty-state"><p>No new sessions can be proposed. Add job estimates or review worker capacity and availability.</p></div>') + '</section>' +
+      (proposalRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>DATE</th><th>JOB</th><th>WORKER</th><th>MACHINE</th><th>HOURS</th><th>PRIORITY</th></tr></thead><tbody>' + proposalRows + '</tbody></table></div>' : '<div class="empty-state"><p>No new sessions can be proposed. Add job estimates or review worker capacity and availability.</p></div>') + '</section>' +
       '<section class="optimizer-result-block"><div class="toolbar"><strong>Job-level schedule assessment</strong><span class="subtle">Actual hours and committed future sessions reduce the estimate</span></div>' +
       (jobRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>JOB</th><th>PRIORITY</th><th>ESTIMATE</th><th>ACTUAL</th><th>COMMITTED</th><th>PROPOSED</th><th>UNSCHEDULED</th><th>ASSESSMENT</th><th></th></tr></thead><tbody>' + jobRows + '</tbody></table></div>' : '<div class="empty-state">No active jobs found.</div>') + '</section>' +
       '<section class="optimizer-result-block"><div class="toolbar"><strong>Daily worker capacity after proposals</strong><span class="subtle">Committed + proposed hours</span></div>' +
