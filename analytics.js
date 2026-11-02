@@ -334,7 +334,7 @@
         'Availability uses scheduled machine-hours. Downtime intervals are merged to avoid double-counting and capped per machine-day; sessions do not store exact shift times, so downtime is not aligned to individual shifts.',
         'Performance above 100% is capped at 100% for the OEE product and separately flagged as an ideal-rate calibration issue.',
         'Capacity utilization is measured against daily capacity on days with scheduled work; it is not an assumed 24/7 calendar.',
-        'Bottleneck watchlist signals use review thresholds: capacity utilization at least 85%, availability below 80%, performance below 85%, or good-unit yield below 98%.'
+        'Bottleneck watchlist currently flags capacity utilization at least 85%, availability below 80%, performance below 85%, or good-unit yield below 98%; these are review thresholds rather than universal manufacturing standards.'
       ]
     };
   }
