@@ -143,3 +143,68 @@ test('keeps proposed allocations inside the selected planning horizon', () => {
   const result = optimizer.optimizeSchedule(jobs, workers, [], [], { ...options, horizonDays: 2 });
   assert.ok(result.proposals.every((proposal) => dayDifference(options.startDate, proposal.date) < 2));
 });
+
+test('allocates machine-bound jobs within per-machine daily capacity', () => {
+  const jobs = [
+    { id: 'JB-PRINT-1', item: 'Order 1', status: 'In production', estimatedHours: 12, requiredSkill: 'Printing' },
+    { id: 'JB-PRINT-2', item: 'Order 2', status: 'In production', estimatedHours: 12, requiredSkill: 'Printing' }
+  ];
+  const workers = [{ id: 'WRK-1', name: 'Operator', skill: 'Printing', capacityHoursPerDay: 16, active: true, unavailableDates: [] }];
+  const machines = [
+    { id: 'MCH-101', name: 'Press A', code: 'PRESS-A', capacityHoursPerDay: 8, supportedSkills: ['Printing'], active: true, maintenanceWindows: [] },
+    { id: 'MCH-102', name: 'Press B', code: 'PRESS-B', capacityHoursPerDay: 8, supportedSkills: ['Printing'], active: true, maintenanceWindows: [] }
+  ];
+  const result = optimizer.optimizeSchedule(jobs, workers, [], [], options, machines, []);
+  assert.ok(result.proposals.length > 0);
+  assert.ok(result.proposals.every((item) => item.machineId && item.machineName));
+  for (const machine of machines) {
+    const daily = new Map();
+    result.proposals.filter((item) => item.machineId === machine.id).forEach((item) => {
+      daily.set(item.date, (daily.get(item.date) || 0) + item.hours);
+    });
+    for (const hours of daily.values()) assert.ok(hours <= machine.capacityHoursPerDay + 1e-9);
+  }
+  assert.equal(result.summary.machinesUsed, 2);
+  assert.ok(result.dailyMachineLoads.length > 0);
+});
+
+test('avoids machine maintenance windows and recorded downtime when optimizing', () => {
+  const jobs = [{ id: 'JB-1', status: 'In production', estimatedHours: 8, requiredSkill: 'Printing' }];
+  const workers = [{ id: 'WRK-1', name: 'Operator', skill: 'Printing', capacityHoursPerDay: 8, active: true, unavailableDates: [] }];
+  const machines = [{
+    id: 'MCH-101', name: 'Press A', code: 'PRESS-A', capacityHoursPerDay: 8,
+    supportedSkills: ['Printing'], active: true,
+    maintenanceWindows: [{ id: 'MW-101', startDate: '2026-11-02', endDate: '2026-11-02', reason: 'Preventive maintenance' }]
+  }];
+  const maintenancePlan = optimizer.optimizeSchedule(jobs, workers, [], [], options, machines, []);
+  assert.ok(maintenancePlan.proposals.length > 0);
+  assert.ok(maintenancePlan.proposals.every((item) => item.date !== '2026-11-02'));
+
+  const downtimePlan = optimizer.optimizeSchedule(jobs, workers, [], [], options, [
+    { ...machines[0], maintenanceWindows: [] }
+  ], [{
+    id: 'DT-101', machineId: 'MCH-101', machineName: 'Press A',
+    startAt: '2026-11-02T08:00', endAt: '2026-11-02T12:00'
+  }]);
+  assert.ok(downtimePlan.proposals.length > 0);
+  assert.ok(downtimePlan.proposals.every((item) => item.date !== '2026-11-02'));
+});
+
+test('honours a preferred machine and reports incompatible machine skills', () => {
+  const workers = [{ id: 'WRK-1', name: 'Operator', skill: 'Printing', capacityHoursPerDay: 8, active: true, unavailableDates: [] }];
+  const machines = [
+    { id: 'MCH-101', name: 'Press A', code: 'PRESS-A', capacityHoursPerDay: 8, supportedSkills: ['Printing'], active: true, maintenanceWindows: [] },
+    { id: 'MCH-102', name: 'Cutter B', code: 'CUT-B', capacityHoursPerDay: 8, supportedSkills: ['Cutting'], active: true, maintenanceWindows: [] }
+  ];
+  const preferred = optimizer.optimizeSchedule([
+    { id: 'JB-1', status: 'In production', estimatedHours: 4, requiredSkill: 'Printing', machineId: 'MCH-101' }
+  ], workers, [], [], options, machines, []);
+  assert.ok(preferred.proposals.length > 0);
+  assert.ok(preferred.proposals.every((item) => item.machineId === 'MCH-101'));
+
+  const incompatible = optimizer.optimizeSchedule([
+    { id: 'JB-2', status: 'In production', estimatedHours: 4, requiredSkill: 'Lamination', machineId: 'MCH-101' }
+  ], workers, [], [], options, machines, []);
+  assert.equal(incompatible.proposals.length, 0);
+  assert.ok(incompatible.issues.some((item) => item.type === 'no-compatible-machine'));
+});

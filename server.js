@@ -8,6 +8,7 @@ const analytics = require('./analytics.js');
 const facilityModel = require('./facilities.js');
 const forecasting = require('./forecasting.js');
 const scheduleOptimizer = require('./scheduler-optimizer.js');
+const machineModel = require('./machines.js');
 
 const root = __dirname;
 const dataDirectory = path.join(root, 'data');
@@ -58,6 +59,7 @@ function readStore() {
     qcInspections: list(stored.qcInspections),
     reworkLogs: list(stored.reworkLogs),
     downtimeLogs: list(stored.downtimeLogs),
+    machines: list(stored.machines),
     users: list(stored.users),
     auditLogs: list(stored.auditLogs)
   });
@@ -284,6 +286,7 @@ function projectStoreForUser(store, user) {
     qcInspections: [],
     reworkLogs: [],
     downtimeLogs: [],
+    machines: list(store.machines).filter((machine) => schedules.some((session) => session.machineId === machine.id)),
     users: [],
     auditLogs: []
   };
@@ -545,6 +548,83 @@ async function handleApi(request, response, pathname) {
     } catch (error) { return publicAuthError(error, response); }
   }
 
+
+  if (pathname === '/api/machines' && request.method === 'GET') {
+    try {
+      requirePermission(current, 'machines.view');
+      const scoped = facilityModel.projectStoreForFacility(store, current.facility.id);
+      return sendJson(response, 200, { facilityId: current.facility.id, machines: scoped.machines });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  if (pathname === '/api/machines' && request.method === 'POST') {
+    try {
+      requireCsrf(request, current);
+      requirePermission(current, 'machines.manage');
+      const body = await readJson(request);
+      const scopedMachines = store.machines.filter((machine) => machine.facilityId === current.facility.id);
+      const machine = machineModel.createMachine(scopedMachines, body);
+      machine.facilityId = current.facility.id;
+      store.machines.push(machine);
+      appendAudit(store, current.user, 'machine.created', 'machine', machine.id, {
+        code: machine.code, name: machine.name, capacityHoursPerDay: machine.capacityHoursPerDay
+      }, request);
+      writeStore(store);
+      return sendJson(response, 201, { machine });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  const machineMatch = /^\/api\/machines\/([^/]+)$/;
+  const matchedMachine = machineMatch.exec(pathname);
+  if (matchedMachine && request.method === 'PATCH') {
+    try {
+      requireCsrf(request, current);
+      requirePermission(current, 'machines.manage');
+      const body = await readJson(request);
+      const scopedMachines = store.machines.filter((machine) => machine.facilityId === current.facility.id);
+      const machine = machineModel.updateMachine(scopedMachines, matchedMachine[1], body);
+      appendAudit(store, current.user, 'machine.updated', 'machine', machine.id, {
+        code: machine.code, active: machine.active, capacityHoursPerDay: machine.capacityHoursPerDay
+      }, request);
+      writeStore(store);
+      return sendJson(response, 200, { machine });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  const maintenanceMatch = /^\/api\/machines\/([^/]+)\/maintenance$/;
+  const matchedMaintenance = maintenanceMatch.exec(pathname);
+  if (matchedMaintenance && request.method === 'POST') {
+    try {
+      requireCsrf(request, current);
+      requirePermission(current, 'machines.manage');
+      const body = await readJson(request);
+      const scopedMachines = store.machines.filter((machine) => machine.facilityId === current.facility.id);
+      const window = machineModel.addMaintenanceWindow(scopedMachines, matchedMaintenance[1], body);
+      const machine = scopedMachines.find((item) => item.id === matchedMaintenance[1]);
+      appendAudit(store, current.user, 'machine.maintenance_added', 'machine', machine.id, {
+        maintenanceId: window.id, startDate: window.startDate, endDate: window.endDate, reason: window.reason
+      }, request);
+      writeStore(store);
+      return sendJson(response, 201, { machine, maintenanceWindow: window });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  const maintenanceRemoveMatch = /^\/api\/machines\/([^/]+)\/maintenance\/([^/]+)$/;
+  const matchedMaintenanceRemove = maintenanceRemoveMatch.exec(pathname);
+  if (matchedMaintenanceRemove && request.method === 'DELETE') {
+    try {
+      requireCsrf(request, current);
+      requirePermission(current, 'machines.manage');
+      const scopedMachines = store.machines.filter((machine) => machine.facilityId === current.facility.id);
+      const machine = machineModel.removeMaintenanceWindow(scopedMachines, matchedMaintenanceRemove[1], matchedMaintenanceRemove[2]);
+      appendAudit(store, current.user, 'machine.maintenance_removed', 'machine', machine.id, {
+        maintenanceId: matchedMaintenanceRemove[2]
+      }, request);
+      writeStore(store);
+      return sendJson(response, 200, { machine });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
   if (pathname === '/api/scheduling/optimize' && request.method === 'POST') {
     try {
       requirePermission(current, 'schedule.view');
@@ -556,7 +636,9 @@ async function handleApi(request, response, pathname) {
         scoped.workers,
         scoped.schedules,
         scoped.productionLogs,
-        body
+        body,
+        scoped.machines,
+        scoped.downtimeLogs
       );
       return sendJson(response, 200, { facilityId: current.facility.id, plan });
     } catch (error) { return publicAuthError(error, response); }
@@ -583,7 +665,9 @@ async function handleApi(request, response, pathname) {
         scoped.workers,
         scoped.schedules,
         scoped.productionLogs,
-        body
+        body,
+        scoped.machines,
+        scoped.downtimeLogs
       );
       if (!plan.proposals.length) {
         return sendJson(response, 409, { error: 'There are no feasible new sessions to apply. Review missing estimates, worker capacity and the planning horizon.', plan });
@@ -598,6 +682,8 @@ async function handleApi(request, response, pathname) {
         jobId: proposal.jobId,
         workerId: proposal.workerId,
         workerName: proposal.workerName,
+        machineId: proposal.machineId || '',
+        machineName: proposal.machineName || '',
         date: proposal.date,
         hours: proposal.hours,
         note: proposal.note,
@@ -769,8 +855,16 @@ async function handleApi(request, response, pathname) {
       requirePermission(current, 'analytics.downtime');
       const body = await readJson(request);
       if (body.jobId && !store.jobs.some((job) => job.id === body.jobId && job.facilityId === current.facility.id)) return sendJson(response, 404, { error: 'Job not found in the selected facility.' });
-      const record = analytics.recordDowntime(store.downtimeLogs, store.jobs, body);
+      const downtimeInput = { ...body };
+      let linkedMachine = null;
+      if (body.machineId) {
+        linkedMachine = store.machines.find((machine) => machine.id === body.machineId && machine.facilityId === current.facility.id);
+        if (!linkedMachine) return sendJson(response, 404, { error: 'Machine not found in the selected facility.' });
+        downtimeInput.machineName = linkedMachine.name;
+      }
+      const record = analytics.recordDowntime(store.downtimeLogs, store.jobs, downtimeInput);
       record.facilityId = current.facility.id;
+      if (linkedMachine) record.machineId = linkedMachine.id;
       appendAudit(store, current.user, 'production.downtime_recorded', 'downtime', record.id, {
         machineName: record.machineName, durationMinutes: record.durationMinutes, reason: record.reason
       }, request);

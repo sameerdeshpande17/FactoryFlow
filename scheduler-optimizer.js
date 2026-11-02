@@ -8,6 +8,9 @@
   const scheduling = root && root.FactoryFlowScheduling
     ? root.FactoryFlowScheduling
     : require('./scheduling.js');
+  const machineModel = root && root.FactoryFlowMachines
+    ? root.FactoryFlowMachines
+    : require('./machines.js');
 
 
 
@@ -57,6 +60,62 @@ function skillMatches(worker, job) {
   if (!required) return true;
   const skill = normalizeSkill(worker.skill);
   return Boolean(skill && (skill === required || skill.includes(required) || required.includes(skill)));
+}
+
+
+function machineSkillMatches(machine, job) {
+  const required = normalizeSkill(job.requiredSkill);
+  const supported = Array.isArray(machine.supportedSkills) ? machine.supportedSkills.map(normalizeSkill).filter(Boolean) : [];
+  return !required || !supported.length || supported.some((skill) => skill === required || skill.includes(required) || required.includes(skill));
+}
+
+function downtimeDate(value) {
+  const date = String(value || '').slice(0, 10);
+  return scheduling.validDate(date) ? date : '';
+}
+
+function machineBlockedByDowntime(machine, day, downtimeLogs) {
+  const machineName = normalizeSkill(machine.name);
+  return (Array.isArray(downtimeLogs) ? downtimeLogs : []).some((record) => {
+    if (!record) return false;
+    const matchesMachine = record.machineId
+      ? record.machineId === machine.id
+      : normalizeSkill(record.machineName) === machineName;
+    if (!matchesMachine) return false;
+    const start = downtimeDate(record.startAt);
+    const end = downtimeDate(record.endAt);
+    return Boolean(start && end && start <= day && day <= end);
+  });
+}
+
+function machineAvailableOn(machine, day, downtimeLogs) {
+  return machineModel.isAvailableOn(machine, day) && !machineBlockedByDowntime(machine, day, downtimeLogs);
+}
+
+function getExistingMachineDayLoads(schedules, machines, startDate) {
+  const machineById = new Map((Array.isArray(machines) ? machines : []).map((machine) => [machine.id, machine]));
+  const loads = new Map();
+  (Array.isArray(schedules) ? schedules : []).forEach((session) => {
+    if (!session || !session.machineId || !scheduling.validDate(session.date) || session.date < startDate) return;
+    if (!machineById.has(session.machineId)) return;
+    const hours = Number(session.hours);
+    if (!Number.isFinite(hours) || hours <= 0) return;
+    const key = session.machineId + '|' + session.date;
+    loads.set(key, (loads.get(key) || 0) + hours);
+  });
+  return loads;
+}
+
+function chooseMachine(candidates, day, existingLoads, allocatedLoads, downtimeLogs) {
+  return candidates.map((machine) => {
+    const key = machine.id + '|' + day;
+    const capacity = Number(machine.capacityHoursPerDay);
+    const used = (existingLoads.get(key) || 0) + (allocatedLoads.get(key) || 0);
+    const available = Math.max(0, capacity - used);
+    return { machine, available, loadRatio: capacity > 0 ? used / capacity : 1 };
+  }).filter((item) => item.available > EPSILON && machineAvailableOn(item.machine, day, downtimeLogs))
+    .sort((a, b) => a.loadRatio - b.loadRatio || b.available - a.available ||
+      String(a.machine.id).localeCompare(String(b.machine.id)))[0] || null;
 }
 
 function priorityWeight(value) {
@@ -137,7 +196,7 @@ function chooseWorker(candidates, job, day, workerLoads, allocatedLoads) {
     )[0] || null;
 }
 
-function optimizeSchedule(jobs, workers, schedules, productionLogs, rawOptions = {}) {
+function optimizeSchedule(jobs, workers, schedules, productionLogs, rawOptions = {}, rawMachines = [], rawDowntimeLogs = []) {
   const options = normalizeOptions(rawOptions);
   const activeJobs = scheduling.activeJobs(jobs);
   const activeWorkers = (Array.isArray(workers) ? workers : []).filter((worker) =>
@@ -147,8 +206,18 @@ function optimizeSchedule(jobs, workers, schedules, productionLogs, rawOptions =
     Number(worker.capacityHoursPerDay) <= 24
   );
   const workerById = new Map(activeWorkers.map((worker) => [worker.id, worker]));
+  const machineInventory = Array.isArray(rawMachines) ? rawMachines : [];
+  const machineConfigured = machineInventory.length > 0;
+  const activeMachines = machineInventory.filter((machine) =>
+    machine && machine.active !== false &&
+    Number.isFinite(Number(machine.capacityHoursPerDay)) &&
+    Number(machine.capacityHoursPerDay) > 0 &&
+    Number(machine.capacityHoursPerDay) <= 24
+  );
   const existingLoads = getExistingWorkerDayLoads(schedules, workers, options.startDate);
   const allocatedLoads = new Map();
+  const existingMachineLoads = getExistingMachineDayLoads(schedules, machineInventory, options.startDate);
+  const allocatedMachineLoads = new Map();
   const proposals = [];
   const issues = [];
   const jobPlans = [];
@@ -183,6 +252,11 @@ function optimizeSchedule(jobs, workers, schedules, productionLogs, rawOptions =
     let remaining = Math.max(0, estimate - actualHours - committedHours);
     const startRemaining = remaining;
     const candidates = activeWorkers.filter((worker) => skillMatches(worker, job));
+    const requestedMachineId = String(job.machineId || job.requiredMachineId || '').trim();
+    const machineCandidates = machineConfigured
+      ? activeMachines.filter((machine) =>
+          (!requestedMachineId || machine.id === requestedMachineId) && machineSkillMatches(machine, job))
+      : [];
     const proposedForJob = [];
     let finishDate = null;
 
@@ -191,6 +265,15 @@ function optimizeSchedule(jobs, workers, schedules, productionLogs, rawOptions =
         jobId: job.id,
         type: 'no-compatible-worker',
         message: job.id + ' has no active worker matching required skill "' + String(job.requiredSkill || '') + '".'
+      });
+    }
+    if (remaining > EPSILON && machineConfigured && !machineCandidates.length) {
+      issues.push({
+        jobId: job.id,
+        type: 'no-compatible-machine',
+        message: requestedMachineId
+          ? job.id + ' requires machine ' + requestedMachineId + ', which is not active in this facility or does not support the required operation.'
+          : job.id + ' has no active machine compatible with the required operation.'
       });
     }
 
@@ -204,13 +287,24 @@ function optimizeSchedule(jobs, workers, schedules, productionLogs, rawOptions =
       );
       const selected = chooseWorker(availableCandidates, job, day, existingLoads, allocatedLoads);
       if (!selected) continue;
+      const selectedMachine = machineConfigured
+        ? chooseMachine(machineCandidates, day, existingMachineLoads, allocatedMachineLoads, rawDowntimeLogs)
+        : null;
+      if (machineConfigured && !selectedMachine) continue;
 
-      const hours = round(Math.min(remaining, selected.available, 24));
+      const hours = round(Math.min(
+        remaining,
+        selected.available,
+        machineConfigured ? selectedMachine.available : 24,
+        24
+      ));
       if (hours <= EPSILON) continue;
       const proposal = {
         jobId: job.id,
         workerId: selected.worker.id,
         workerName: selected.worker.name,
+        machineId: selectedMachine ? selectedMachine.machine.id : '',
+        machineName: selectedMachine ? selectedMachine.machine.name : '',
         date: day,
         hours,
         note: 'Optimizer suggestion · ' + (job.requiredSkill ? String(job.requiredSkill) : 'capacity-balanced allocation'),
@@ -221,11 +315,22 @@ function optimizeSchedule(jobs, workers, schedules, productionLogs, rawOptions =
       proposedForJob.push(proposal);
       const key = selected.worker.id + '|' + day;
       allocatedLoads.set(key, (allocatedLoads.get(key) || 0) + hours);
+      if (selectedMachine) {
+        const machineKey = selectedMachine.machine.id + '|' + day;
+        allocatedMachineLoads.set(machineKey, (allocatedMachineLoads.get(machineKey) || 0) + hours);
+      }
       remaining = Math.max(0, remaining - hours);
       finishDate = day;
     }
 
     const unscheduledHours = round(remaining);
+    if (unscheduledHours > EPSILON && machineConfigured && machineCandidates.length) {
+      issues.push({
+        jobId: job.id,
+        type: 'machine-capacity-gap',
+        message: job.id + ' has remaining work that does not fit available machine capacity or maintenance/downtime windows in this horizon.'
+      });
+    }
     const committedDates = (Array.isArray(schedules) ? schedules : [])
       .filter((session) => session && session.jobId === job.id && scheduling.validDate(session.date) && session.date >= options.startDate)
       .map((session) => session.date);
@@ -299,6 +404,40 @@ function optimizeSchedule(jobs, workers, schedules, productionLogs, rawOptions =
     overCapacityHours: round(Math.max(0, row.committedHours + row.proposedHours - row.capacityHours))
   })).sort((a, b) => a.date.localeCompare(b.date) || a.workerName.localeCompare(b.workerName));
 
+  const machineLoadTotals = new Map();
+  const machineById = new Map(machineInventory.map((machine) => [machine.id, machine]));
+  const addMachineLoad = (machineId, date, hours) => {
+    const machine = machineById.get(machineId);
+    if (!machine || !scheduling.validDate(date)) return null;
+    const key = machineId + '|' + date;
+    const row = machineLoadTotals.get(key) || {
+      machineId,
+      machineName: machine.name,
+      date,
+      capacityHours: Number(machine.capacityHoursPerDay) || 0,
+      committedHours: 0,
+      proposedHours: 0
+    };
+    machineLoadTotals.set(key, row);
+    return row;
+  };
+  (Array.isArray(schedules) ? schedules : []).forEach((session) => {
+    if (!session || !session.machineId || !scheduling.validDate(session.date) || session.date < options.startDate) return;
+    const row = addMachineLoad(session.machineId, session.date, Number(session.hours));
+    if (row && Number.isFinite(Number(session.hours)) && Number(session.hours) > 0) row.committedHours += Number(session.hours);
+  });
+  proposals.forEach((proposal) => {
+    if (!proposal.machineId) return;
+    const row = addMachineLoad(proposal.machineId, proposal.date, proposal.hours);
+    if (row) row.proposedHours += proposal.hours;
+  });
+  const dailyMachineLoads = [...machineLoadTotals.values()].map((row) => ({
+    ...row,
+    totalHours: round(row.committedHours + row.proposedHours),
+    remainingHours: round(Math.max(0, row.capacityHours - row.committedHours - row.proposedHours)),
+    overCapacityHours: round(Math.max(0, row.committedHours + row.proposedHours - row.capacityHours))
+  })).sort((a, b) => a.date.localeCompare(b.date) || a.machineName.localeCompare(b.machineName));
+
   const plannedJobs = jobPlans.filter((item) => ['Scheduled', 'Already covered'].includes(item.status));
   const deadlineTracked = jobPlans.filter((item) => item.dueDate && item.estimatedHours !== null);
   const onTime = deadlineTracked.filter((item) => !item.deadlineRisk && item.unscheduledHours <= EPSILON);
@@ -320,11 +459,15 @@ function optimizeSchedule(jobs, workers, schedules, productionLogs, rawOptions =
       unscheduledHours,
       deadlineRiskCount: jobPlans.filter((item) => item.deadlineRisk).length,
       onTimePercent: deadlineTracked.length ? round(onTime.length / deadlineTracked.length * 100) : null,
-      overloadedWorkerDays: dailyLoads.filter((item) => item.overCapacityHours > EPSILON).length
+      overloadedWorkerDays: dailyLoads.filter((item) => item.overCapacityHours > EPSILON).length,
+      machineCount: activeMachines.length,
+      machineCapacityConflicts: dailyMachineLoads.filter((item) => item.overCapacityHours > EPSILON).length,
+      machinesUsed: new Set(proposals.map((item) => item.machineId).filter(Boolean)).size
     },
     proposals,
     jobPlans,
     dailyLoads,
+    dailyMachineLoads,
     issues
   };
 }

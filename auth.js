@@ -15,7 +15,7 @@ const ROLE_PERMISSIONS = Object.freeze({
     'execution.view', 'execution.record', 'execution.qc',
     'analytics.view', 'analytics.downtime', 'costing.view', 'costing.manage',
     'workers.view', 'workers.manage', 'invoices.view', 'invoices.manage',
-    'marketplace.view', 'settings.view', 'users.manage', 'audit.view', 'facilities.view', 'facilities.manage'
+    'marketplace.view', 'settings.view', 'users.manage', 'audit.view', 'facilities.view', 'facilities.manage', 'machines.view', 'machines.manage'
   ],
   manager: [
     'dashboard.view', 'quotes.view', 'quotes.manage', 'jobs.view', 'jobs.manage',
@@ -24,12 +24,12 @@ const ROLE_PERMISSIONS = Object.freeze({
     'execution.view', 'execution.record', 'execution.qc',
     'analytics.view', 'analytics.downtime', 'costing.view', 'costing.manage',
     'workers.view', 'workers.manage', 'invoices.view', 'invoices.manage',
-    'marketplace.view', 'settings.view', 'facilities.view'
+    'marketplace.view', 'settings.view', 'facilities.view', 'machines.view', 'machines.manage'
   ],
   supervisor: [
     'dashboard.view', 'jobs.view', 'materials.view', 'planning.view',
     'schedule.view', 'execution.view', 'execution.record', 'execution.qc',
-    'analytics.view', 'analytics.downtime', 'workers.view', 'facilities.view'
+    'analytics.view', 'analytics.downtime', 'workers.view', 'facilities.view', 'machines.view'
   ],
   worker: [
     'dashboard.view', 'jobs.view', 'schedule.view', 'execution.view', 'execution.record'
