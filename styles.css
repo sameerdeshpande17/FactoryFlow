@@ -216,3 +216,26 @@ body.auth-required .app-shell { visibility: hidden; }
 .optimizer-result-block ul { padding: 4px 28px 14px; color: var(--muted); font-size: 11px; }
 .optimizer-result-block li { margin: 6px 0; }
 @media (max-width: 650px) { .optimizer-controls { align-items: stretch; flex-direction: column; } .optimizer-controls label { width: 100%; } .optimizer-apply-row { align-items: stretch; flex-direction: column; } }
+
+
+/* Machine OEE and bottleneck reporting */
+.machine-oee-section { overflow: hidden; }
+.machine-oee-kpis { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; margin: 12px 0; }
+.machine-oee-kpis article { min-width: 0; display: grid; gap: 6px; padding: 13px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
+.machine-oee-kpis span { color: var(--muted); font-size: 9px; font-weight: 800; letter-spacing: .07em; }
+.machine-oee-kpis strong { color: var(--ink); font-size: 21px; overflow-wrap: anywhere; }
+.machine-oee-kpis small { color: var(--muted); font-size: 10px; line-height: 1.4; }
+.machine-oee-definition { margin: 10px 0 14px; padding: 10px 12px; border-radius: 7px; background: var(--surface); font-size: 10px; line-height: 1.55; }
+.machine-oee-section .table-scroll { max-width: 100%; }
+.machine-oee-subgrid { display: grid; grid-template-columns: minmax(0,1.2fr) minmax(250px,.8fr); gap: 14px; margin-top: 16px; }
+.machine-oee-subgrid > section { min-width: 0; border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+.machine-oee-subgrid .toolbar { padding: 12px; }
+.machine-bottleneck-list { display: grid; gap: 0; }
+.machine-bottleneck-list article { display: grid; gap: 5px; padding: 11px 12px; border-top: 1px solid var(--line); }
+.machine-bottleneck-list strong { color: var(--ink); font-size: 11px; }
+.machine-bottleneck-list small, .machine-alert-copy { color: var(--muted); font-size: 10px; line-height: 1.45; }
+.machine-alert-copy { margin-top: 4px; color: var(--red, #a64b3f); }
+.machine-oee-notes { display: grid; gap: 4px; padding: 12px 2px 2px; }
+.machine-oee-notes p { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
+@media (max-width: 850px) { .machine-oee-kpis { grid-template-columns: repeat(2,minmax(0,1fr)); } .machine-oee-subgrid { grid-template-columns: 1fr; } }
+@media (max-width: 560px) { .machine-oee-kpis { grid-template-columns: repeat(2,minmax(0,1fr)); } }
