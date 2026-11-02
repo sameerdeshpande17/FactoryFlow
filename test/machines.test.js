@@ -16,6 +16,7 @@ test('creates machine profiles with normalized skills and a stable identifier', 
   assert.equal(machine.code, 'PRESS-01');
   assert.deepEqual(machine.supportedSkills, ['Flexo printing', 'Ink setup']);
   assert.equal(machine.active, true);
+  assert.equal(machine.idealUnitsPerHour, 0);
   assert.equal(records.length, 1);
 });
 
@@ -61,4 +62,16 @@ test('inactive machines and invalid dates are never available', () => {
   const machine = machines.createMachine(records, { code: 'PACK-01', name: 'Packer', capacityHoursPerDay: 8 });
   assert.equal(machines.isAvailableOn({ ...machine, active: false }, '2026-11-02'), false);
   assert.equal(machines.isAvailableOn(machine, '2026-02-30'), false);
+});
+
+test('validates and persists an ideal machine throughput rate', () => {
+  const records = [];
+  const machine = machines.createMachine(records, {
+    code: 'PRESS-02', name: 'Press 02', capacityHoursPerDay: 8, idealUnitsPerHour: 125.5
+  });
+  assert.equal(machine.idealUnitsPerHour, 125.5);
+  const updated = machines.updateMachine(records, machine.id, { idealUnitsPerHour: 140 });
+  assert.equal(updated.idealUnitsPerHour, 140);
+  assert.throws(() => machines.updateMachine(records, machine.id, { idealUnitsPerHour: -1 }), /ideal output rate/i);
+  assert.throws(() => machines.updateMachine(records, machine.id, { idealUnitsPerHour: 1000001 }), /ideal output rate/i);
 });
