@@ -15,8 +15,9 @@
   }
 
   function nextId(records, prefix) {
+    const pattern = prefix === 'MCH' ? /^MCH-(\d+)$/ : /^MW-(\d+)$/;
     const max = list(records).reduce((value, record) => {
-      const match = new RegExp('^' + prefix + '-(\\\\d+)$').exec(String(record && record.id || ''));
+      const match = pattern.exec(String(record && record.id || ''));
       return match ? Math.max(value, Number(match[1])) : value;
     }, 100);
     return prefix + '-' + (max + 1);
