@@ -1054,6 +1054,7 @@ function currentAnalytics() {
     jobs,
     deliveries,
     downtimeLogs,
+    machines,
     fromDate: analyticsFilters.fromDate,
     toDate: analyticsFilters.toDate,
     groupBy: analyticsFilters.groupBy
@@ -1091,9 +1092,47 @@ function analyticsPage() {
   const planVariance = data.planVsActual.linkedSessions
     ? (data.planVsActual.varianceHours > 0 ? '+' : '') + data.planVsActual.varianceHours.toFixed(2) + ' hrs (' + (data.planVsActual.variancePercent > 0 ? '+' : '') + data.planVsActual.variancePercent.toFixed(1) + '%)'
     : 'No linked actuals yet';
+
+  const machineOee = data.machineOee;
+  const machinePercent = (value) => value === null || value === undefined ? '—' : Number(value).toFixed(1) + '%';
+  const machineOeeRows = machineOee.machines.map((item) =>
+    '<tr><td><strong>' + safe(item.machineName) + '</strong><div class="subtle">' + safe(item.code) + '</div>' +
+      (item.bottleneckSignals.length ? '<div class="machine-alert-copy">' + safe(item.bottleneckSignals.join(' · ')) + '</div>' : '') +
+      (item.performanceCapped ? '<div class="machine-alert-copy">Performance exceeded ideal rate; OEE calculation capped it at 100%.</div>' : '') + '</td>' +
+    '<td><strong>' + machinePercent(item.oeePercent) + '</strong></td>' +
+    '<td>' + machinePercent(item.availabilityPercent) + '</td>' +
+    '<td>' + (item.rawPerformancePercent === null ? '—' : Number(item.rawPerformancePercent).toFixed(1) + '%') + '</td>' +
+    '<td>' + machinePercent(item.qualityPercent) + '</td>' +
+    '<td>' + machinePercent(item.capacityUtilizationPercent) + '</td>' +
+    '<td>' + formatHours(item.effectiveDowntimeHours) + '</td>' +
+    '<td>' + Number(item.producedQty).toLocaleString('en-IN') + '</td></tr>'
+  ).join('');
+  const machineTrendRows = machineOee.dailyTrend.map((item) =>
+    '<tr><td class="order-code">' + safe(item.date) + '</td><td>' + formatHours(item.plannedHours) + '</td>' +
+    '<td>' + formatHours(item.downtimeHours) + '</td><td>' + formatHours(item.runHours) + '</td>' +
+    '<td>' + Number(item.producedQty).toLocaleString('en-IN') + '</td><td>' + machinePercent(item.oeePercent) + '</td></tr>'
+  ).join('');
+  const machineOeeMarkup = '<section class="content-card machine-oee-section" style="margin-top:18px">' +
+    '<div class="toolbar"><div><strong style="font-size:13px">Machine effectiveness · OEE</strong><p class="subtle">Overall Equipment Effectiveness combines availability × performance × quality.</p></div>' +
+    '<span class="subtle">' + machineOee.machinesWithOee + ' / ' + machineOee.machineCount + ' machine(s) with a complete OEE result</span></div>' +
+    (machineOee.machineCount ? '<div class="machine-oee-kpis">' +
+      '<article><span>OVERALL OEE</span><strong>' + machinePercent(machineOee.totals.oeePercent) + '</strong><small>Rated machines only</small></article>' +
+      '<article><span>AVAILABILITY</span><strong>' + machinePercent(machineOee.totals.availabilityPercent) + '</strong><small>Run hours / planned hours</small></article>' +
+      '<article><span>PERFORMANCE</span><strong>' + machinePercent(machineOee.totals.performancePercent) + '</strong><small>Actual output / ideal output</small></article>' +
+      '<article><span>QUALITY</span><strong>' + machinePercent(machineOee.totals.qualityPercent) + '</strong><small>Good units / produced units</small></article></div>' +
+      '<div class="machine-oee-definition subtle">OEE uses ' + formatHours(machineOee.totals.eligiblePlannedHours) + ' of planned time for machines with an ideal rate. Logged downtime intervals are merged and capped to each machine’s scheduled hours for that day. Performance above 100% is capped in OEE and flagged for rate review.</div>' +
+      '<div class="table-scroll"><table class="data-table"><thead><tr><th>MACHINE / BOTTLENECK SIGNALS</th><th>OEE</th><th>AVAILABILITY</th><th>PERFORMANCE</th><th>QUALITY</th><th>CAPACITY UTILIZATION</th><th>DOWNTIME</th><th>PRODUCED</th></tr></thead><tbody>' + machineOeeRows + '</tbody></table></div>' +
+      '<div class="machine-oee-subgrid"><section><div class="toolbar"><strong>Daily machine effectiveness</strong></div>' +
+        (machineTrendRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>DATE</th><th>PLANNED</th><th>DOWNTIME</th><th>RUN</th><th>PRODUCED</th><th>OEE</th></tr></thead><tbody>' + machineTrendRows + '</tbody></table></div>' : '<div class="empty-state">No scheduled machine days in this date range.</div>') +
+      '</section><section><div class="toolbar"><strong>Bottleneck watchlist</strong><span class="subtle">' + machineOee.bottlenecks.length + ' machine(s) with signals</span></div>' +
+        (machineOee.bottlenecks.length ? '<div class="machine-bottleneck-list">' + machineOee.bottlenecks.map((item) => '<article><strong>' + safe(item.machineName) + '</strong><small>' + safe(item.bottleneckSignals.join(' · ')) + '</small></article>').join('') + '</div>' : '<div class="empty-state">No configured bottleneck thresholds were triggered.</div>') +
+      '</section></div>' +
+      '<div class="machine-oee-notes">' + machineOee.notes.map((note) => '<p>• ' + safe(note) + '</p>').join('') + '</div>' +
+    '</div>' : '<div class="empty-state"><h2>No machines registered</h2><p>Register equipment first, then schedule sessions and record production to calculate OEE.</p><button class="secondary-button" data-go="machines">Open machines & equipment</button></div>') +
+    '</section>';
   return head('MANAGEMENT', 'Production analytics', 'Measure recorded output, quality, worker productivity, schedule variance and machine downtime. Filters apply to dated operational records.', '<button class="secondary-button" data-export-analytics>↓ Export CSV</button> <button class="primary-button" data-new-downtime>＋ Log downtime</button>') +
     '<form id="analyticsFilterForm" class="analytics-filter content-card"><label>From date<input type="date" name="fromDate" value="' + safe(analyticsFilters.fromDate) + '"></label><label>To date<input type="date" name="toDate" value="' + safe(analyticsFilters.toDate) + '"></label><label>Trend interval<select name="groupBy"><option value="day"' + (analyticsFilters.groupBy === 'day' ? ' selected' : '') + '>Daily</option><option value="week"' + (analyticsFilters.groupBy === 'week' ? ' selected' : '') + '>Weekly</option><option value="month"' + (analyticsFilters.groupBy === 'month' ? ' selected' : '') + '>Monthly</option></select></label><div class="analytics-filter-actions"><button class="primary-button" type="submit">Apply filters</button><button class="secondary-button" type="button" data-reset-analytics>Reset</button></div></form>' +
-    '<div class="analytics-kpis"><article class="analytics-kpi"><span>UNITS PRODUCED</span><strong>' + data.totals.producedQty.toLocaleString('en-IN') + '</strong><small>' + data.recordCounts.productionEntries + ' production entries</small></article><article class="analytics-kpi"><span>GOOD YIELD</span><strong>' + (data.totals.productionYieldPercent === null ? '—' : data.totals.productionYieldPercent.toFixed(1) + '%') + '</strong><small>Good units / produced units</small></article><article class="analytics-kpi"><span>QC PASS RATE</span><strong>' + (data.quality.passRatePercent === null ? '—' : data.quality.passRatePercent.toFixed(1) + '%') + '</strong><small>' + data.quality.inspectedQty.toLocaleString('en-IN') + ' units inspected</small></article><article class="analytics-kpi"><span>ACTUAL HOURS</span><strong>' + formatHours(data.totals.actualHours) + '</strong><small>' + data.totals.entriesWithoutActualHours + ' entries missing actual hours</small></article><article class="analytics-kpi"><span>MACHINE DOWNTIME</span><strong>' + formatHours(data.downtime.totalHours) + '</strong><small>' + data.downtime.records + ' downtime records</small></article><article class="analytics-kpi"><span>ON-TIME DELIVERY</span><strong>' + onTimeLabel + '</strong><small>' + data.onTimeDelivery.onTimeJobs + ' / ' + data.onTimeDelivery.eligibleJobs + ' eligible delivered jobs</small></article></div>' +
+    '<div class="analytics-kpis"><article class="analytics-kpi"><span>UNITS PRODUCED</span><strong>' + data.totals.producedQty.toLocaleString('en-IN') + '</strong><small>' + data.recordCounts.productionEntries + ' production entries</small></article><article class="analytics-kpi"><span>GOOD YIELD</span><strong>' + (data.totals.productionYieldPercent === null ? '—' : data.totals.productionYieldPercent.toFixed(1) + '%') + '</strong><small>Good units / produced units</small></article><article class="analytics-kpi"><span>QC PASS RATE</span><strong>' + (data.quality.passRatePercent === null ? '—' : data.quality.passRatePercent.toFixed(1) + '%') + '</strong><small>' + data.quality.inspectedQty.toLocaleString('en-IN') + ' units inspected</small></article><article class="analytics-kpi"><span>ACTUAL HOURS</span><strong>' + formatHours(data.totals.actualHours) + '</strong><small>' + data.totals.entriesWithoutActualHours + ' entries missing actual hours</small></article><article class="analytics-kpi"><span>MACHINE DOWNTIME</span><strong>' + formatHours(data.downtime.totalHours) + '</strong><small>' + data.downtime.records + ' downtime records</small></article><article class="analytics-kpi"><span>ON-TIME DELIVERY</span><strong>' + onTimeLabel + '</strong><small>' + data.onTimeDelivery.onTimeJobs + ' / ' + data.onTimeDelivery.eligibleJobs + ' eligible delivered jobs</small></article></div>' + machineOeeMarkup +
     '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Production trend</strong><span class="subtle">' + safe(data.range.groupBy) + ' totals</span></div>' +
     (trendRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>PERIOD</th><th>PRODUCED</th><th>GOOD</th><th>REJECTED</th><th>ACTUAL HOURS</th><th>THROUGHPUT</th></tr></thead><tbody>' + trendRows + '</tbody></table></div>' : '<div class="empty-state">No production records in this date range.</div>') + '</section>' +
     '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Worker productivity</strong><span class="subtle">Output per recorded actual hour; not inferred from scheduled hours</span></div>' +
@@ -1160,8 +1199,10 @@ function exportAnalyticsCsv() {
     ['Quality', 'QC pass rate', '', data.quality.passRatePercent === null ? '' : data.quality.passRatePercent, '%', data.quality.inspectedQty + ' units inspected'],
     ['Quality', 'QC fail rate', '', data.quality.failRatePercent === null ? '' : data.quality.failRatePercent, '%', 'Inspection-level rate'],
     ['Rework', 'Reworked quantity', '', data.rework.reworkedQty, 'units', 'Filtered by rework completion date'],
-    ['Downtime', 'Total duration', '', data.downtime.totalHours, 'hours', data.downtime.records + ' records']
+    ['Downtime', 'Total duration', '', data.downtime.totalHours, 'hours', data.downtime.records + ' records'],
+    ['Machine OEE', 'Overall OEE', '', data.machineOee.totals.oeePercent === null ? '' : data.machineOee.totals.oeePercent, '%', data.machineOee.machinesWithOee + ' / ' + data.machineOee.machineCount + ' machines have complete OEE data']
   ];
+  data.machineOee.machines.forEach((machine) => rows.push(['Machine OEE', machine.machineName, '', machine.oeePercent === null ? '' : machine.oeePercent, '%', 'Availability: ' + (machine.availabilityPercent === null ? 'n/a' : machine.availabilityPercent) + '; performance: ' + (machine.rawPerformancePercent === null ? 'n/a' : machine.rawPerformancePercent) + '; quality: ' + (machine.qualityPercent === null ? 'n/a' : machine.qualityPercent) + '; downtime: ' + machine.effectiveDowntimeHours + ' hrs; utilization: ' + machine.capacityUtilizationPercent]));
   data.productionTrend.forEach((point) => rows.push(['Trend', 'Produced quantity', point.period, point.producedQty, 'units', 'Good: ' + point.goodQty + '; rejected: ' + point.rejectedQty + '; actual hours: ' + point.actualHours]));
   data.workers.forEach((worker) => rows.push(['Worker', worker.workerName, '', worker.producedQty, 'units', 'Actual hours: ' + worker.actualHours + '; units/hour: ' + (worker.unitsPerActualHour === null ? 'not available' : worker.unitsPerActualHour)]));
   data.downtime.machineDowntime.forEach((item) => rows.push(['Machine downtime', item.machineName, '', item.minutes, 'minutes', item.hours + ' hours']));
@@ -1497,7 +1538,7 @@ function machinesPage() {
     const upcoming = (machine.maintenanceWindows || []).filter((item) => item.endDate >= today).length;
     return '<tr><td><strong>' + safe(machine.name) + '</strong><div class="subtle">' + safe(machine.code) + '</div></td>' +
       '<td>' + safe(machine.type || '—') + '<div class="subtle">' + safe(machine.location || 'Location not set') + '</div></td>' +
-      '<td>' + safe(skills) + '</td><td>' + Number(machine.capacityHoursPerDay).toFixed(1) + ' hrs/day</td>' +
+      '<td>' + safe(skills) + '</td><td>' + Number(machine.capacityHoursPerDay).toFixed(1) + ' hrs/day</td><td>' + (Number(machine.idealUnitsPerHour) > 0 ? Number(machine.idealUnitsPerHour).toLocaleString('en-IN') + ' units/hr' : 'Not configured') + '</td>' +
       '<td>' + status(machine.active === false ? 'Inactive' : available ? 'Available today' : 'Maintenance') + '<div class="subtle">' + upcoming + ' upcoming window(s)</div></td>' +
       '<td><div class="machine-actions">' + (canManage ? '<button class="table-button" data-edit-machine="' + safe(machine.id) + '">Edit</button><button class="table-button" data-add-maintenance="' + safe(machine.id) + '">Maintenance</button>' : '—') + '</div></td></tr>';
   }).join('');
@@ -1505,14 +1546,14 @@ function machinesPage() {
     '<tr><td><strong>' + safe(item.machineName) + '</strong><div class="subtle">' + safe(item.id) + '</div></td><td>' + safe(item.startDate) + ' → ' + safe(item.endDate) + '</td><td>' + safe(item.reason) + (item.notes ? '<div class="subtle">' + safe(item.notes) + '</div>' : '') + '</td><td>' +
     (canManage ? '<button class="table-button" data-machine-id="' + safe(item.machineId) + '" data-remove-maintenance="' + safe(item.id) + '">Remove</button>' : '—') + '</td></tr>'
   ).join('');
-  return head('EQUIPMENT', 'Machines & equipment', 'Register production equipment, set operating capacity, maintain operation compatibility, and block maintenance dates from future plans.',
+  return head('EQUIPMENT', 'Machines & equipment', 'Register production equipment, set operating capacity and ideal throughput rates, maintain operation compatibility, and block maintenance dates from future plans.',
       canManage ? '<button class="primary-button" data-add-machine>＋ Add machine</button>' : '') +
     '<div class="inventory-grid"><article class="inventory-stat"><span>REGISTERED MACHINES</span><strong>' + machines.length + '</strong><small>Across the selected facility</small></article>' +
     '<article class="inventory-stat"><span>ACTIVE EQUIPMENT</span><strong>' + active.length + '</strong><small>Eligible for new assignments</small></article>' +
     '<article class="inventory-stat"><span>DAILY MACHINE CAPACITY</span><strong>' + capacity.toFixed(1) + '</strong><small>Available machine-hours per operating day</small></article>' +
     '<article class="inventory-stat"><span>NOT AVAILABLE TODAY</span><strong>' + (machines.length - active.filter((machine) => window.FactoryFlowMachines.isAvailableOn(machine, today)).length) + '</strong><small>' + unavailableToday + ' active machine(s) in maintenance</small></article></div>' +
     '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Equipment register</strong><span class="subtle">' + machines.length + ' machine(s)</span></div>' +
-    (rows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>MACHINE</th><th>TYPE / LOCATION</th><th>SUPPORTED OPERATIONS</th><th>CAPACITY</th><th>STATUS</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>' :
+    (rows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>MACHINE</th><th>TYPE / LOCATION</th><th>SUPPORTED OPERATIONS</th><th>CAPACITY</th><th>IDEAL RATE</th><th>STATUS</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>' :
       '<div class="empty-state"><h2>No machines registered</h2><p>Add machines to enable machine-aware production planning, capacity checks and maintenance scheduling.</p>' + (canManage ? '<button class="primary-button" data-add-machine>＋ Register first machine</button>' : '') + '</div>') + '</section>' +
     '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Planned maintenance</strong><span class="subtle">' + futureWindows.length + ' upcoming window(s)</span></div>' +
     (maintenanceRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>MACHINE</th><th>WINDOW</th><th>REASON / NOTES</th><th></th></tr></thead><tbody>' + maintenanceRows + '</tbody></table></div>' :
@@ -1529,7 +1570,8 @@ function editMachine(machineId) {
     '<label>Machine name<input required name="name" maxlength="100" value="' + safe(machine ? machine.name : '') + '" placeholder="e.g. Flexo Press 01"></label></div>' +
     '<div class="form-row"><label>Equipment type<input name="type" maxlength="80" value="' + safe(machine ? machine.type || '' : '') + '" placeholder="e.g. Flexographic printer"></label>' +
     '<label>Location<input name="location" maxlength="100" value="' + safe(machine ? machine.location || '' : '') + '" placeholder="e.g. Shop floor A"></label></div>' +
-    '<label>Daily operating capacity (hours)<input required type="number" name="capacityHoursPerDay" min="0.25" max="24" step="0.25" value="' + (machine ? Number(machine.capacityHoursPerDay) : 8) + '"></label>' +
+    '<div class="form-row"><label>Daily operating capacity (hours)<input required type="number" name="capacityHoursPerDay" min="0.25" max="24" step="0.25" value="' + (machine ? Number(machine.capacityHoursPerDay) : 8) + '"></label>' +
+    '<label>Ideal output rate (units/hour)<input type="number" name="idealUnitsPerHour" min="0" max="1000000" step="0.01" value="' + (machine && Number(machine.idealUnitsPerHour) > 0 ? Number(machine.idealUnitsPerHour) : '') + '" placeholder="e.g. 120"></label></div>' +
     '<label>Supported operations / skills<input name="supportedSkills" maxlength="500" value="' + safe(skills) + '" placeholder="Printing, lamination, cutting"></label>' +
     '<small class="subtle">Leave supported operations blank for a general-purpose machine. Use comma-separated names that match a job’s required skill.</small>' +
     (machine ? '<label class="facility-inline-check"><input type="checkbox" name="active"' + (machine.active !== false ? ' checked' : '') + '> Machine active and eligible for new work</label>' : '') +
@@ -1540,6 +1582,7 @@ function editMachine(machineId) {
     const payload = {
       code: data.get('code'), name: data.get('name'), type: data.get('type'),
       location: data.get('location'), capacityHoursPerDay: Number(data.get('capacityHoursPerDay')),
+      idealUnitsPerHour: data.get('idealUnitsPerHour') === '' ? 0 : Number(data.get('idealUnitsPerHour')),
       supportedSkills: data.get('supportedSkills').split(',').map((value) => value.trim()).filter(Boolean)
     };
     if (machine) payload.active = ui('#machineForm [name="active"]').checked;
