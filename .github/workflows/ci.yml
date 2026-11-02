@@ -12,6 +12,7 @@ on:
       - feat/auth-rbac-user-management
       - feat/multi-facility-workspaces
       - feat/inventory-forecasting-procurement-automation
+      - feat/ai-production-scheduling-optimizer
   pull_request:
     branches:
       - main

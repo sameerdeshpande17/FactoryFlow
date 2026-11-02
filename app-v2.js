@@ -62,10 +62,13 @@ let syncInFlight = false;
 let inventoryForecast = null;
 let forecastLoading = false;
 let forecastRequestId = 0;
+let scheduleOptimization = null;
+let scheduleOptimizationLoading = false;
+let scheduleOptimizationRequestId = 0;
 const ui = (selector) => document.querySelector(selector);
 const all = (selector) => [...document.querySelectorAll(selector)];
 const currency = (value) => new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(value);
-const stClass = (value) => ({ Sent: 'setup', Viewed: 'on-track', 'Follow up': 'delayed', Accepted: 'running', 'In production': 'running', 'With worker': 'on-track', 'Material pending': 'delayed', 'QC review': 'setup', 'In transit': 'on-track', Confirmed: 'running', 'Part received': 'setup', Received: 'in-stock', Draft: 'setup', Cancelled: 'critical', 'In stock': 'in-stock', 'Low stock': 'low', Critical: 'critical', Paid: 'in-stock', Overdue: 'critical', 'Due soon': 'low', 'Critical': 'critical', 'Reorder': 'low', 'Watch': 'low', 'Healthy': 'on-track', 'No history': 'setup', 'Needs data': 'critical' }[value] || 'setup');
+const stClass = (value) => ({ Sent: 'setup', Viewed: 'on-track', 'Follow up': 'delayed', Accepted: 'running', 'In production': 'running', 'With worker': 'on-track', 'Material pending': 'delayed', 'QC review': 'setup', 'In transit': 'on-track', Confirmed: 'running', 'Part received': 'setup', Received: 'in-stock', Draft: 'setup', Cancelled: 'critical', 'In stock': 'in-stock', 'Low stock': 'low', Critical: 'critical', 'Needs estimate': 'setup', 'Capacity gap': 'critical', 'Partially scheduled': 'low', 'Scheduled': 'on-track', 'Already covered': 'in-stock', Paid: 'in-stock', Overdue: 'critical', 'Due soon': 'low', 'Critical': 'critical', 'Reorder': 'low', 'Watch': 'low', 'Healthy': 'on-track', 'No history': 'setup', 'Needs data': 'critical' }[value] || 'setup');
 
 const titles = {
   dashboard: ['JOB-WORK OS', 'Overview'], quotes: ['SALES', 'Quotes'], jobs: ['JOB CONTROL', 'Jobs'],
@@ -76,6 +79,9 @@ const titles = {
 
 function save(shouldSync = true) {
   inventoryForecast = null;
+  scheduleOptimization = null;
+  scheduleOptimizationLoading = false;
+  scheduleOptimizationRequestId += 1;
   forecastLoading = false;
   forecastRequestId += 1;
   localStorage.setItem('ff-quotes', JSON.stringify(quotes));
@@ -122,6 +128,9 @@ async function syncWorkspace() {
 }
 
 async function hydrateWorkspace() {
+  scheduleOptimization = null;
+  scheduleOptimizationLoading = false;
+  scheduleOptimizationRequestId += 1;
   if (location.protocol === 'file:') {
     setDataStatus('Authenticated server required', 'offline');
     workspaceReady = false;
@@ -164,6 +173,8 @@ async function hydrateWorkspace() {
     replace(downtimeLogs, 'downtimeLogs');
     window.FactoryFlowInventory.ensureStockMetadata(materials);
     inventoryForecast = null;
+    scheduleOptimization = null;
+    scheduleOptimizationLoading = false;
     forecastLoading = false;
     forecastRequestId += 1;
     workspaceReady = true;
@@ -824,6 +835,162 @@ function removeProductionSession(sessionId) {
   notify(session.id + ' removed from the production schedule.');
 }
 
+async function runScheduleOptimization() {
+  if (scheduleOptimizationLoading) return;
+  const form = ui('#optimizerOptionsForm');
+  if (!form) return;
+  const data = new FormData(form);
+  const options = {
+    startDate: localDateISO(),
+    horizonDays: Number(data.get('horizonDays')),
+    includeWeekends: data.get('includeWeekends') === 'on'
+  };
+  scheduleOptimizationLoading = true;
+  scheduleOptimization = null;
+  const requestId = ++scheduleOptimizationRequestId;
+  const facilityId = window.FactoryFlowAuth.state.activeFacilityId;
+  render();
+  try {
+    const payload = await window.FactoryFlowAuth.request('/api/scheduling/optimize', {
+      method: 'POST',
+      body: JSON.stringify(options)
+    });
+    if (requestId === scheduleOptimizationRequestId && facilityId === window.FactoryFlowAuth.state.activeFacilityId) {
+      scheduleOptimization = { facilityId: payload.facilityId, plan: payload.plan };
+    }
+  } catch (error) {
+    if (requestId === scheduleOptimizationRequestId && facilityId === window.FactoryFlowAuth.state.activeFacilityId) notify(error.message);
+  } finally {
+    if (requestId === scheduleOptimizationRequestId && facilityId === window.FactoryFlowAuth.state.activeFacilityId) {
+      scheduleOptimizationLoading = false;
+      if (app.view === 'schedule') render();
+    }
+  }
+}
+
+function confirmScheduleOptimization() {
+  if (!scheduleOptimization || !scheduleOptimization.plan.proposals.length) return;
+  if (!window.FactoryFlowAuth.has('schedule.manage')) return notify('You do not have permission to apply a production schedule.');
+  const plan = scheduleOptimization.plan;
+  const proposalRows = plan.proposals.slice(0, 8).map((item) =>
+    '<li>' + safe(item.date + ' · ' + item.jobId + ' · ' + item.workerName + ' · ' + Number(item.hours).toFixed(1) + ' hrs') + '</li>'
+  ).join('');
+  openModal('<h2 id="modalTitle">Apply optimized production schedule?</h2><p>This will create ' + plan.proposals.length + ' production sessions totalling ' + Number(plan.summary.scheduledHours).toFixed(1) + ' worker hours in the currently selected facility.</p><p>The server will recalculate the plan against the latest jobs, workers and committed sessions before saving. Existing sessions will be preserved.</p>' +
+    (proposalRows ? '<ul>' + proposalRows + '</ul>' : '') +
+    (plan.proposals.length > 8 ? '<p class="subtle">And ' + (plan.proposals.length - 8) + ' additional proposed session(s).</p>' : '') +
+    '<p id="optimizerApplyError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="button" class="primary-button" data-confirm-optimizer-apply>Apply sessions</button></div>');
+  const applyButton = ui('[data-confirm-optimizer-apply]');
+  if (applyButton) applyButton.addEventListener('click', applyScheduleOptimization);
+}
+
+async function applyScheduleOptimization() {
+  if (!scheduleOptimization || !window.FactoryFlowAuth.has('schedule.manage')) return;
+  const options = scheduleOptimization.plan.options;
+  const button = ui('[data-confirm-optimizer-apply]');
+  if (button) { button.disabled = true; button.textContent = 'Rechecking capacity…'; }
+  try {
+    const result = await window.FactoryFlowAuth.request('/api/scheduling/optimize/apply', {
+      method: 'POST',
+      body: JSON.stringify(options)
+    });
+    schedules.push(...result.appliedSessions.filter((session) => !schedules.some((item) => item.id === session.id)));
+    scheduleOptimization = null;
+    closeModal();
+    save(false);
+    goto('schedule');
+    notify(result.appliedSessions.length + ' optimized production session(s) applied. Existing schedules were preserved.');
+  } catch (error) {
+    const node = ui('#optimizerApplyError');
+    if (node) {
+      node.textContent = error.message;
+      node.hidden = false;
+      if (button) { button.disabled = false; button.textContent = 'Apply sessions'; }
+    } else {
+      notify(error.message);
+    }
+  }
+}
+
+function configureJobSchedule(jobId) {
+  if (!window.FactoryFlowAuth.has('schedule.manage')) return;
+  const job = jobs.find((item) => item.id === jobId);
+  if (!job) return;
+  const dueDate = job.dueDate && window.FactoryFlowScheduling.validDate(job.dueDate) ? job.dueDate : '';
+  openModal('<h2 id="modalTitle">Scheduling inputs · ' + safe(job.id) + '</h2><p>' + safe(job.customer + ' · ' + job.item) + '</p><form id="jobSchedulingForm" class="form-grid">' +
+    '<label>Estimated total production hours<input required name="estimatedHours" type="number" min="0.25" max="100000" step="0.25" value="' + (Number(job.estimatedHours) > 0 ? Number(job.estimatedHours) : '') + '" placeholder="e.g. 24"></label>' +
+    '<div class="form-row"><label>Job priority<select name="priority">' + ['Low', 'Normal', 'High', 'Urgent'].map((value) => '<option value="' + value + '"' + ((job.priority || 'Normal') === value ? ' selected' : '') + '>' + value + '</option>').join('') + '</select></label><label>Required operation / skill<input name="requiredSkill" maxlength="100" value="' + safe(job.requiredSkill || '') + '" placeholder="e.g. Printing"></label></div>' +
+    '<label>Target completion date<input name="dueDate" type="date" value="' + safe(dueDate) + '"></label>' +
+    '<p class="subtle">The estimate represents total production hours for this job. Recorded actual hours and already committed future sessions are subtracted by the optimizer. Required skill should match a worker profile’s skill.</p>' +
+    '<p id="jobSchedulingError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save planning inputs</button></div></form>');
+  ui('#jobSchedulingForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const estimatedHours = Number(data.get('estimatedHours'));
+    const due = data.get('dueDate');
+    if (!Number.isFinite(estimatedHours) || estimatedHours <= 0 || estimatedHours > 100000) {
+      const node = ui('#jobSchedulingError');
+      node.textContent = 'Estimated hours must be greater than zero and no more than 100,000.';
+      node.hidden = false;
+      return;
+    }
+    if (due && !window.FactoryFlowScheduling.validDate(due)) {
+      const node = ui('#jobSchedulingError');
+      node.textContent = 'Choose a valid target completion date.';
+      node.hidden = false;
+      return;
+    }
+    job.estimatedHours = estimatedHours;
+    job.priority = data.get('priority');
+    job.requiredSkill = data.get('requiredSkill').trim();
+    job.dueDate = due;
+    if (due) job.due = new Date(due + 'T00:00:00').toLocaleDateString('en-IN');
+    save(false);
+    closeModal();
+    if (workspaceReady) await syncWorkspace();
+    goto('schedule');
+    notify('Scheduling inputs saved for ' + job.id + '.');
+  });
+}
+
+function scheduleOptimizerPanel() {
+  const canApply = window.FactoryFlowAuth.has('schedule.manage');
+  const optionsForm = '<form id="optimizerOptionsForm" class="optimizer-controls"><label>Planning horizon<select name="horizonDays"><option value="7">7 days</option><option value="14" selected>14 days</option><option value="30">30 days</option></select></label>' +
+    '<label class="optimizer-weekend"><input type="checkbox" name="includeWeekends"> Include weekends</label>' +
+    '<button class="primary-button" type="submit"' + (scheduleOptimizationLoading ? ' disabled' : '') + '>' + (scheduleOptimizationLoading ? 'Optimizing…' : '✦ Optimize workload') + '</button></form>';
+  let resultMarkup = '<div class="empty-state"><h2>Build an optimized schedule</h2><p>The optimizer ranks active jobs by due date and priority, then allocates work to compatible workers within their remaining daily capacity. Preview first; existing schedules are not changed until you apply the suggestions.</p></div>';
+  if (scheduleOptimization) {
+    const plan = scheduleOptimization.plan;
+    const summary = plan.summary;
+    const proposalRows = plan.proposals.map((item) =>
+      '<tr><td>' + safe(item.date) + '</td><td class="order-code">' + safe(item.jobId) + '</td><td>' + safe(item.workerName) + '</td><td>' + Number(item.hours).toFixed(1) + ' hrs</td><td>' + safe(item.priority) + '</td></tr>'
+    ).join('');
+    const jobRows = plan.jobPlans.map((item) => {
+      const estimateAction = item.status === 'Needs estimate' && canApply
+        ? '<button class="table-button" data-configure-job-optimizer="' + safe(item.jobId) + '">Add estimate</button>'
+        : '';
+      return '<tr><td class="order-code">' + safe(item.jobId) + '<div class="subtle">' + safe(item.customer + ' · ' + item.job) + '</div></td><td>' + safe(item.priority) + '</td><td>' + (item.estimatedHours === null ? '—' : Number(item.estimatedHours).toFixed(1) + ' hrs') + '</td><td>' + Number(item.actualHours || 0).toFixed(1) + ' hrs</td><td>' + Number(item.committedHours || 0).toFixed(1) + ' hrs</td><td>' + Number(item.proposedHours || 0).toFixed(1) + ' hrs</td><td>' + (item.unscheduledHours > 0 ? '<strong>' + Number(item.unscheduledHours).toFixed(1) + ' hrs</strong>' : '—') + '</td><td>' + status(item.deadlineRisk ? 'Critical' : item.status) + '</td><td>' + estimateAction + '</td></tr>';
+    }).join('');
+    const dailyRows = plan.dailyLoads.filter((item) => item.proposedHours > 0).map((item) =>
+      '<tr><td>' + safe(item.date) + '</td><td>' + safe(item.workerName) + '</td><td>' + Number(item.committedHours).toFixed(1) + ' hrs</td><td>' + Number(item.proposedHours).toFixed(1) + ' hrs</td><td>' + Number(item.totalHours).toFixed(1) + ' / ' + Number(item.capacityHours).toFixed(1) + ' hrs</td></tr>'
+    ).join('');
+    const issues = plan.issues.map((item) => '<li>' + safe(item.message) + '</li>').join('');
+    resultMarkup = '<div class="inventory-grid optimizer-summary">' +
+      '<article class="inventory-stat"><span>PROPOSED SESSIONS</span><strong>' + summary.proposedSessionCount + '</strong><small>' + Number(summary.scheduledHours).toFixed(1) + ' worker hours</small></article>' +
+      '<article class="inventory-stat"><span>FULLY SCHEDULED JOBS</span><strong>' + summary.scheduledJobCount + '</strong><small>' + summary.partialJobCount + ' partially scheduled</small></article>' +
+      '<article class="inventory-stat"><span>UNSCHEDULED HOURS</span><strong>' + Number(summary.unscheduledHours).toFixed(1) + '</strong><small>' + summary.capacityGapCount + ' jobs with capacity gaps</small></article>' +
+      '<article class="inventory-stat"><span>DEADLINE RISKS</span><strong>' + summary.deadlineRiskCount + '</strong><small>' + (summary.onTimePercent === null ? 'No dated jobs to score' : summary.onTimePercent.toFixed(1) + '% dated jobs projected on time') + '</small></article></div>' +
+      '<section class="optimizer-result-block"><div class="toolbar"><strong>Suggested production sessions</strong><span class="subtle">Preview only · ' + plan.options.startDate + ' · ' + plan.options.horizonDays + ' days</span></div>' +
+      (proposalRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>DATE</th><th>JOB</th><th>WORKER</th><th>HOURS</th><th>PRIORITY</th></tr></thead><tbody>' + proposalRows + '</tbody></table></div>' : '<div class="empty-state"><p>No new sessions can be proposed. Add job estimates or review worker capacity and availability.</p></div>') + '</section>' +
+      '<section class="optimizer-result-block"><div class="toolbar"><strong>Job-level schedule assessment</strong><span class="subtle">Actual hours and committed future sessions reduce the estimate</span></div>' +
+      (jobRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>JOB</th><th>PRIORITY</th><th>ESTIMATE</th><th>ACTUAL</th><th>COMMITTED</th><th>PROPOSED</th><th>UNSCHEDULED</th><th>ASSESSMENT</th><th></th></tr></thead><tbody>' + jobRows + '</tbody></table></div>' : '<div class="empty-state">No active jobs found.</div>') + '</section>' +
+      '<section class="optimizer-result-block"><div class="toolbar"><strong>Daily worker capacity after proposals</strong><span class="subtle">Committed + proposed hours</span></div>' +
+      (dailyRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>DATE</th><th>WORKER</th><th>COMMITTED</th><th>PROPOSED</th><th>TOTAL / CAPACITY</th></tr></thead><tbody>' + dailyRows + '</tbody></table></div>' : '<div class="empty-state">No worker capacity has been allocated.</div>') + '</section>' +
+      (issues ? '<section class="optimizer-result-block"><div class="toolbar"><strong>Optimizer notes</strong></div><ul>' + issues + '</ul></section>' : '') +
+      (canApply && plan.proposals.length ? '<div class="optimizer-apply-row"><span class="subtle">Applying will recalculate on the server and add new sessions without deleting existing ones.</span><button class="primary-button" data-apply-optimizer>Apply ' + plan.proposals.length + ' suggested sessions</button></div>' : '');
+  }
+  return '<section class="content-card optimizer-panel"><div class="toolbar"><div><strong style="font-size:13px">✦ AI-assisted schedule optimizer</strong><p class="subtle">A transparent, rules-based optimizer. No live assignments are changed during preview.</p></div></div>' + optionsForm + resultMarkup + '</section>';
+}
+
 function schedulePage() {
   const analysis = window.FactoryFlowScheduling.analyzeSchedule(jobs, schedules, workers);
   const upcoming = analysis.sessions.filter((session) => session.date >= localDateISO());
@@ -847,7 +1014,7 @@ function schedulePage() {
     (sessionRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>DATE / OPERATION</th><th>JOB</th><th>WORKER</th><th>PLANNED</th><th>DEADLINE</th><th></th></tr></thead><tbody>' + sessionRows + '</tbody></table></div>' : '<div class="empty-state"><h2>No production sessions scheduled</h2><p>Schedule an active job to start building the production queue.</p></div>') + '</section>' +
     '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Worker capacity by day</strong><span class="subtle">Hours assigned vs daily capacity</span></div>' +
     (capacityRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>WORKER / DATE</th><th>ASSIGNED</th><th>CAPACITY</th><th>UTILISATION</th></tr></thead><tbody>' + capacityRows + '</tbody></table></div>' : '<div class="empty-state"><p>Capacity utilisation will appear when sessions are scheduled.</p></div>') + '</section>' +
-    ((analysis.capacityConflicts.length || analysis.deadlineRisks.length || analysis.issues.length) ? '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Scheduling alerts</strong></div><ul>' + conflictItems.concat(riskItems, issueItems).join('') + '</ul></section>' : '');
+    ((analysis.capacityConflicts.length || analysis.deadlineRisks.length || analysis.issues.length) ? '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong style="font-size:12px">Scheduling alerts</strong></div><ul>' + conflictItems.concat(riskItems, issueItems).join('') + '</ul></section>' : '') + scheduleOptimizerPanel();
 }
 
 function currentAnalytics() {
@@ -1349,7 +1516,7 @@ function newJob() {
     return;
   }
   const options = activeWorkers.map((worker) => '<option value="' + safe(worker.id) + '">' + safe(worker.name + ' · ' + worker.skill) + '</option>').join('');
-  openModal('<h2 id="modalTitle">Create job</h2><p>Turn an accepted quote into a trackable production job.</p><form id="jobForm" class="form-grid"><label>Customer<input required name="customer" placeholder="Customer name"></label><label>Work description<input required name="item" placeholder="e.g. Corrugated carton · 5-ply"></label><div class="form-row"><label>Quantity<input required name="qty" type="number" min="1" placeholder="0"></label><label>Initial worker<select name="workerId">' + options + '</select></label></div><label>Target completion date (optional)<input name="dueDate" type="date"></label><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="primary-button" type="submit">Create job</button></div></form>');
+  openModal('<h2 id="modalTitle">Create job</h2><p>Turn an accepted quote into a trackable production job.</p><form id="jobForm" class="form-grid"><label>Customer<input required name="customer" placeholder="Customer name"></label><label>Work description<input required name="item" placeholder="e.g. Corrugated carton · 5-ply"></label><div class="form-row"><label>Quantity<input required name="qty" type="number" min="1" placeholder="0"></label><label>Initial worker<select name="workerId">' + options + '</select></label></div><div class="form-row"><label>Estimated production hours (optional)<input name="estimatedHours" type="number" min="0.25" max="100000" step="0.25" placeholder="e.g. 24"></label><label>Job priority<select name="priority"><option>Normal</option><option>Low</option><option>High</option><option>Urgent</option></select></label></div><label>Required operation / skill (optional)<input name="requiredSkill" maxlength="100" placeholder="e.g. Printing, Carton conversion"></label><label>Target completion date (optional)<input name="dueDate" type="date"></label><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="primary-button" type="submit">Create job</button></div></form>');
   ui('#jobForm').addEventListener('submit', (event) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
@@ -1363,7 +1530,17 @@ function newJob() {
       notify('Choose a valid target completion date.');
       return;
     }
-    const job = { id: 'JB-' + (842 + jobs.length), customer: data.get('customer').trim(), item: data.get('item').trim(), qty: Number(data.get('qty')), worker: worker.name, due: dueDate ? new Date(dueDate + 'T00:00:00').toLocaleDateString('en-IN') : 'To schedule', dueDate: dueDate || '', status: 'With worker', progress: 0, owner: 'RK' };
+    const estimatedHours = data.get('estimatedHours').trim();
+    const requiredSkill = data.get('requiredSkill').trim();
+    if (estimatedHours && (!Number.isFinite(Number(estimatedHours)) || Number(estimatedHours) <= 0 || Number(estimatedHours) > 100000)) {
+      notify('Estimated production hours must be greater than zero and no more than 100,000.');
+      return;
+    }
+    if (requiredSkill.length > 100) {
+      notify('Required operation / skill must be 100 characters or fewer.');
+      return;
+    }
+    const job = { id: 'JB-' + (842 + jobs.length), customer: data.get('customer').trim(), item: data.get('item').trim(), qty: Number(data.get('qty')), worker: worker.name, due: dueDate ? new Date(dueDate + 'T00:00:00').toLocaleDateString('en-IN') : 'To schedule', dueDate: dueDate || '', estimatedHours: estimatedHours ? Number(estimatedHours) : null, priority: data.get('priority') || 'Normal', requiredSkill, status: 'With worker', progress: 0, owner: 'RK' };
     jobs.unshift(job);
     save(); closeModal(); goto('jobs'); notify('Job created and assigned to ' + worker.name + '. Schedule its production sessions next.');
   });
@@ -1826,6 +2003,10 @@ function bind() {
   all('[data-delivery-proof]').forEach((button) => button.addEventListener('click', () => openDeliveryProof(button.dataset.deliveryProof)));
   all('[data-edit-worker]').forEach((button) => button.addEventListener('click', () => editWorkerProfile(button.dataset.editWorker)));
   all('[data-remove-session]').forEach((button) => button.addEventListener('click', () => removeProductionSession(button.dataset.removeSession)));
+  const optimizerForm = ui('#optimizerOptionsForm');
+  if (optimizerForm) optimizerForm.addEventListener('submit', (event) => { event.preventDefault(); runScheduleOptimization(); });
+  all('[data-apply-optimizer]').forEach((button) => button.addEventListener('click', confirmScheduleOptimization));
+  all('[data-configure-job-optimizer]').forEach((button) => button.addEventListener('click', () => configureJobSchedule(button.dataset.configureJobOptimizer)));
   all('[data-schedule-create]').forEach((button) => button.addEventListener('click', () => {
     const active = window.FactoryFlowScheduling.activeJobs(jobs);
     if (!active.length) return notify('Create an active production job before scheduling.');
