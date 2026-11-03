@@ -288,6 +288,7 @@ function projectStoreForUser(store, user) {
     reworkLogs: [],
     downtimeLogs: [],
     machines: list(store.machines).filter((machine) => schedules.some((session) => session.machineId === machine.id)),
+    maintenanceRecords: [],
     users: [],
     auditLogs: []
   };
