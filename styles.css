@@ -238,3 +238,15 @@ body.auth-required .app-shell { visibility: hidden; }
 .machine-oee-notes p { margin: 0; color: var(--muted); font-size: 10px; line-height: 1.5; }
 @media (max-width: 850px) { .machine-oee-kpis { grid-template-columns: repeat(2,minmax(0,1fr)); } .machine-oee-subgrid { grid-template-columns: 1fr; } }
 @media (max-width: 560px) { .machine-oee-kpis { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+
+
+/* Predictive maintenance and machine health */
+.maintenance-signal-list { display: grid; gap: 4px; min-width: 165px; }
+.maintenance-signal-list small { color: var(--muted); font-size: 10px; line-height: 1.4; }
+.maintenance-method { display: grid; gap: 8px; padding: 14px; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.maintenance-method p { margin: 0; }
+.machine-health-score { display: inline-flex; align-items: center; gap: 6px; font-weight: 750; }
+.machine-health-score small { color: var(--muted); font-weight: 500; }
+@media (max-width: 760px) {
+  .maintenance-signal-list { min-width: 130px; }
+}
