@@ -634,6 +634,9 @@ async function handleApi(request, response, pathname) {
       requirePermission(current, 'machines.manage');
       const body = await readJson(request);
       const scopedMachines = store.machines.filter((machine) => machine.facilityId === current.facility.id);
+      if (!scopedMachines.some((machine) => machine.id === matchedService[1])) {
+        return sendJson(response, 404, { error: 'Machine not found in the selected facility.' });
+      }
       const record = machineModel.recordService(store.maintenanceRecords, scopedMachines, matchedService[1], body, {
         id: current.user.id,
         name: current.user.name
