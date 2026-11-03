@@ -60,6 +60,7 @@ function readStore() {
     reworkLogs: list(stored.reworkLogs),
     downtimeLogs: list(stored.downtimeLogs),
     machines: list(stored.machines),
+    maintenanceRecords: list(stored.maintenanceRecords),
     users: list(stored.users),
     auditLogs: list(stored.auditLogs)
   });
