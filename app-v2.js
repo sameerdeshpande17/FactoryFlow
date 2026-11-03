@@ -46,6 +46,7 @@ const qcInspections = JSON.parse(localStorage.getItem('ff-qc-inspections') || 'n
 const reworkLogs = JSON.parse(localStorage.getItem('ff-rework-logs') || 'null') || [];
 const downtimeLogs = JSON.parse(localStorage.getItem('ff-downtime-logs') || 'null') || [];
 const machines = JSON.parse(localStorage.getItem('ff-machines') || 'null') || [];
+const maintenanceRecords = JSON.parse(localStorage.getItem('ff-maintenance-records') || 'null') || [];
 const analyticsFilters = JSON.parse(localStorage.getItem('ff-analytics-filters') || 'null') || { fromDate: '', toDate: '', groupBy: 'day' };
 
 const materials = [
@@ -75,7 +76,7 @@ const titles = {
   dashboard: ['JOB-WORK OS', 'Overview'], quotes: ['SALES', 'Quotes'], jobs: ['JOB CONTROL', 'Jobs'],
   purchases: ['PURCHASING', 'Purchase orders'], materials: ['RAW MATERIAL', 'Materials'],
   workers: ['PARTNERS', 'Job workers'], invoices: ['FINANCE', 'GST invoices'],
-  marketplace: ['B2B NETWORK', 'Marketplace'], facilities: ['ORGANIZATION', 'Factory facilities'], forecast: ['INVENTORY INTELLIGENCE', 'Demand forecast & reorder'], users: ['ADMINISTRATION', 'User management'], machines: ['EQUIPMENT', 'Machines & equipment'], planning: ['PRODUCTION', 'Material planning'], schedule: ['PRODUCTION', 'Production schedule'], execution: ['PRODUCTION', 'Production execution & QC'], analytics: ['MANAGEMENT', 'Production analytics'], costing: ['FINANCE', 'Job costing'], settings: ['WORKSPACE', 'Settings']
+  marketplace: ['B2B NETWORK', 'Marketplace'], facilities: ['ORGANIZATION', 'Factory facilities'], forecast: ['INVENTORY INTELLIGENCE', 'Demand forecast & reorder'], users: ['ADMINISTRATION', 'User management'], machines: ['EQUIPMENT', 'Machines & equipment'], maintenance: ['EQUIPMENT HEALTH', 'Predictive maintenance'], planning: ['PRODUCTION', 'Material planning'], schedule: ['PRODUCTION', 'Production schedule'], execution: ['PRODUCTION', 'Production execution & QC'], analytics: ['MANAGEMENT', 'Production analytics'], costing: ['FINANCE', 'Job costing'], settings: ['WORKSPACE', 'Settings']
 };
 
 function save(shouldSync = true) {
@@ -98,6 +99,7 @@ function save(shouldSync = true) {
   localStorage.setItem('ff-rework-logs', JSON.stringify(reworkLogs));
   localStorage.setItem('ff-downtime-logs', JSON.stringify(downtimeLogs));
   localStorage.setItem('ff-machines', JSON.stringify(machines));
+  localStorage.setItem('ff-maintenance-records', JSON.stringify(maintenanceRecords));
   localStorage.setItem('ff-analytics-filters', JSON.stringify(analyticsFilters));
   localStorage.setItem('ff-language', app.language);
   ui('#quoteBadge').textContent = quotes.filter((quote) => quote.status === 'Follow up').length || '0';
@@ -119,7 +121,7 @@ async function syncWorkspace() {
   try {
     await window.FactoryFlowAuth.request('/api/sync', {
       method: 'POST',
-      body: JSON.stringify({ quotes, jobs, purchases, materials, deliveries, receipts, movements, requirements, workers, schedules, productionLogs, qcInspections, reworkLogs, downtimeLogs, machines })
+      body: JSON.stringify({ quotes, jobs, purchases, materials, deliveries, receipts, movements, requirements, workers, schedules, productionLogs, qcInspections, reworkLogs, downtimeLogs, machines, maintenanceRecords })
     });
     setDataStatus('Synced', 'online');
   } catch {
@@ -174,6 +176,7 @@ async function hydrateWorkspace() {
     replace(reworkLogs, 'reworkLogs');
     replace(downtimeLogs, 'downtimeLogs');
     replace(machines, 'machines');
+    replace(maintenanceRecords, 'maintenanceRecords');
     window.FactoryFlowInventory.ensureStockMetadata(materials);
     inventoryForecast = null;
     scheduleOptimization = null;
