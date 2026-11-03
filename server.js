@@ -626,6 +626,31 @@ async function handleApi(request, response, pathname) {
     } catch (error) { return publicAuthError(error, response); }
   }
 
+  const serviceMatch = /^\/api\/machines\/([^/]+)\/service$/;
+  const matchedService = serviceMatch.exec(pathname);
+  if (matchedService && request.method === 'POST') {
+    try {
+      requireCsrf(request, current);
+      requirePermission(current, 'machines.manage');
+      const body = await readJson(request);
+      const scopedMachines = store.machines.filter((machine) => machine.facilityId === current.facility.id);
+      const record = machineModel.recordService(store.maintenanceRecords, scopedMachines, matchedService[1], body, {
+        id: current.user.id,
+        name: current.user.name
+      });
+      record.facilityId = current.facility.id;
+      appendAudit(store, current.user, 'machine.service_recorded', 'machine', record.machineId, {
+        serviceRecordId: record.id,
+        serviceDate: record.serviceDate,
+        serviceType: record.serviceType,
+        performedBy: record.performedBy
+      }, request);
+      writeStore(store);
+      const scoped = facilityModel.projectStoreForFacility(store, current.facility.id);
+      return sendJson(response, 201, { record, maintenanceRecords: scoped.maintenanceRecords });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
   if (pathname === '/api/scheduling/optimize' && request.method === 'POST') {
     try {
       requirePermission(current, 'schedule.view');
