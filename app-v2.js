@@ -76,7 +76,7 @@ const titles = {
   dashboard: ['JOB-WORK OS', 'Overview'], quotes: ['SALES', 'Quotes'], jobs: ['JOB CONTROL', 'Jobs'],
   purchases: ['PURCHASING', 'Purchase orders'], materials: ['RAW MATERIAL', 'Materials'],
   workers: ['PARTNERS', 'Job workers'], invoices: ['FINANCE', 'GST invoices'],
-  marketplace: ['B2B NETWORK', 'Marketplace'], facilities: ['ORGANIZATION', 'Factory facilities'], forecast: ['INVENTORY INTELLIGENCE', 'Demand forecast & reorder'], users: ['ADMINISTRATION', 'User management'], machines: ['EQUIPMENT', 'Machines & equipment'], maintenance: ['EQUIPMENT HEALTH', 'Predictive maintenance'], planning: ['PRODUCTION', 'Material planning'], schedule: ['PRODUCTION', 'Production schedule'], execution: ['PRODUCTION', 'Production execution & QC'], analytics: ['MANAGEMENT', 'Production analytics'], costing: ['FINANCE', 'Job costing'], settings: ['WORKSPACE', 'Settings']
+  marketplace: ['B2B NETWORK', 'Marketplace'], facilities: ['ORGANIZATION', 'Factory facilities'], forecast: ['INVENTORY INTELLIGENCE', 'Demand forecast & reorder'], users: ['ADMINISTRATION', 'User management'], machines: ['EQUIPMENT', 'Machines & equipment'], maintenance: ['EQUIPMENT HEALTH', 'Predictive maintenance'], maintenance: ['EQUIPMENT HEALTH', 'Predictive maintenance'], planning: ['PRODUCTION', 'Material planning'], schedule: ['PRODUCTION', 'Production schedule'], execution: ['PRODUCTION', 'Production execution & QC'], analytics: ['MANAGEMENT', 'Production analytics'], costing: ['FINANCE', 'Job costing'], settings: ['WORKSPACE', 'Settings']
 };
 
 function save(shouldSync = true) {
@@ -1526,6 +1526,74 @@ function workersPage() {
 }
 
 
+function currentMachineHealth() {
+  return window.FactoryFlowMachines.buildMachineHealth({
+    machines,
+    schedules,
+    productionLogs,
+    downtimeLogs,
+    maintenanceRecords,
+    asOfDate: localDateISO(),
+    lookbackDays: 90
+  });
+}
+
+function maintenancePage() {
+  const health = currentMachineHealth();
+  const canManage = window.FactoryFlowAuth.has('machines.manage');
+  const levelClass = (level) => level === 'Critical' ? 'critical' : level === 'High' ? 'delayed' : level === 'Moderate' ? 'low' : 'on-track';
+  const serviceClass = (state) => state === 'Overdue' ? 'critical' : state === 'Due soon' ? 'low' : state === 'On track' ? 'on-track' : 'setup';
+  const rows = health.machines.map((item) => {
+    const due = item.serviceStatus === 'Not configured' ? 'Configure interval' :
+      item.serviceStatus === 'Overdue' ? 'Service overdue' :
+      item.serviceStatus === 'Due soon' ? 'Due soon' : 'On track';
+    const dueDetail = item.serviceIntervalHours > 0
+      ? (item.hoursUntilDue <= 0 ? Math.abs(item.hoursUntilDue).toFixed(1) + ' hrs overdue' : item.hoursUntilDue.toFixed(1) + ' hrs remaining')
+      : 'No hour interval';
+    const dateDetail = item.nextDueDate
+      ? (item.daysUntilDue <= 0 ? Math.abs(item.daysUntilDue) + ' days overdue' : item.daysUntilDue + ' days remaining')
+      : 'No calendar interval';
+    return '<tr><td><strong>' + safe(item.machineName) + '</strong><div class="subtle">' + safe(item.machineCode) + '</div></td>' +
+      '<td><span class="status ' + serviceClass(item.serviceStatus) + '">' + safe(due) + '</span><div class="subtle">' + safe(dueDetail) + ' · ' + safe(dateDetail) + '</div></td>' +
+      '<td>' + Number(item.usageHoursSinceService).toFixed(1) + ' hrs<div class="subtle">Since ' + safe(item.lastServiceDate || 'machine setup') + '</div></td>' +
+      '<td><span class="status ' + levelClass(item.riskLevel) + '">' + safe(item.riskLevel) + ' · ' + item.riskScore + '/100</span><div class="subtle">' + item.downtimeEvents + ' event(s) · ' + item.downtimeHours.toFixed(1) + ' hrs / 90 days</div></td>' +
+      '<td>' + (item.signals.length ? '<div class="maintenance-signal-list">' + item.signals.map((signal) => '<small>' + safe(signal) + '</small>').join('') + '</div>' : '<span class="subtle">No current review signal</span>') + '</td>' +
+      '<td><div class="machine-actions">' + (canManage ? '<button class="table-button" data-edit-machine="' + safe(item.machineId) + '">Service plan</button><button class="table-button" data-service-machine="' + safe(item.machineId) + '">Record service</button>' : '—') + '</div></td></tr>';
+  }).join('');
+  const history = maintenanceRecords.slice().sort((a, b) =>
+    String(b.serviceDate || '').localeCompare(String(a.serviceDate || '')) ||
+    String(b.createdAt || '').localeCompare(String(a.createdAt || ''))
+  ).slice(0, 12).map((record) =>
+    '<tr><td>' + safe(record.serviceDate) + '</td><td><strong>' + safe(record.machineName || record.machineCode) + '</strong><div class="subtle">' + safe(record.machineCode || '') + '</div></td>' +
+    '<td>' + safe(record.serviceType) + '</td><td>' + safe(record.performedBy) + '</td><td>' + safe(record.notes || '—') + '</td></tr>'
+  ).join('');
+  const trend = health.downtimeTrend.slice(-14).map((item) =>
+    '<tr><td>' + safe(item.date) + '</td><td>' + item.events + '</td><td>' + item.breakdowns + '</td><td>' + item.downtimeHours.toFixed(2) + ' hrs</td></tr>'
+  ).join('');
+  return head('EQUIPMENT HEALTH', 'Predictive maintenance', 'Review preventive service due dates, recent breakdown patterns and transparent machine risk indicators.', '<button class="secondary-button" data-go="machines">Manage equipment</button>') +
+    '<div class="inventory-grid">' +
+      '<article class="inventory-stat"><span>REGISTERED MACHINES</span><strong>' + health.summary.machineCount + '</strong><small>' + health.summary.configuredCount + ' with service intervals configured</small></article>' +
+      '<article class="inventory-stat"><span>SERVICE OVERDUE</span><strong>' + health.summary.overdueCount + '</strong><small>Hour-based or calendar interval reached</small></article>' +
+      '<article class="inventory-stat"><span>DUE SOON</span><strong>' + health.summary.dueSoonCount + '</strong><small>Inside configured reminder lead time</small></article>' +
+      '<article class="inventory-stat"><span>HIGH / CRITICAL RISK</span><strong>' + health.summary.highRiskCount + '</strong><small>Rules-based review score</small></article>' +
+      '<article class="inventory-stat"><span>DOWNTIME · 90 DAYS</span><strong>' + health.summary.downtimeHours.toFixed(1) + ' hrs</strong><small>Recorded across registered machines</small></article>' +
+    '</div>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><div><strong>Equipment health & service status</strong><p class="subtle">As of ' + safe(health.asOfDate) + ' · ' + health.lookbackDays + '-day downtime lookback</p></div><span class="subtle">' + health.machines.length + ' machine(s)</span></div>' +
+    (rows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>MACHINE</th><th>PREVENTIVE SERVICE</th><th>USAGE SINCE SERVICE</th><th>BREAKDOWN RISK</th><th>WHY IT IS FLAGGED</th><th>ACTIONS</th></tr></thead><tbody>' + rows + '</tbody></table></div>' :
+      '<div class="empty-state"><h2>No machines registered</h2><p>Register equipment before setting service intervals or reviewing health signals.</p><button class="primary-button" data-go="machines">Open machines & equipment</button></div>') +
+    '</section>' +
+    '<div class="analytics-two-col"><section class="content-card"><div class="toolbar"><strong>Recent downtime trend</strong><span class="subtle">90-day window</span></div>' +
+      (trend ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>DATE</th><th>EVENTS</th><th>BREAKDOWNS</th><th>DOWNTIME</th></tr></thead><tbody>' + trend + '</tbody></table></div>' : '<div class="empty-state">No machine downtime recorded in the lookback window.</div>') +
+    '</section><section class="content-card"><div class="toolbar"><strong>Service history</strong><span class="subtle">Latest 12 records</span></div>' +
+      (history ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>DATE</th><th>MACHINE</th><th>SERVICE</th><th>PERFORMED BY</th><th>NOTES</th></tr></thead><tbody>' + history + '</tbody></table></div>' : '<div class="empty-state">No service records yet. Record a completed service to start a machine history.</div>') +
+    '</section></div>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong>How the risk indicator works</strong></div><div class="maintenance-method">' +
+      '<p>Scores are a review aid, not a probability of failure. The rules combine overdue preventive service, downtime frequency, recorded downtime hours, and repeated breakdown / repair reasons in the last 90 days.</p>' +
+      '<p>Service usage is estimated from machine-linked scheduled hours, using recorded actual hours when available. Calendar due dates use the latest service date. Set either an hour interval, a calendar interval, or both on the machine service plan.</p>' +
+      '<p>No IoT sensors, vibration readings or live condition data are assumed. A missing service plan is shown as not configured rather than being assigned an invented due date.</p>' +
+    '</div></section>';
+}
+
 function machinesPage() {
   const canManage = window.FactoryFlowAuth.has('machines.manage');
   const today = localDateISO();
@@ -1576,6 +1644,11 @@ function editMachine(machineId) {
     '<label>Location<input name="location" maxlength="100" value="' + safe(machine ? machine.location || '' : '') + '" placeholder="e.g. Shop floor A"></label></div>' +
     '<div class="form-row"><label>Daily operating capacity (hours)<input required type="number" name="capacityHoursPerDay" min="0.25" max="24" step="0.25" value="' + (machine ? Number(machine.capacityHoursPerDay) : 8) + '"></label>' +
     '<label>Ideal output rate (units/hour)<input type="number" name="idealUnitsPerHour" min="0" max="1000000" step="0.01" value="' + (machine && Number(machine.idealUnitsPerHour) > 0 ? Number(machine.idealUnitsPerHour) : '') + '" placeholder="e.g. 120"></label></div>' +
+    '<div class="form-row"><label>Service interval (operating hours)<input type="number" name="serviceIntervalHours" min="0" max="100000" step="0.25" value="' + (machine ? Number(machine.serviceIntervalHours) || 0 : 0) + '" placeholder="e.g. 500"></label>' +
+    '<label>Service interval (calendar days)<input type="number" name="serviceIntervalDays" min="0" max="3650" step="1" value="' + (machine ? Number(machine.serviceIntervalDays) || 0 : 0) + '" placeholder="e.g. 90"></label></div>' +
+    '<div class="form-row"><label>Remind before due (hours)<input type="number" name="serviceAlertLeadHours" min="0" max="500" step="1" value="' + (machine && machine.serviceAlertLeadHours !== undefined ? Number(machine.serviceAlertLeadHours) : 10) + '"></label>' +
+    '<label>Remind before due (days)<input type="number" name="serviceAlertLeadDays" min="0" max="365" step="1" value="' + (machine && machine.serviceAlertLeadDays !== undefined ? Number(machine.serviceAlertLeadDays) : 7) + '"></label></div>' +
+    '<small class="subtle">Set an hour interval, a calendar interval, or both. Zero disables that interval. Usage is estimated from scheduled machine-hours, falling back to recorded actual hours when present.</small>' +
     '<label>Supported operations / skills<input name="supportedSkills" maxlength="500" value="' + safe(skills) + '" placeholder="Printing, lamination, cutting"></label>' +
     '<small class="subtle">Leave supported operations blank for a general-purpose machine. Use comma-separated names that match a job’s required skill.</small>' +
     (machine ? '<label class="facility-inline-check"><input type="checkbox" name="active"' + (machine.active !== false ? ' checked' : '') + '> Machine active and eligible for new work</label>' : '') +
@@ -1587,6 +1660,10 @@ function editMachine(machineId) {
       code: data.get('code'), name: data.get('name'), type: data.get('type'),
       location: data.get('location'), capacityHoursPerDay: Number(data.get('capacityHoursPerDay')),
       idealUnitsPerHour: data.get('idealUnitsPerHour') === '' ? 0 : Number(data.get('idealUnitsPerHour')),
+      serviceIntervalHours: Number(data.get('serviceIntervalHours') || 0),
+      serviceIntervalDays: Number(data.get('serviceIntervalDays') || 0),
+      serviceAlertLeadHours: Number(data.get('serviceAlertLeadHours')),
+      serviceAlertLeadDays: Number(data.get('serviceAlertLeadDays')),
       supportedSkills: data.get('supportedSkills').split(',').map((value) => value.trim()).filter(Boolean)
     };
     if (machine) payload.active = ui('#machineForm [name="active"]').checked;
@@ -1604,6 +1681,47 @@ function editMachine(machineId) {
       notify(result.machine.name + ' saved.');
     } catch (error) {
       const node = ui('#machineError');
+      node.textContent = error.message;
+      node.hidden = false;
+    }
+  });
+}
+
+
+function addMachineServiceRecord(machineId) {
+  if (!window.FactoryFlowAuth.has('machines.manage')) return;
+  const machine = machines.find((item) => item.id === machineId);
+  if (!machine) return notify('Machine not found in this facility.');
+  const today = localDateISO();
+  const actor = window.FactoryFlowAuth.state.user;
+  const types = ['Preventive service', 'Inspection', 'Lubrication', 'Calibration', 'Repair', 'Parts replacement', 'Other'];
+  openModal('<h2 id="modalTitle">Record completed service · ' + safe(machine.name) + '</h2>' +
+    '<form id="machineServiceForm" class="form-grid"><div class="form-row"><label>Service date<input type="date" name="serviceDate" required max="' + today + '" value="' + today + '"></label>' +
+    '<label>Service type<select name="serviceType">' + types.map((type) => '<option value="' + safe(type) + '">' + safe(type) + '</option>').join('') + '</select></label></div>' +
+    '<label>Performed by<input required maxlength="100" name="performedBy" value="' + safe(actor.name || '') + '"></label>' +
+    '<label>Work completed / parts / observations<textarea name="notes" maxlength="500" rows="3" placeholder="Describe the work completed and any follow-up needed"></textarea></label>' +
+    '<p class="subtle">Saving this record resets the hour and calendar service counters from the service date.</p>' +
+    '<p id="machineServiceError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button class="primary-button" type="submit">Save service record</button></div></form>');
+  ui('#machineServiceForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    try {
+      const result = await window.FactoryFlowAuth.request('/api/machines/' + encodeURIComponent(machineId) + '/service', {
+        method: 'POST',
+        body: JSON.stringify({
+          serviceDate: data.get('serviceDate'),
+          serviceType: data.get('serviceType'),
+          performedBy: data.get('performedBy'),
+          notes: data.get('notes')
+        })
+      });
+      maintenanceRecords.push(result.record);
+      save(false);
+      closeModal();
+      goto('maintenance');
+      notify('Service record saved for ' + machine.name + '.');
+    } catch (error) {
+      const node = ui('#machineServiceError');
       node.textContent = error.message;
       node.hidden = false;
     }
@@ -1677,13 +1795,13 @@ function settingsPage() {
 }
 
 function render() {
-  const permissions = { dashboard: 'dashboard.view', quotes: 'quotes.view', jobs: 'jobs.view', purchases: 'purchases.view', materials: 'materials.view', forecast: 'materials.view', workers: 'workers.view', invoices: 'invoices.view', marketplace: 'marketplace.view', facilities: 'facilities.view', planning: 'planning.view', schedule: 'schedule.view', execution: 'execution.view', analytics: 'analytics.view', costing: 'costing.view', settings: 'settings.view', users: 'users.manage', machines: 'machines.view' };
+  const permissions = { dashboard: 'dashboard.view', quotes: 'quotes.view', jobs: 'jobs.view', purchases: 'purchases.view', materials: 'materials.view', forecast: 'materials.view', workers: 'workers.view', invoices: 'invoices.view', marketplace: 'marketplace.view', facilities: 'facilities.view', planning: 'planning.view', schedule: 'schedule.view', execution: 'execution.view', analytics: 'analytics.view', costing: 'costing.view', settings: 'settings.view', users: 'users.manage', machines: 'machines.view', maintenance: 'machines.view' };
   if (!window.FactoryFlowAuth.has(permissions[app.view])) app.view = 'dashboard';
   const label = titles[app.view];
   ui('#pageKicker').textContent = label[0];
   ui('#pageTitle').textContent = label[1];
   all('.nav-link[data-view]').forEach((button) => button.classList.toggle('active', button.dataset.view === app.view));
-  const pages = { dashboard: window.FactoryFlowAuth.state.user.role === 'worker' ? workerDashboard : window.FactoryFlowAuth.state.user.role === 'supervisor' ? supervisorDashboard : dashboard, quotes: quotesPage, jobs: jobsPage, purchases: purchasesPage, materials: materialsPage, forecast: forecastPage, workers: workersPage, invoices: invoicesPage, marketplace: marketplacePage, facilities: facilitiesPage, planning: planningPage, schedule: schedulePage, execution: executionPage, analytics: analyticsPage, costing: costingPage, settings: settingsPage, users: usersPage, machines: machinesPage };
+  const pages = { dashboard: window.FactoryFlowAuth.state.user.role === 'worker' ? workerDashboard : window.FactoryFlowAuth.state.user.role === 'supervisor' ? supervisorDashboard : dashboard, quotes: quotesPage, jobs: jobsPage, purchases: purchasesPage, materials: materialsPage, forecast: forecastPage, workers: workersPage, invoices: invoicesPage, marketplace: marketplacePage, facilities: facilitiesPage, planning: planningPage, schedule: schedulePage, execution: executionPage, analytics: analyticsPage, costing: costingPage, settings: settingsPage, users: usersPage, machines: machinesPage, maintenance: maintenancePage };
   ui('#view').innerHTML = pages[app.view]();
   bind();
 }
@@ -2200,6 +2318,7 @@ function bind() {
   all('[data-add-machine]').forEach((button) => button.addEventListener('click', () => editMachine()));
   all('[data-edit-machine]').forEach((button) => button.addEventListener('click', () => editMachine(button.dataset.editMachine)));
   all('[data-add-maintenance]').forEach((button) => button.addEventListener('click', () => addMachineMaintenance(button.dataset.addMaintenance)));
+  all('[data-service-machine]').forEach((button) => button.addEventListener('click', () => addMachineServiceRecord(button.dataset.serviceMachine)));
   all('[data-remove-maintenance]').forEach((button) => button.addEventListener('click', () => removeMachineMaintenance(button.dataset.machineId, button.dataset.removeMaintenance)));
   all('[data-edit-facility]').forEach((button) => button.addEventListener('click', () => manageFacility(button.dataset.editFacility)));
   all('[data-use-facility]').forEach((button) => button.addEventListener('click', () => switchActiveFacility(button.dataset.useFacility)));
