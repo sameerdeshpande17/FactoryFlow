@@ -233,7 +233,7 @@ test('authenticates users, enforces role access, persists operations and protect
 
   const foreignMachineService = await fetch(baseUrl + '/api/machines/' + encodeURIComponent(createdMachine.id) + '/service', {
     method: 'POST',
-    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-OTHER', 'Content-Type': 'application/json' },
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': puneFacility.id, 'Content-Type': 'application/json' },
     body: JSON.stringify({
       serviceDate: '2026-11-02',
       serviceType: 'Inspection',
