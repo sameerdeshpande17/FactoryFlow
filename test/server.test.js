@@ -591,7 +591,7 @@ test('authenticates users, enforces role access, persists operations and protect
     headers: { Cookie: workerCookie, 'X-Facility-ID': 'FAC-001' }
   });
   assert.equal(workerForecastDenied.status, 403);
-  const workerServiceDenied = await fetch(baseUrl + '/api/machines/' + encodeURIComponent('MCH-101') + '/service', {
+  const workerServiceDenied = await fetch(baseUrl + '/api/machines/' + encodeURIComponent(createdMachine.id) + '/service', {
     method: 'POST',
     headers: { Cookie: workerCookie, 'X-CSRF-Token': workerCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
     body: JSON.stringify({ serviceDate: '2026-11-02', serviceType: 'Inspection', performedBy: 'Worker' })
