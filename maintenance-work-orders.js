@@ -29,7 +29,8 @@
   function nextId(records, prefix, field) {
     let max = 100;
     list(records).forEach((record) => {
-      const match = new RegExp('^' + prefix + '-(\\d+).exec(String(field ? record && record[field] : record && record.id || ''));
+      const value = field ? record && record[field] : record && record.id;
+      const match = new RegExp('^' + prefix + '-(\\d+)$').exec(String(value || ''));
       if (match) max = Math.max(max, Number(match[1]));
     });
     return prefix + '-' + (max + 1);
