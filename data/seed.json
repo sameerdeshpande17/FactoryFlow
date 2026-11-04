@@ -55,5 +55,6 @@
   "users": [],
   "auditLogs": [],
   "facilities": [],
-  "maintenanceRecords": []
+  "maintenanceRecords": [],
+  "maintenanceWorkOrders": []
 }
