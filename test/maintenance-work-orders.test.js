@@ -15,12 +15,16 @@ test('creates facility-linked maintenance work orders with validated priority an
     type: 'Breakdown repair',
     priority: 'Urgent',
     dueDate: '2026-11-08',
-    assignedTo: 'Ravi'
+    assignedTo: 'Ravi',
+    laborHours: 3.5,
+    laborRate: 400
   }, { id: 'USR-1', name: 'Manager' });
   assert.equal(order.id, 'MWO-101');
   assert.equal(order.facilityId, 'FAC-001');
   assert.equal(order.machineId, 'MCH-101');
   assert.equal(order.status, 'Assigned');
+  assert.equal(order.laborHours, 3.5);
+  assert.equal(order.laborCost, 1400);
   assert.equal(order.createdBy, 'USR-1');
   assert.deepEqual(order.partsUsed, []);
   assert.throws(() => workOrders.createWorkOrder(records, [machine()], {
@@ -92,4 +96,17 @@ test('uses unpriced spare-part snapshots without inventing a cost', () => {
   }, 3, 'pieces');
   assert.equal(part.unitCost, null);
   assert.equal(part.costAmount, null);
+});
+
+test('updates labour estimates and recalculates repair labour cost', () => {
+  const orders = [];
+  const order = workOrders.createWorkOrder(orders, [machine()], {
+    machineId: 'MCH-101', title: 'Repair drive motor', description: 'Replace motor bearings.'
+  });
+  workOrders.updateWorkOrder(orders, order.id, { laborHours: 2.5, laborRate: 600 });
+  assert.equal(order.laborCost, 1500);
+  workOrders.updateWorkOrder(orders, order.id, { laborHours: 4 });
+  assert.equal(order.laborRate, 600);
+  assert.equal(order.laborCost, 2400);
+  assert.throws(() => workOrders.updateWorkOrder(orders, order.id, { laborRate: -1 }), /labour hours and hourly rate/i);
 });
