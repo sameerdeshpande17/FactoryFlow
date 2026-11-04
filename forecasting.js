@@ -65,6 +65,8 @@ function buildMovementHistory(material, movements, settings) {
 
   (Array.isArray(movements) ? movements : []).forEach((movement) => {
     if (!movement || movement.materialSku !== material.sku) return;
+    // Maintenance spare issues reduce stock but are not production material demand.
+    if (movement.workOrderId || movement.type === 'Maintenance issue') return;
     const isConsumption = movement.type === 'Consumption' || movement.direction === 'OUT';
     if (!isConsumption) return;
     const at = new Date(movement.createdAt || movement.timestamp || '').getTime();

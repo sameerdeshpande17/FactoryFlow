@@ -38,6 +38,8 @@ Opening index.html directly is still supported as a browser-only fallback, but c
 - Machine/workstation downtime logging by time, machine, reason, reporter, and optional job reference, with machine and reason summaries
 - Machine-level OEE analytics with availability, performance against configurable ideal throughput, good-unit quality, scheduled-day capacity utilization, merged downtime, and explainable bottleneck signals
 - Machine preventive-maintenance plans with operating-hour and calendar intervals, due-soon/overdue reminders, audited service history and rules-based breakdown-risk indicators
+- Maintenance work orders with machine linkage, assignment, priorities, due dates, controlled status transitions, completion service-history updates, labour estimates and repair-cost snapshots
+- Maintenance spare-part designation, work-order-linked stock issue, automatic inventory deduction, unit-cost snapshots and auditable stock movements
 - Production output captures actual hours worked and can link to a scheduled session; legacy records without actual hours are excluded from throughput rates and flagged in analytics
 - Role-based access for administrators, managers, production supervisors, and workers, with server-enforced permissions and worker-scoped workspace data
 - Multiple factory facilities under one organization, with facility-specific jobs, inventory, workers, schedules, production/QC records, downtime and delivery proofs
@@ -100,3 +102,12 @@ Service usage is estimated from machine-linked scheduled hours. When production 
 The breakdown-risk score is a deterministic heuristic, not a failure probability or trained prediction model. It combines overdue/due-soon preventive service, downtime-event frequency, recorded downtime hours, and repeated breakdown/repair reason labels during the 90-day lookback. It does not use IoT sensors, vibration readings, temperature, or live machine telemetry. Use it to prioritize human inspection, not as a substitute for a maintenance engineer’s assessment.
 
 Service logs are facility-scoped, permission-checked and audited. Administrators and managers can configure intervals and record service; production supervisors can view service status and health indicators.
+
+
+## Maintenance work orders and spare parts
+
+Create a work order against a registered machine for a breakdown repair, preventive task, inspection, calibration, lubrication or parts replacement. Work orders support technician assignment, priority, target completion date, labour-hour and hourly-rate estimates, resolution notes and controlled status transitions. A completed repair automatically adds a machine service-history record, resetting the preventive-maintenance baseline.
+
+In Materials, administrators and managers can mark stocked inventory items as **maintenance spare parts**. Production supervisors can issue those items against open work orders. An issue checks available quantity and unit, deducts inventory, stores the quantity and current unit-cost snapshot on the work order, and records an inventory movement linked to the work-order ID. Work orders show labour cost and issued-part cost separately so repair cost is traceable.
+
+Completed or cancelled work orders are locked against further edits and spare-part issues. Work orders, spare-part movements and service records are facility-scoped and audited. Workers do not receive work-order or maintenance service-history data.

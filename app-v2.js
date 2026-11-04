@@ -47,6 +47,8 @@ const reworkLogs = JSON.parse(localStorage.getItem('ff-rework-logs') || 'null') 
 const downtimeLogs = JSON.parse(localStorage.getItem('ff-downtime-logs') || 'null') || [];
 const machines = JSON.parse(localStorage.getItem('ff-machines') || 'null') || [];
 const maintenanceRecords = JSON.parse(localStorage.getItem('ff-maintenance-records') || 'null') || [];
+const maintenanceWorkOrders = JSON.parse(localStorage.getItem('ff-maintenance-work-orders') || 'null') || [];
+let maintenanceWorkOrderFilter = 'All';
 const analyticsFilters = JSON.parse(localStorage.getItem('ff-analytics-filters') || 'null') || { fromDate: '', toDate: '', groupBy: 'day' };
 
 const materials = [
@@ -76,7 +78,7 @@ const titles = {
   dashboard: ['JOB-WORK OS', 'Overview'], quotes: ['SALES', 'Quotes'], jobs: ['JOB CONTROL', 'Jobs'],
   purchases: ['PURCHASING', 'Purchase orders'], materials: ['RAW MATERIAL', 'Materials'],
   workers: ['PARTNERS', 'Job workers'], invoices: ['FINANCE', 'GST invoices'],
-  marketplace: ['B2B NETWORK', 'Marketplace'], facilities: ['ORGANIZATION', 'Factory facilities'], forecast: ['INVENTORY INTELLIGENCE', 'Demand forecast & reorder'], users: ['ADMINISTRATION', 'User management'], machines: ['EQUIPMENT', 'Machines & equipment'], maintenance: ['EQUIPMENT HEALTH', 'Predictive maintenance'], planning: ['PRODUCTION', 'Material planning'], schedule: ['PRODUCTION', 'Production schedule'], execution: ['PRODUCTION', 'Production execution & QC'], analytics: ['MANAGEMENT', 'Production analytics'], costing: ['FINANCE', 'Job costing'], settings: ['WORKSPACE', 'Settings']
+  marketplace: ['B2B NETWORK', 'Marketplace'], facilities: ['ORGANIZATION', 'Factory facilities'], forecast: ['INVENTORY INTELLIGENCE', 'Demand forecast & reorder'], users: ['ADMINISTRATION', 'User management'], machines: ['EQUIPMENT', 'Machines & equipment'], maintenance: ['EQUIPMENT HEALTH', 'Predictive maintenance'], 'work-orders': ['EQUIPMENT', 'Maintenance work orders'], planning: ['PRODUCTION', 'Material planning'], schedule: ['PRODUCTION', 'Production schedule'], execution: ['PRODUCTION', 'Production execution & QC'], analytics: ['MANAGEMENT', 'Production analytics'], costing: ['FINANCE', 'Job costing'], settings: ['WORKSPACE', 'Settings']
 };
 
 function save(shouldSync = true) {
@@ -100,6 +102,7 @@ function save(shouldSync = true) {
   localStorage.setItem('ff-downtime-logs', JSON.stringify(downtimeLogs));
   localStorage.setItem('ff-machines', JSON.stringify(machines));
   localStorage.setItem('ff-maintenance-records', JSON.stringify(maintenanceRecords));
+  localStorage.setItem('ff-maintenance-work-orders', JSON.stringify(maintenanceWorkOrders));
   localStorage.setItem('ff-analytics-filters', JSON.stringify(analyticsFilters));
   localStorage.setItem('ff-language', app.language);
   ui('#quoteBadge').textContent = quotes.filter((quote) => quote.status === 'Follow up').length || '0';
@@ -121,7 +124,7 @@ async function syncWorkspace() {
   try {
     await window.FactoryFlowAuth.request('/api/sync', {
       method: 'POST',
-      body: JSON.stringify({ quotes, jobs, purchases, materials, deliveries, receipts, movements, requirements, workers, schedules, productionLogs, qcInspections, reworkLogs, downtimeLogs, machines, maintenanceRecords })
+      body: JSON.stringify({ quotes, jobs, purchases, materials, deliveries, receipts, movements, requirements, workers, schedules, productionLogs, qcInspections, reworkLogs, downtimeLogs, machines, maintenanceRecords, maintenanceWorkOrders })
     });
     setDataStatus('Synced', 'online');
   } catch {
@@ -177,6 +180,7 @@ async function hydrateWorkspace() {
     replace(downtimeLogs, 'downtimeLogs');
     replace(machines, 'machines');
     replace(maintenanceRecords, 'maintenanceRecords');
+    replace(maintenanceWorkOrders, 'maintenanceWorkOrders');
     window.FactoryFlowInventory.ensureStockMetadata(materials);
     inventoryForecast = null;
     scheduleOptimization = null;
@@ -430,7 +434,7 @@ function materialsPage() {
     const cost = item.unitCost !== null && item.unitCost !== undefined && item.unitCost !== '' && Number.isFinite(Number(item.unitCost))
       ? currency(Number(item.unitCost)) + ' / ' + (parsed ? parsed.unitLabel : 'unit')
       : 'Not set';
-    return '<tr><td class="order-code">' + safe(item.sku) + '</td><td class="item-name">' + safe(item.item) + '</td><td>' + safe(item.category) + '</td><td>' + safe(item.location) + '</td><td>' + safe(item.onHand) + '</td><td><div class="stock-bar ' + (item.status === 'Critical' ? 'critical' : item.status === 'Low stock' ? 'warn' : '') + '"><i style="width:' + item.stock + '%"></i></div></td><td>' + status(item.status) + '</td><td>' + cost + '' + (window.FactoryFlowAuth.has('materials.manage') ? '<div><button class="table-button" data-unit-cost="' + safe(item.sku) + '">Set cost</button></div>' : '') + '</td></tr>';
+    return '<tr><td class="order-code">' + safe(item.sku) + '</td><td class="item-name">' + safe(item.item) + (item.maintenancePart ? '<div class="mwo-spare-badge">Maintenance spare</div>' : '') + '</td><td>' + safe(item.category) + '</td><td>' + safe(item.location) + '</td><td>' + safe(item.onHand) + '</td><td><div class="stock-bar ' + (item.status === 'Critical' ? 'critical' : item.status === 'Low stock' ? 'warn' : '') + '"><i style="width:' + item.stock + '%"></i></div></td><td>' + status(item.status) + '</td><td>' + cost + '' + (window.FactoryFlowAuth.has('materials.manage') ? '<div class="material-actions"><button class="table-button" data-unit-cost="' + safe(item.sku) + '">Set cost</button><button class="table-button" data-toggle-spare="' + safe(item.sku) + '">' + (item.maintenancePart ? 'Remove spare flag' : 'Mark spare part') + '</button></div>' : '') + '</td></tr>';
   }).join('');
   const actions = '<button class="secondary-button" data-go="forecast">Demand forecast →</button>' + (window.FactoryFlowAuth.has('purchases.manage') ? '<button class="primary-button" data-new="purchase">＋ Purchase material</button>' : '');
   return head('RAW MATERIAL', 'Material you can trust', 'See stock health early, before a job worker or customer has to wait.', actions) + '<div class="inventory-grid"><article class="inventory-stat"><span>TRACKED MATERIALS</span><strong>' + materials.length + '</strong><small>Inventory records</small></article><article class="inventory-stat"><span>REORDER ALERTS</span><strong>' + low + '</strong><small>Needs a purchase order today</small></article><article class="inventory-stat"><span>STOCK MOVEMENTS</span><strong>' + movements.length + '</strong><small>Receipts and production usage</small></article></div><section class="content-card"><div class="toolbar"><strong style="font-size:12px">Stock by material</strong>' + (window.FactoryFlowAuth.has('materials.manage') ? '<button class="secondary-button" data-action="receive">＋ Receive material</button>' : '') + '</div><div class="table-scroll"><table class="data-table"><thead><tr><th>SKU</th><th>MATERIAL</th><th>CATEGORY</th><th>LOCATION</th><th>ON HAND</th><th>STOCK LEVEL</th><th>STATUS</th><th>UNIT COST</th></tr></thead><tbody>' + rows + '</tbody></table></div></section>' +
@@ -1594,6 +1598,200 @@ function maintenancePage() {
     '</div></section>';
 }
 
+
+function maintenanceWorkOrdersPage() {
+  const canManage = window.FactoryFlowAuth.has('maintenance.manage');
+  const orders = maintenanceWorkOrders.slice().sort((a, b) =>
+    String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || ''))
+  );
+  const visible = maintenanceWorkOrderFilter === 'All' ? orders : orders.filter((order) => order.status === maintenanceWorkOrderFilter);
+  const openCount = orders.filter((order) => !['Completed', 'Cancelled'].includes(order.status)).length;
+  const urgentCount = orders.filter((order) => !['Completed', 'Cancelled'].includes(order.status) && order.priority === 'Urgent').length;
+  const overdueCount = orders.filter((order) => !['Completed', 'Cancelled'].includes(order.status) && order.dueDate && order.dueDate < localDateISO()).length;
+  const partsCost = (order) => (order.partsUsed || []).reduce((sum, part) => sum + (Number(part.costAmount) || 0), 0);
+  const rows = visible.map((order) => {
+    const overdue = !['Completed', 'Cancelled'].includes(order.status) && order.dueDate && order.dueDate < localDateISO();
+    const parts = order.partsUsed || [];
+    const totalCost = partsCost(order) + (Number(order.laborCost) || 0);
+    return '<tr><td><strong class="order-code">' + safe(order.id) + '</strong><div class="subtle">' + safe(order.type) + '</div></td>' +
+      '<td><strong>' + safe(order.machineName) + '</strong><div class="subtle">' + safe(order.machineCode) + '</div></td>' +
+      '<td><strong>' + safe(order.title) + '</strong><div class="subtle">' + safe(order.description) + '</div></td>' +
+      '<td>' + status(order.priority) + '</td>' +
+      '<td>' + safe(order.assignedTo || 'Unassigned') + '</td>' +
+      '<td>' + (order.dueDate ? safe(order.dueDate) : '—') + (overdue ? '<div class="mwo-overdue">Overdue</div>' : '') + '</td>' +
+      '<td>' + status(order.status) + '</td>' +
+      '<td>' + parts.length + ' part(s)<div class="subtle">' + (totalCost ? currency(totalCost) : 'Cost n/a') + '</div></td>' +
+      '<td><div class="machine-actions">' + (canManage && !['Completed', 'Cancelled'].includes(order.status) ? '<button class="table-button" data-edit-work-order="' + safe(order.id) + '">Update</button><button class="table-button" data-issue-work-order-parts="' + safe(order.id) + '">Issue parts</button>' : '<button class="table-button" data-edit-work-order="' + safe(order.id) + '">View</button>') + '</div></td></tr>';
+  }).join('');
+  const filters = ['All', 'Open', 'Assigned', 'In progress', 'Waiting for parts', 'Completed', 'Cancelled'];
+  const filterButtons = filters.map((filter) => '<button type="button" class="filter-chip ' + (maintenanceWorkOrderFilter === filter ? 'active' : '') + '" data-mwo-filter="' + safe(filter) + '">' + safe(filter) + '</button>').join('');
+  const recentParts = orders.flatMap((order) => (order.partsUsed || []).map((part) => ({
+    ...part, workOrderId: order.id, machineName: order.machineName
+  }))).sort((a, b) => String(b.issuedAt || '').localeCompare(String(a.issuedAt || ''))).slice(0, 10);
+  const partRows = recentParts.map((part) =>
+    '<tr><td class="order-code">' + safe(part.workOrderId) + '</td><td>' + safe(part.machineName) + '</td><td><strong>' + safe(part.material) + '</strong><div class="subtle">' + safe(part.materialSku) + '</div></td><td>' + Number(part.quantity).toLocaleString('en-IN') + ' ' + safe(part.unit) + '</td><td>' + (part.costAmount === null ? 'Unpriced' : currency(part.costAmount)) + '</td><td>' + safe(part.issuedByName || '—') + '</td><td>' + new Date(part.issuedAt).toLocaleDateString('en-IN') + '</td></tr>'
+  ).join('');
+  return head('EQUIPMENT', 'Maintenance work orders', 'Assign repair and preventive work, issue spare parts from stock, and keep service history connected to each machine.',
+      canManage ? '<button class="primary-button" data-new-work-order>＋ Create work order</button>' : '') +
+    '<div class="inventory-grid">' +
+      '<article class="inventory-stat"><span>OPEN WORK ORDERS</span><strong>' + openCount + '</strong><small>Awaiting or in progress</small></article>' +
+      '<article class="inventory-stat"><span>URGENT</span><strong>' + urgentCount + '</strong><small>Open urgent work</small></article>' +
+      '<article class="inventory-stat"><span>OVERDUE</span><strong>' + overdueCount + '</strong><small>Past target completion date</small></article>' +
+      '<article class="inventory-stat"><span>SPARE PARTS ISSUED</span><strong>' + orders.reduce((sum, order) => sum + (order.partsUsed || []).length, 0) + '</strong><small>Linked to work orders</small></article>' +
+    '</div>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong>Work order register</strong><span class="subtle">' + orders.length + ' total</span></div>' +
+      '<div class="mwo-filters">' + filterButtons + '</div>' +
+      (rows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>WORK ORDER</th><th>MACHINE</th><th>ISSUE / TASK</th><th>PRIORITY</th><th>ASSIGNED TO</th><th>DUE DATE</th><th>STATUS</th><th>SPARE PARTS</th><th>ACTIONS</th></tr></thead><tbody>' + rows + '</tbody></table></div>' :
+        '<div class="empty-state"><h2>' + (orders.length ? 'No work orders in this filter' : 'No maintenance work orders') + '</h2><p>Create a work order when a machine needs repair, inspection or preventive service. Issued spare parts will deduct from inventory and be linked to the order.</p>' + (canManage ? '<button class="primary-button" data-new-work-order>＋ Create work order</button>' : '') + '</div>') +
+    '</section>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong>Recent spare-part issues</strong><span class="subtle">Latest 10 issues</span></div>' +
+      (partRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>WORK ORDER</th><th>MACHINE</th><th>SPARE PART</th><th>QUANTITY</th><th>COST SNAPSHOT</th><th>ISSUED BY</th><th>DATE</th></tr></thead><tbody>' + partRows + '</tbody></table></div>' : '<div class="empty-state">No spare parts have been issued to maintenance work orders.</div>') +
+    '</section>' +
+    '<section class="content-card mwo-help"><strong>Spare-part setup</strong><p>In Materials, mark stocked items as maintenance spare parts. Those items become available to issue on open work orders. Each issue reduces stock, captures the current unit-cost snapshot and creates an auditable stock movement linked to the work order.</p></section>';
+}
+
+function createMaintenanceWorkOrder() {
+  if (!window.FactoryFlowAuth.has('maintenance.manage')) return;
+  if (!machines.length) return notify('Register a machine before creating a maintenance work order.');
+  const machineOptions = machines.map((machine) => '<option value="' + safe(machine.id) + '">' + safe(machine.code + ' · ' + machine.name) + '</option>').join('');
+  const typeOptions = window.FactoryFlowMaintenanceWorkOrders.TYPES.map((type) => '<option value="' + safe(type) + '">' + safe(type) + '</option>').join('');
+  const priorityOptions = window.FactoryFlowMaintenanceWorkOrders.PRIORITIES.map((priority) => '<option value="' + safe(priority) + '"' + (priority === 'Normal' ? ' selected' : '') + '>' + safe(priority) + '</option>').join('');
+  openModal('<h2 id="modalTitle">Create maintenance work order</h2><form id="maintenanceWorkOrderForm" class="form-grid">' +
+    '<label>Machine<select required name="machineId">' + machineOptions + '</select></label>' +
+    '<label>Work-order title<input required minlength="3" maxlength="120" name="title" placeholder="e.g. Replace worn finishing roller"></label>' +
+    '<label>Issue / task description<textarea required maxlength="1200" rows="3" name="description" placeholder="Describe the fault, inspection or work required"></textarea></label>' +
+    '<div class="form-row"><label>Work type<select name="type">' + typeOptions + '</select></label><label>Priority<select name="priority">' + priorityOptions + '</select></label></div>' +
+    '<div class="form-row"><label>Assign technician<input maxlength="100" name="assignedTo" placeholder="Technician / maintenance provider"></label><label>Target completion date<input type="date" name="dueDate"></label></div>' +
+    '<div class="form-row"><label>Estimated labour hours<input type="number" name="laborHours" min="0" max="10000" step="0.25" value="0"></label><label>Labour rate (₹ / hour)<input type="number" name="laborRate" min="0" max="1000000" step="0.01" value="0"></label></div>' +
+    '<p id="mwoError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Create work order</button></div></form>');
+  ui('#maintenanceWorkOrderForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    try {
+      const result = await window.FactoryFlowAuth.request('/api/maintenance/work-orders', {
+        method: 'POST',
+        body: JSON.stringify({
+          machineId: data.get('machineId'), title: data.get('title'), description: data.get('description'),
+          type: data.get('type'), priority: data.get('priority'), assignedTo: data.get('assignedTo'), dueDate: data.get('dueDate'),
+          laborHours: Number(data.get('laborHours')), laborRate: Number(data.get('laborRate'))
+        })
+      });
+      maintenanceWorkOrders.unshift(result.workOrder);
+      save(false);
+      closeModal();
+      maintenanceWorkOrderFilter = 'All';
+      goto('work-orders');
+      notify('Work order ' + result.workOrder.id + ' created.');
+    } catch (error) {
+      const node = ui('#mwoError');
+      node.textContent = error.message;
+      node.hidden = false;
+    }
+  });
+}
+
+function editMaintenanceWorkOrder(workOrderId) {
+  const order = maintenanceWorkOrders.find((item) => item.id === workOrderId);
+  if (!order) return notify('Maintenance work order not found.');
+  const canManage = window.FactoryFlowAuth.has('maintenance.manage');
+  const completed = ['Completed', 'Cancelled'].includes(order.status);
+  const statuses = order.status === 'Open' ? ['Open', 'Assigned', 'In progress', 'Cancelled'] :
+    order.status === 'Assigned' ? ['Assigned', 'Open', 'In progress', 'Waiting for parts', 'Cancelled'] :
+    order.status === 'In progress' ? ['In progress', 'Assigned', 'Waiting for parts', 'Completed', 'Cancelled'] :
+    order.status === 'Waiting for parts' ? ['Waiting for parts', 'Assigned', 'In progress', 'Cancelled'] : [order.status];
+  const parts = (order.partsUsed || []).map((part) =>
+    '<tr><td>' + safe(part.material) + '<div class="subtle">' + safe(part.materialSku) + '</div></td><td>' + Number(part.quantity).toLocaleString('en-IN') + ' ' + safe(part.unit) + '</td><td>' + (part.costAmount === null ? 'Unpriced' : currency(part.costAmount)) + '</td></tr>'
+  ).join('');
+  openModal('<h2 id="modalTitle">' + safe(order.id) + ' · Work order</h2><p><strong>' + safe(order.machineName) + '</strong> · ' + safe(order.machineCode) + '</p>' +
+    '<div class="mwo-detail"><strong>' + safe(order.title) + '</strong><p>' + safe(order.description) + '</p><small>' + safe(order.type) + ' · ' + safe(order.priority) + ' · Due ' + safe(order.dueDate || 'not set') + '</small></div>' +
+    (canManage && !completed ? '<form id="maintenanceWorkOrderUpdateForm" class="form-grid"><div class="form-row"><label>Status<select name="status">' + statuses.map((statusValue) => '<option value="' + safe(statusValue) + '"' + (order.status === statusValue ? ' selected' : '') + '>' + safe(statusValue) + '</option>').join('') + '</select></label><label>Priority<select name="priority">' + window.FactoryFlowMaintenanceWorkOrders.PRIORITIES.map((priority) => '<option value="' + safe(priority) + '"' + (order.priority === priority ? ' selected' : '') + '>' + safe(priority) + '</option>').join('') + '</select></label></div>' +
+      '<div class="form-row"><label>Assigned technician<input name="assignedTo" maxlength="100" value="' + safe(order.assignedTo || '') + '"></label><label>Due date<input type="date" name="dueDate" value="' + safe(order.dueDate || '') + '"></label></div>' +
+      '<div class="form-row"><label>Labour hours<input type="number" name="laborHours" min="0" max="10000" step="0.25" value="' + (Number(order.laborHours) || 0) + '"></label><label>Labour rate (₹ / hour)<input type="number" name="laborRate" min="0" max="1000000" step="0.01" value="' + (Number(order.laborRate) || 0) + '"></label></div>' +
+      '<p class="subtle">Current labour cost: ' + currency(Number(order.laborCost) || 0) + ' · Spare-part issues: ' + currency((order.partsUsed || []).reduce((sum, part) => sum + (Number(part.costAmount) || 0), 0)) + '</p>' +
+      '<label>Resolution / completion notes<textarea name="resolutionNotes" maxlength="1200" rows="3">' + safe(order.resolutionNotes || '') + '</textarea></label>' +
+      '<p class="subtle">Completing this work order records a service event and resets the machine’s preventive-maintenance baseline from today.</p><p id="mwoUpdateError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Close</button><button type="submit" class="primary-button">Save updates</button></div></form>' : '<p>Status: ' + safe(order.status) + (order.resolutionNotes ? '<br>Resolution: ' + safe(order.resolutionNotes) : '') + '</p>') +
+    '<section class="mwo-parts"><strong>Issued spare parts</strong>' + (parts ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>PART</th><th>QUANTITY</th><th>COST</th></tr></thead><tbody>' + parts + '</tbody></table></div>' : '<p class="subtle">No parts issued to this work order.</p>') + '</section>');
+  if (canManage && !completed) ui('#maintenanceWorkOrderUpdateForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    try {
+      const result = await window.FactoryFlowAuth.request('/api/maintenance/work-orders/' + encodeURIComponent(order.id), {
+        method: 'PATCH',
+        body: JSON.stringify({
+          status: data.get('status'), priority: data.get('priority'), assignedTo: data.get('assignedTo'),
+          dueDate: data.get('dueDate'), resolutionNotes: data.get('resolutionNotes'),
+          laborHours: Number(data.get('laborHours')), laborRate: Number(data.get('laborRate'))
+        })
+      });
+      const index = maintenanceWorkOrders.findIndex((item) => item.id === order.id);
+      if (index >= 0) maintenanceWorkOrders[index] = result.workOrder;
+      if (result.serviceRecord) maintenanceRecords.unshift(result.serviceRecord);
+      save(false);
+      closeModal();
+      render();
+      notify('Work order ' + order.id + ' updated.');
+    } catch (error) {
+      const node = ui('#mwoUpdateError');
+      node.textContent = error.message;
+      node.hidden = false;
+    }
+  });
+}
+
+function issueMaintenanceWorkOrderParts(workOrderId) {
+  if (!window.FactoryFlowAuth.has('maintenance.manage')) return;
+  const order = maintenanceWorkOrders.find((item) => item.id === workOrderId);
+  if (!order || ['Completed', 'Cancelled'].includes(order.status)) return notify('Parts can only be issued to an open work order.');
+  const spareParts = materials.filter((item) => item.maintenancePart === true);
+  if (!spareParts.length) return notify('No spare parts are marked yet. Open Materials and mark stocked items as maintenance spare parts.');
+  const options = spareParts.map((item) => '<option value="' + safe(item.sku) + '">' + safe(item.sku + ' · ' + item.item + ' · ' + item.onHand) + '</option>').join('');
+  openModal('<h2 id="modalTitle">Issue spare parts · ' + safe(order.id) + '</h2><p>' + safe(order.machineName) + ' · ' + safe(order.title) + '</p>' +
+    '<form id="mwoPartsForm" class="form-grid"><label>Spare part<select name="materialSku">' + options + '</select></label><div class="form-row"><label>Quantity<input required name="quantity" type="number" min="0.01" step="0.01"></label><label>Unit<input required name="unit" maxlength="24" placeholder="kg, pieces, litres"></label></div>' +
+    '<p class="subtle">Stock is deducted immediately. The work order stores the issue quantity and current unit-cost snapshot.</p><p id="mwoPartsError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Issue parts</button></div></form>');
+  ui('#mwoPartsForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    try {
+      const result = await window.FactoryFlowAuth.request('/api/maintenance/work-orders/' + encodeURIComponent(order.id) + '/parts', {
+        method: 'POST',
+        body: JSON.stringify({ materialSku: data.get('materialSku'), quantity: Number(data.get('quantity')), unit: data.get('unit') })
+      });
+      const orderIndex = maintenanceWorkOrders.findIndex((item) => item.id === order.id);
+      if (orderIndex >= 0) maintenanceWorkOrders[orderIndex] = result.workOrder;
+      const materialIndex = materials.findIndex((item) => item.sku === result.material.sku);
+      if (materialIndex >= 0) materials[materialIndex] = result.material;
+      movements.unshift(result.movement);
+      save(false);
+      closeModal();
+      goto('work-orders');
+      notify(result.part.quantity + ' ' + result.part.unit + ' of ' + result.part.material + ' issued to ' + order.id + '.');
+    } catch (error) {
+      const node = ui('#mwoPartsError');
+      node.textContent = error.message;
+      node.hidden = false;
+    }
+  });
+}
+
+async function toggleMaintenanceSparePart(sku) {
+  if (!window.FactoryFlowAuth.has('materials.manage')) return;
+  const material = materials.find((item) => item.sku === sku);
+  if (!material) return notify('Material not found.');
+  try {
+    const result = await window.FactoryFlowAuth.request('/api/materials/' + encodeURIComponent(sku) + '/spare-part', {
+      method: 'PATCH',
+      body: JSON.stringify({ maintenancePart: material.maintenancePart !== true })
+    });
+    const index = materials.findIndex((item) => item.sku === sku);
+    if (index >= 0) materials[index] = result.material;
+    save(false);
+    render();
+    notify(material.item + (result.material.maintenancePart ? ' marked as a maintenance spare part.' : ' removed from the spare-parts list.'));
+  } catch (error) {
+    notify(error.message);
+  }
+}
+
 function machinesPage() {
   const canManage = window.FactoryFlowAuth.has('machines.manage');
   const today = localDateISO();
@@ -1795,13 +1993,13 @@ function settingsPage() {
 }
 
 function render() {
-  const permissions = { dashboard: 'dashboard.view', quotes: 'quotes.view', jobs: 'jobs.view', purchases: 'purchases.view', materials: 'materials.view', forecast: 'materials.view', workers: 'workers.view', invoices: 'invoices.view', marketplace: 'marketplace.view', facilities: 'facilities.view', planning: 'planning.view', schedule: 'schedule.view', execution: 'execution.view', analytics: 'analytics.view', costing: 'costing.view', settings: 'settings.view', users: 'users.manage', machines: 'machines.view', maintenance: 'machines.view' };
+  const permissions = { dashboard: 'dashboard.view', quotes: 'quotes.view', jobs: 'jobs.view', purchases: 'purchases.view', materials: 'materials.view', forecast: 'materials.view', workers: 'workers.view', invoices: 'invoices.view', marketplace: 'marketplace.view', facilities: 'facilities.view', planning: 'planning.view', schedule: 'schedule.view', execution: 'execution.view', analytics: 'analytics.view', costing: 'costing.view', settings: 'settings.view', users: 'users.manage', machines: 'machines.view', maintenance: 'machines.view', 'work-orders': 'maintenance.view' };
   if (!window.FactoryFlowAuth.has(permissions[app.view])) app.view = 'dashboard';
   const label = titles[app.view];
   ui('#pageKicker').textContent = label[0];
   ui('#pageTitle').textContent = label[1];
   all('.nav-link[data-view]').forEach((button) => button.classList.toggle('active', button.dataset.view === app.view));
-  const pages = { dashboard: window.FactoryFlowAuth.state.user.role === 'worker' ? workerDashboard : window.FactoryFlowAuth.state.user.role === 'supervisor' ? supervisorDashboard : dashboard, quotes: quotesPage, jobs: jobsPage, purchases: purchasesPage, materials: materialsPage, forecast: forecastPage, workers: workersPage, invoices: invoicesPage, marketplace: marketplacePage, facilities: facilitiesPage, planning: planningPage, schedule: schedulePage, execution: executionPage, analytics: analyticsPage, costing: costingPage, settings: settingsPage, users: usersPage, machines: machinesPage, maintenance: maintenancePage };
+  const pages = { dashboard: window.FactoryFlowAuth.state.user.role === 'worker' ? workerDashboard : window.FactoryFlowAuth.state.user.role === 'supervisor' ? supervisorDashboard : dashboard, quotes: quotesPage, jobs: jobsPage, purchases: purchasesPage, materials: materialsPage, forecast: forecastPage, workers: workersPage, invoices: invoicesPage, marketplace: marketplacePage, facilities: facilitiesPage, planning: planningPage, schedule: schedulePage, execution: executionPage, analytics: analyticsPage, costing: costingPage, settings: settingsPage, users: usersPage, machines: machinesPage, maintenance: maintenancePage, 'work-orders': maintenanceWorkOrdersPage };
   ui('#view').innerHTML = pages[app.view]();
   bind();
 }
@@ -2319,6 +2517,11 @@ function bind() {
   all('[data-edit-machine]').forEach((button) => button.addEventListener('click', () => editMachine(button.dataset.editMachine)));
   all('[data-add-maintenance]').forEach((button) => button.addEventListener('click', () => addMachineMaintenance(button.dataset.addMaintenance)));
   all('[data-service-machine]').forEach((button) => button.addEventListener('click', () => addMachineServiceRecord(button.dataset.serviceMachine)));
+  all('[data-new-work-order]').forEach((button) => button.addEventListener('click', createMaintenanceWorkOrder));
+  all('[data-edit-work-order]').forEach((button) => button.addEventListener('click', () => editMaintenanceWorkOrder(button.dataset.editWorkOrder)));
+  all('[data-issue-work-order-parts]').forEach((button) => button.addEventListener('click', () => issueMaintenanceWorkOrderParts(button.dataset.issueWorkOrderParts)));
+  all('[data-mwo-filter]').forEach((button) => button.addEventListener('click', () => { maintenanceWorkOrderFilter = button.dataset.mwoFilter; render(); }));
+  all('[data-toggle-spare]').forEach((button) => button.addEventListener('click', () => toggleMaintenanceSparePart(button.dataset.toggleSpare)));
   all('[data-remove-maintenance]').forEach((button) => button.addEventListener('click', () => removeMachineMaintenance(button.dataset.machineId, button.dataset.removeMaintenance)));
   all('[data-edit-facility]').forEach((button) => button.addEventListener('click', () => manageFacility(button.dataset.editFacility)));
   all('[data-use-facility]').forEach((button) => button.addEventListener('click', () => switchActiveFacility(button.dataset.useFacility)));

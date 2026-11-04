@@ -9,6 +9,8 @@ const facilityModel = require('./facilities.js');
 const forecasting = require('./forecasting.js');
 const scheduleOptimizer = require('./scheduler-optimizer.js');
 const machineModel = require('./machines.js');
+const inventory = require('./inventory.js');
+const maintenanceWorkOrders = require('./maintenance-work-orders.js');
 
 const root = __dirname;
 const dataDirectory = path.join(root, 'data');
@@ -61,6 +63,7 @@ function readStore() {
     downtimeLogs: list(stored.downtimeLogs),
     machines: list(stored.machines),
     maintenanceRecords: list(stored.maintenanceRecords),
+    maintenanceWorkOrders: list(stored.maintenanceWorkOrders),
     users: list(stored.users),
     auditLogs: list(stored.auditLogs)
   });
@@ -289,6 +292,7 @@ function projectStoreForUser(store, user) {
     downtimeLogs: [],
     machines: list(store.machines).filter((machine) => schedules.some((session) => session.machineId === machine.id)),
     maintenanceRecords: [],
+    maintenanceWorkOrders: [],
     users: [],
     auditLogs: []
   };
@@ -652,6 +656,147 @@ async function handleApi(request, response, pathname) {
       writeStore(store);
       const scoped = facilityModel.projectStoreForFacility(store, current.facility.id);
       return sendJson(response, 201, { record, maintenanceRecords: scoped.maintenanceRecords });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+
+
+  if (pathname === '/api/maintenance/work-orders' && request.method === 'POST') {
+    try {
+      requireCsrf(request, current);
+      requirePermission(current, 'maintenance.manage');
+      const body = await readJson(request);
+      const scopedMachines = store.machines.filter((machine) => machine.facilityId === current.facility.id);
+      const order = maintenanceWorkOrders.createWorkOrder(store.maintenanceWorkOrders, scopedMachines, body, {
+        id: current.user.id,
+        name: current.user.name
+      });
+      order.facilityId = current.facility.id;
+      appendAudit(store, current.user, 'maintenance.work_order_created', 'maintenance_work_order', order.id, {
+        machineId: order.machineId, type: order.type, priority: order.priority
+      }, request);
+      writeStore(store);
+      return sendJson(response, 201, { workOrder: order });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  const workOrderMatch = /^\/api\/maintenance\/work-orders\/([^/]+)$/;
+  const matchedWorkOrder = workOrderMatch.exec(pathname);
+  if (matchedWorkOrder && request.method === 'PATCH') {
+    try {
+      requireCsrf(request, current);
+      requirePermission(current, 'maintenance.manage');
+      const body = await readJson(request);
+      const scopedOrders = store.maintenanceWorkOrders.filter((order) => order.facilityId === current.facility.id);
+      const order = scopedOrders.find((item) => item.id === matchedWorkOrder[1]);
+      if (!order) return sendJson(response, 404, { error: 'Maintenance work order not found in the selected facility.' });
+      const previousStatus = order.status;
+      const updated = maintenanceWorkOrders.updateWorkOrder(scopedOrders, order.id, body, {
+        id: current.user.id,
+        name: current.user.name
+      });
+      let serviceRecord = null;
+      if (previousStatus !== 'Completed' && updated.status === 'Completed') {
+        const scopedMachines = store.machines.filter((machine) => machine.facilityId === current.facility.id);
+        serviceRecord = machineModel.recordService(store.maintenanceRecords, scopedMachines, updated.machineId, {
+          serviceDate: new Date().toISOString().slice(0, 10),
+          serviceType: updated.type,
+          performedBy: updated.assignedTo || current.user.name,
+          notes: updated.resolutionNotes
+        }, { id: current.user.id, name: current.user.name });
+        serviceRecord.facilityId = current.facility.id;
+        updated.serviceRecordId = serviceRecord.id;
+        appendAudit(store, current.user, 'machine.service_recorded', 'machine', updated.machineId, {
+          serviceRecordId: serviceRecord.id,
+          workOrderId: updated.id,
+          serviceDate: serviceRecord.serviceDate,
+          serviceType: serviceRecord.serviceType,
+          performedBy: serviceRecord.performedBy
+        }, request);
+      }
+      appendAudit(store, current.user, 'maintenance.work_order_updated', 'maintenance_work_order', updated.id, {
+        previousStatus, status: updated.status, priority: updated.priority, assignedTo: updated.assignedTo
+      }, request);
+      writeStore(store);
+      return sendJson(response, 200, { workOrder: updated, serviceRecord });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  const workOrderPartsMatch = /^\/api\/maintenance\/work-orders\/([^/]+)\/parts$/;
+  const matchedWorkOrderParts = workOrderPartsMatch.exec(pathname);
+  if (matchedWorkOrderParts && request.method === 'POST') {
+    try {
+      requireCsrf(request, current);
+      requirePermission(current, 'maintenance.manage');
+      const body = await readJson(request);
+      const scopedOrders = store.maintenanceWorkOrders.filter((order) => order.facilityId === current.facility.id);
+      const order = scopedOrders.find((item) => item.id === matchedWorkOrderParts[1]);
+      if (!order) return sendJson(response, 404, { error: 'Maintenance work order not found in the selected facility.' });
+      if (['Completed', 'Cancelled'].includes(order.status)) {
+        return sendJson(response, 400, { error: 'Parts cannot be issued to a completed or cancelled work order.' });
+      }
+      const material = store.materials.find((item) =>
+        item.sku === String(body.materialSku || '') && item.facilityId === current.facility.id
+      );
+      if (!material || material.maintenancePart !== true) {
+        return sendJson(response, 400, { error: 'Select a spare part marked for maintenance use in this facility.' });
+      }
+      const quantity = Number(body.quantity);
+      const unit = String(body.unit || '').trim();
+      if (unit.length > 24) return sendJson(response, 400, { error: 'Spare-part unit must be 24 characters or fewer.' });
+      const stockUpdate = inventory.consumeFromStock([material], material.sku, quantity, unit);
+      const part = maintenanceWorkOrders.recordPartUsage(store.maintenanceWorkOrders, order.id, material, quantity, unit, {
+        id: current.user.id,
+        name: current.user.name
+      });
+      const movement = {
+        id: 'MV-MWO-' + cryptoId(),
+        facilityId: current.facility.id,
+        type: 'Maintenance issue',
+        direction: 'OUT',
+        materialSku: material.sku,
+        material: material.item,
+        quantity,
+        unit,
+        unitCost: part.unitCost,
+        costAmount: part.costAmount,
+        stockBefore: stockUpdate.previousOnHand,
+        stockAfter: stockUpdate.onHand,
+        jobId: '',
+        workOrderId: order.id,
+        reference: order.id,
+        note: 'Spare part issued to ' + order.id,
+        createdAt: new Date().toISOString()
+      };
+      store.movements.unshift(movement);
+      appendAudit(store, current.user, 'maintenance.spare_part_issued', 'maintenance_work_order', order.id, {
+        partId: part.id, materialSku: material.sku, quantity, unit, costAmount: part.costAmount
+      }, request);
+      writeStore(store);
+      return sendJson(response, 201, { workOrder: order, part, material, movement });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  const sparePartMatch = /^\/api\/materials\/([^/]+)\/spare-part$/;
+  const matchedSparePart = sparePartMatch.exec(pathname);
+  if (matchedSparePart && request.method === 'PATCH') {
+    try {
+      requireCsrf(request, current);
+      requirePermission(current, 'materials.manage');
+      const body = await readJson(request);
+      if (typeof body.maintenancePart !== 'boolean') {
+        return sendJson(response, 400, { error: 'maintenancePart must be true or false.' });
+      }
+      const material = store.materials.find((item) =>
+        item.sku === matchedSparePart[1] && item.facilityId === current.facility.id
+      );
+      if (!material) return sendJson(response, 404, { error: 'Material not found in the selected facility.' });
+      material.maintenancePart = body.maintenancePart;
+      appendAudit(store, current.user, 'inventory.maintenance_spare_flag_updated', 'material', material.sku, {
+        maintenancePart: material.maintenancePart
+      }, request);
+      writeStore(store);
+      return sendJson(response, 200, { material });
     } catch (error) { return publicAuthError(error, response); }
   }
 
