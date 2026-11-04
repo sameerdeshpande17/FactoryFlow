@@ -45,12 +45,17 @@
     const priority = String(input.priority || 'Normal').trim();
     const dueDate = String(input.dueDate || '').trim();
     const assignedTo = String(input.assignedTo || '').trim();
+    const laborHours = Number(input.laborHours || 0);
+    const laborRate = Number(input.laborRate || 0);
     if (title.length < 3 || title.length > 120) throw new Error('Work-order title must be 3–120 characters.');
     if (!description || description.length > 1200) throw new Error('Describe the maintenance issue (maximum 1,200 characters).');
     if (!TYPES.includes(type)) throw new Error('Choose a supported maintenance work type.');
     if (!PRIORITIES.includes(priority)) throw new Error('Choose a supported work-order priority.');
     if (dueDate && !validDate(dueDate)) throw new Error('Due date must be a valid YYYY-MM-DD date.');
     if (assignedTo.length > 100) throw new Error('Technician name must be 100 characters or fewer.');
+    if (![laborHours, laborRate].every(Number.isFinite) || laborHours < 0 || laborHours > 10000 || laborRate < 0 || laborRate > 1000000) {
+      throw new Error('Labour hours and hourly rate must be valid non-negative values within supported limits.');
+    }
     const now = new Date().toISOString();
     const order = {
       id: nextId(workOrders, 'MWO'),
@@ -64,6 +69,9 @@
       priority,
       dueDate,
       assignedTo,
+      laborHours,
+      laborRate,
+      laborCost: Math.round(laborHours * laborRate * 100) / 100,
       status: assignedTo ? 'Assigned' : 'Open',
       partsUsed: [],
       createdBy: actor.id || '',
@@ -97,6 +105,16 @@
       const assignedTo = String(input.assignedTo || '').trim();
       if (assignedTo.length > 100) throw new Error('Technician name must be 100 characters or fewer.');
       order.assignedTo = assignedTo;
+    }
+    if (input.laborHours !== undefined || input.laborRate !== undefined) {
+      const laborHours = input.laborHours === undefined ? Number(order.laborHours) || 0 : Number(input.laborHours);
+      const laborRate = input.laborRate === undefined ? Number(order.laborRate) || 0 : Number(input.laborRate);
+      if (![laborHours, laborRate].every(Number.isFinite) || laborHours < 0 || laborHours > 10000 || laborRate < 0 || laborRate > 1000000) {
+        throw new Error('Labour hours and hourly rate must be valid non-negative values within supported limits.');
+      }
+      order.laborHours = laborHours;
+      order.laborRate = laborRate;
+      order.laborCost = Math.round(laborHours * laborRate * 100) / 100;
     }
     if (input.resolutionNotes !== undefined) {
       const notes = String(input.resolutionNotes || '').trim();
