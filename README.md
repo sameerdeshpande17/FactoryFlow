@@ -37,6 +37,7 @@ Opening index.html directly is still supported as a browser-only fallback, but c
 - Production analytics with date-filtered output trends, yield, QC pass/fail rates, worker productivity, planned-versus-actual hours for linked sessions, delivery timeliness, and job performance
 - Machine/workstation downtime logging by time, machine, reason, reporter, and optional job reference, with machine and reason summaries
 - Machine-level OEE analytics with availability, performance against configurable ideal throughput, good-unit quality, scheduled-day capacity utilization, merged downtime, and explainable bottleneck signals
+- Machine preventive-maintenance plans with operating-hour and calendar intervals, due-soon/overdue reminders, audited service history and rules-based breakdown-risk indicators
 - Production output captures actual hours worked and can link to a scheduled session; legacy records without actual hours are excluded from throughput rates and flagged in analytics
 - Role-based access for administrators, managers, production supervisors, and workers, with server-enforced permissions and worker-scoped workspace data
 - Multiple factory facilities under one organization, with facility-specific jobs, inventory, workers, schedules, production/QC records, downtime and delivery proofs
@@ -88,3 +89,14 @@ Set each machine’s **Ideal output rate (units/hour)** in Machines & equipment 
 Downtime intervals are merged to avoid counting overlapping records twice and are capped at the machine’s scheduled hours for that date. Since schedule records store a date and total hours rather than exact shift start/end times, this is a daily estimate rather than shift-time overlap. Sessions recorded inside planned maintenance windows are excluded from planned OEE time and surfaced as a scheduling conflict.
 
 The bottleneck watchlist currently uses review thresholds of at least 85% scheduled capacity utilization, below 80% availability, below 85% performance, or below 98% good-unit yield. These are product review thresholds, not universal manufacturing standards. QC inspections remain job-level unless explicitly linked to a machine; machine quality uses recorded production good/produced quantities rather than attributing job-level QC inspections to individual equipment.
+
+
+## Predictive maintenance and equipment health
+
+Configure preventive service on **Machines & equipment** using an operating-hour interval, a calendar-day interval, or both. Reminder lead times are configurable independently. Zero disables an interval. The health page shows overdue and due-soon service, usage since the most recent service record, recent downtime trends, service history and a transparent 0–100 review score.
+
+Service usage is estimated from machine-linked scheduled hours. When production actual hours exist for a session, those actual hours are used; otherwise the scheduled hours are a proxy. Recording a completed service establishes a new counter baseline from its service date. When no service has ever been logged, the machine registration date is used as the initial baseline.
+
+The breakdown-risk score is a deterministic heuristic, not a failure probability or trained prediction model. It combines overdue/due-soon preventive service, downtime-event frequency, recorded downtime hours, and repeated breakdown/repair reason labels during the 90-day lookback. It does not use IoT sensors, vibration readings, temperature, or live machine telemetry. Use it to prioritize human inspection, not as a substitute for a maintenance engineer’s assessment.
+
+Service logs are facility-scoped, permission-checked and audited. Administrators and managers can configure intervals and record service; production supervisors can view service status and health indicators.

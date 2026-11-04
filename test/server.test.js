@@ -215,6 +215,33 @@ test('authenticates users, enforces role access, persists operations and protect
   assert.equal(maintenanceWindow.status, 201);
   assert.equal((await json(maintenanceWindow)).machine.maintenanceWindows.length, 1);
 
+  const machineService = await fetch(baseUrl + '/api/machines/' + encodeURIComponent(createdMachine.id) + '/service', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      serviceDate: '2026-11-02',
+      serviceType: 'Preventive service',
+      performedBy: 'Maintenance technician',
+      notes: 'Lubricated rollers'
+    })
+  });
+  assert.equal(machineService.status, 201);
+  const machineServicePayload = await json(machineService);
+  assert.equal(machineServicePayload.record.machineId, createdMachine.id);
+  assert.equal(machineServicePayload.record.facilityId, 'FAC-001');
+  assert.equal(machineServicePayload.maintenanceRecords.length, 1);
+
+  const foreignMachineService = await fetch(baseUrl + '/api/machines/' + encodeURIComponent(createdMachine.id) + '/service', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': puneFacility.id, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      serviceDate: '2026-11-02',
+      serviceType: 'Inspection',
+      performedBy: 'Other site technician'
+    })
+  });
+  assert.equal(foreignMachineService.status, 404);
+
   const mainMachineList = await json(await fetch(baseUrl + '/api/machines', {
     headers: { Cookie: adminCookie, 'X-Facility-ID': 'FAC-001' }
   }));
@@ -512,6 +539,8 @@ test('authenticates users, enforces role access, persists operations and protect
   const adminBootstrapAfterUsers = await json(await fetch(baseUrl + '/api/bootstrap', { headers: { Cookie: adminCookie } }));
   assert.deepEqual(adminBootstrapAfterUsers.state.users, []);
   assert.deepEqual(adminBootstrapAfterUsers.state.auditLogs, []);
+  assert.equal(adminBootstrapAfterUsers.state.maintenanceRecords.length, 1);
+  assert.equal(adminBootstrapAfterUsers.state.maintenanceRecords[0].machineId, createdMachine.id);
 
   const adminUsers = await json(await fetch(baseUrl + '/api/users', { headers: { Cookie: adminCookie } }));
   assert.equal(adminUsers.users.length, 3);
@@ -562,6 +591,12 @@ test('authenticates users, enforces role access, persists operations and protect
     headers: { Cookie: workerCookie, 'X-Facility-ID': 'FAC-001' }
   });
   assert.equal(workerForecastDenied.status, 403);
+  const workerServiceDenied = await fetch(baseUrl + '/api/machines/' + encodeURIComponent(createdMachine.id) + '/service', {
+    method: 'POST',
+    headers: { Cookie: workerCookie, 'X-CSRF-Token': workerCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ serviceDate: '2026-11-02', serviceType: 'Inspection', performedBy: 'Worker' })
+  });
+  assert.equal(workerServiceDenied.status, 403);
   const workerState = await json(workerBootstrap);
   assert.deepEqual(workerState.state.quotes, []);
   assert.deepEqual(workerState.state.purchases, []);
@@ -657,5 +692,6 @@ test('authenticates users, enforces role access, persists operations and protect
   const audit = await json(await fetch(baseUrl + '/api/audit', { headers: { Cookie: adminCookie } }));
   assert.ok(audit.records.some((record) => record.action === 'auth.initial_setup'));
   assert.ok(audit.records.some((record) => record.action === 'production.output_recorded'));
+  assert.ok(audit.records.some((record) => record.action === 'machine.service_recorded'));
   assert.ok(audit.records.some((record) => record.action === 'auth.password_changed'));
 });

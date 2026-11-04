@@ -60,6 +60,7 @@ function readStore() {
     reworkLogs: list(stored.reworkLogs),
     downtimeLogs: list(stored.downtimeLogs),
     machines: list(stored.machines),
+    maintenanceRecords: list(stored.maintenanceRecords),
     users: list(stored.users),
     auditLogs: list(stored.auditLogs)
   });
@@ -287,6 +288,7 @@ function projectStoreForUser(store, user) {
     reworkLogs: [],
     downtimeLogs: [],
     machines: list(store.machines).filter((machine) => schedules.some((session) => session.machineId === machine.id)),
+    maintenanceRecords: [],
     users: [],
     auditLogs: []
   };
@@ -622,6 +624,34 @@ async function handleApi(request, response, pathname) {
       }, request);
       writeStore(store);
       return sendJson(response, 200, { machine });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  const serviceMatch = /^\/api\/machines\/([^/]+)\/service$/;
+  const matchedService = serviceMatch.exec(pathname);
+  if (matchedService && request.method === 'POST') {
+    try {
+      requireCsrf(request, current);
+      requirePermission(current, 'machines.manage');
+      const body = await readJson(request);
+      const scopedMachines = store.machines.filter((machine) => machine.facilityId === current.facility.id);
+      if (!scopedMachines.some((machine) => machine.id === matchedService[1])) {
+        return sendJson(response, 404, { error: 'Machine not found in the selected facility.' });
+      }
+      const record = machineModel.recordService(store.maintenanceRecords, scopedMachines, matchedService[1], body, {
+        id: current.user.id,
+        name: current.user.name
+      });
+      record.facilityId = current.facility.id;
+      appendAudit(store, current.user, 'machine.service_recorded', 'machine', record.machineId, {
+        serviceRecordId: record.id,
+        serviceDate: record.serviceDate,
+        serviceType: record.serviceType,
+        performedBy: record.performedBy
+      }, request);
+      writeStore(store);
+      const scoped = facilityModel.projectStoreForFacility(store, current.facility.id);
+      return sendJson(response, 201, { record, maintenanceRecords: scoped.maintenanceRecords });
     } catch (error) { return publicAuthError(error, response); }
   }
 
