@@ -269,6 +269,13 @@ test('authenticates users, enforces role access, persists operations and protect
   assert.equal(issuedPayload.material.onHand, '18 kg');
   assert.equal(issuedPayload.movement.workOrderId, createdWorkOrder.id);
 
+  const startWorkOrder = await fetch(baseUrl + '/api/maintenance/work-orders/' + encodeURIComponent(createdWorkOrder.id), {
+    method: 'PATCH',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'In progress' })
+  });
+  assert.equal(startWorkOrder.status, 200);
+
   const completeWorkOrder = await fetch(baseUrl + '/api/maintenance/work-orders/' + encodeURIComponent(createdWorkOrder.id), {
     method: 'PATCH',
     headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
