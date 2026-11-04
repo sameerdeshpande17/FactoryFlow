@@ -169,3 +169,31 @@ test('validates supplier lead time, safety stock, order minimum and order multip
   assert.throws(() => forecasting.validateSettings({ orderMultiple: 0 }, current), /order multiple/i);
   assert.throws(() => forecasting.validateSettings({ preferredSupplier: 'S'.repeat(121) }, current), /120 characters/i);
 });
+
+test('excludes maintenance spare-part issues from production demand history', () => {
+  const regular = movementsFor(10, 14);
+  const maintenanceIssue = {
+    id: 'MV-MWO-1',
+    materialSku: 'RM-INK',
+    type: 'Maintenance issue',
+    direction: 'OUT',
+    workOrderId: 'MWO-101',
+    quantity: 2,
+    unit: 'kg',
+    createdAt: now.toISOString()
+  };
+  const withRepairSpare = forecasting.forecastInventory(
+    [material({ onHand: '18 kg' })],
+    [...regular, maintenanceIssue],
+    [],
+    { now, lookbackDays: 30 }
+  );
+  const withoutRepairSpare = forecasting.forecastInventory(
+    [material({ onHand: '18 kg' })],
+    regular,
+    [],
+    { now, lookbackDays: 30 }
+  );
+  assert.equal(withRepairSpare.items[0].averageDailyDemand, withoutRepairSpare.items[0].averageDailyDemand);
+  assert.equal(withRepairSpare.items[0].averageDailyDemand, 6.8);
+});
