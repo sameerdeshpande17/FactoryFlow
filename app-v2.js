@@ -1612,7 +1612,7 @@ function maintenanceWorkOrdersPage() {
   const rows = visible.map((order) => {
     const overdue = !['Completed', 'Cancelled'].includes(order.status) && order.dueDate && order.dueDate < localDateISO();
     const parts = order.partsUsed || [];
-    const totalCost = partsCost(order);
+    const totalCost = partsCost(order) + (Number(order.laborCost) || 0);
     return '<tr><td><strong class="order-code">' + safe(order.id) + '</strong><div class="subtle">' + safe(order.type) + '</div></td>' +
       '<td><strong>' + safe(order.machineName) + '</strong><div class="subtle">' + safe(order.machineCode) + '</div></td>' +
       '<td><strong>' + safe(order.title) + '</strong><div class="subtle">' + safe(order.description) + '</div></td>' +
@@ -1662,6 +1662,7 @@ function createMaintenanceWorkOrder() {
     '<label>Issue / task description<textarea required maxlength="1200" rows="3" name="description" placeholder="Describe the fault, inspection or work required"></textarea></label>' +
     '<div class="form-row"><label>Work type<select name="type">' + typeOptions + '</select></label><label>Priority<select name="priority">' + priorityOptions + '</select></label></div>' +
     '<div class="form-row"><label>Assign technician<input maxlength="100" name="assignedTo" placeholder="Technician / maintenance provider"></label><label>Target completion date<input type="date" name="dueDate"></label></div>' +
+    '<div class="form-row"><label>Estimated labour hours<input type="number" name="laborHours" min="0" max="10000" step="0.25" value="0"></label><label>Labour rate (₹ / hour)<input type="number" name="laborRate" min="0" max="1000000" step="0.01" value="0"></label></div>' +
     '<p id="mwoError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Create work order</button></div></form>');
   ui('#maintenanceWorkOrderForm').addEventListener('submit', async (event) => {
     event.preventDefault();
@@ -1671,7 +1672,8 @@ function createMaintenanceWorkOrder() {
         method: 'POST',
         body: JSON.stringify({
           machineId: data.get('machineId'), title: data.get('title'), description: data.get('description'),
-          type: data.get('type'), priority: data.get('priority'), assignedTo: data.get('assignedTo'), dueDate: data.get('dueDate')
+          type: data.get('type'), priority: data.get('priority'), assignedTo: data.get('assignedTo'), dueDate: data.get('dueDate'),
+          laborHours: Number(data.get('laborHours')), laborRate: Number(data.get('laborRate'))
         })
       });
       maintenanceWorkOrders.unshift(result.workOrder);
@@ -1704,6 +1706,8 @@ function editMaintenanceWorkOrder(workOrderId) {
     '<div class="mwo-detail"><strong>' + safe(order.title) + '</strong><p>' + safe(order.description) + '</p><small>' + safe(order.type) + ' · ' + safe(order.priority) + ' · Due ' + safe(order.dueDate || 'not set') + '</small></div>' +
     (canManage && !completed ? '<form id="maintenanceWorkOrderUpdateForm" class="form-grid"><div class="form-row"><label>Status<select name="status">' + statuses.map((statusValue) => '<option value="' + safe(statusValue) + '"' + (order.status === statusValue ? ' selected' : '') + '>' + safe(statusValue) + '</option>').join('') + '</select></label><label>Priority<select name="priority">' + window.FactoryFlowMaintenanceWorkOrders.PRIORITIES.map((priority) => '<option value="' + safe(priority) + '"' + (order.priority === priority ? ' selected' : '') + '>' + safe(priority) + '</option>').join('') + '</select></label></div>' +
       '<div class="form-row"><label>Assigned technician<input name="assignedTo" maxlength="100" value="' + safe(order.assignedTo || '') + '"></label><label>Due date<input type="date" name="dueDate" value="' + safe(order.dueDate || '') + '"></label></div>' +
+      '<div class="form-row"><label>Labour hours<input type="number" name="laborHours" min="0" max="10000" step="0.25" value="' + (Number(order.laborHours) || 0) + '"></label><label>Labour rate (₹ / hour)<input type="number" name="laborRate" min="0" max="1000000" step="0.01" value="' + (Number(order.laborRate) || 0) + '"></label></div>' +
+      '<p class="subtle">Current labour cost: ' + currency(Number(order.laborCost) || 0) + ' · Spare-part issues: ' + currency((order.partsUsed || []).reduce((sum, part) => sum + (Number(part.costAmount) || 0), 0)) + '</p>' +
       '<label>Resolution / completion notes<textarea name="resolutionNotes" maxlength="1200" rows="3">' + safe(order.resolutionNotes || '') + '</textarea></label>' +
       '<p class="subtle">Completing this work order records a service event and resets the machine’s preventive-maintenance baseline from today.</p><p id="mwoUpdateError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Close</button><button type="submit" class="primary-button">Save updates</button></div></form>' : '<p>Status: ' + safe(order.status) + (order.resolutionNotes ? '<br>Resolution: ' + safe(order.resolutionNotes) : '') + '</p>') +
     '<section class="mwo-parts"><strong>Issued spare parts</strong>' + (parts ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>PART</th><th>QUANTITY</th><th>COST</th></tr></thead><tbody>' + parts + '</tbody></table></div>' : '<p class="subtle">No parts issued to this work order.</p>') + '</section>');
@@ -1715,7 +1719,8 @@ function editMaintenanceWorkOrder(workOrderId) {
         method: 'PATCH',
         body: JSON.stringify({
           status: data.get('status'), priority: data.get('priority'), assignedTo: data.get('assignedTo'),
-          dueDate: data.get('dueDate'), resolutionNotes: data.get('resolutionNotes')
+          dueDate: data.get('dueDate'), resolutionNotes: data.get('resolutionNotes'),
+          laborHours: Number(data.get('laborHours')), laborRate: Number(data.get('laborRate'))
         })
       });
       const index = maintenanceWorkOrders.findIndex((item) => item.id === order.id);
