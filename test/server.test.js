@@ -23,7 +23,7 @@ async function freePort() {
 before(async () => {
   const root = path.join(__dirname, '..');
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'factoryflow-test-'));
-  for (const file of ['server.js', 'auth.js', 'facilities.js', 'forecasting.js', 'inventory.js', 'scheduling.js', 'scheduler-optimizer.js', 'execution.js', 'analytics.js', 'machines.js']) {
+  for (const file of ['server.js', 'auth.js', 'facilities.js', 'forecasting.js', 'inventory.js', 'scheduling.js', 'scheduler-optimizer.js', 'execution.js', 'analytics.js', 'machines.js', 'maintenance-work-orders.js']) {
     fs.copyFileSync(path.join(root, file), path.join(tempDir, file));
   }
   fs.mkdirSync(path.join(tempDir, 'data'));
@@ -174,7 +174,8 @@ test('authenticates users, enforces role access, persists operations and protect
     productionLogs: [],
     qcInspections: [],
     reworkLogs: [],
-    downtimeLogs: []
+    downtimeLogs: [],
+    maintenanceWorkOrders: []
   };
   const sync = await fetch(baseUrl + '/api/sync', {
     method: 'POST',
@@ -230,6 +231,61 @@ test('authenticates users, enforces role access, persists operations and protect
   assert.equal(machineServicePayload.record.machineId, createdMachine.id);
   assert.equal(machineServicePayload.record.facilityId, 'FAC-001');
   assert.equal(machineServicePayload.maintenanceRecords.length, 1);
+
+  const flagSparePart = await fetch(baseUrl + '/api/materials/RM-TEST/spare-part', {
+    method: 'PATCH',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ maintenancePart: true })
+  });
+  assert.equal(flagSparePart.status, 200);
+  assert.equal((await json(flagSparePart)).material.maintenancePart, true);
+
+  const createWorkOrder = await fetch(baseUrl + '/api/maintenance/work-orders', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      machineId: createdMachine.id,
+      title: 'Replace worn finishing roller',
+      description: 'Roller surface has visible wear and causes uneven finishing.',
+      type: 'Breakdown repair',
+      priority: 'Urgent',
+      dueDate: '2026-11-08',
+      assignedTo: 'Maintenance technician'
+    })
+  });
+  assert.equal(createWorkOrder.status, 201);
+  const createdWorkOrder = (await json(createWorkOrder)).workOrder;
+  assert.equal(createdWorkOrder.facilityId, 'FAC-001');
+  assert.equal(createdWorkOrder.status, 'Assigned');
+
+  const issueSparePart = await fetch(baseUrl + '/api/maintenance/work-orders/' + encodeURIComponent(createdWorkOrder.id) + '/parts', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ materialSku: 'RM-TEST', quantity: 2, unit: 'kg' })
+  });
+  assert.equal(issueSparePart.status, 201);
+  const issuedPayload = await json(issueSparePart);
+  assert.equal(issuedPayload.part.costAmount, 24);
+  assert.equal(issuedPayload.material.onHand, '18 kg');
+  assert.equal(issuedPayload.movement.workOrderId, createdWorkOrder.id);
+
+  const completeWorkOrder = await fetch(baseUrl + '/api/maintenance/work-orders/' + encodeURIComponent(createdWorkOrder.id), {
+    method: 'PATCH',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'Completed', resolutionNotes: 'Replaced roller and checked alignment.' })
+  });
+  assert.equal(completeWorkOrder.status, 200);
+  const completedPayload = await json(completeWorkOrder);
+  assert.equal(completedPayload.workOrder.status, 'Completed');
+  assert.ok(completedPayload.workOrder.serviceRecordId);
+  assert.equal(completedPayload.serviceRecord.machineId, createdMachine.id);
+
+  const foreignWorkOrder = await fetch(baseUrl + '/api/maintenance/work-orders/' + encodeURIComponent(createdWorkOrder.id), {
+    method: 'PATCH',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': puneFacility.id, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ priority: 'Low' })
+  });
+  assert.equal(foreignWorkOrder.status, 404);
 
   const foreignMachineService = await fetch(baseUrl + '/api/machines/' + encodeURIComponent(createdMachine.id) + '/service', {
     method: 'POST',
@@ -539,8 +595,10 @@ test('authenticates users, enforces role access, persists operations and protect
   const adminBootstrapAfterUsers = await json(await fetch(baseUrl + '/api/bootstrap', { headers: { Cookie: adminCookie } }));
   assert.deepEqual(adminBootstrapAfterUsers.state.users, []);
   assert.deepEqual(adminBootstrapAfterUsers.state.auditLogs, []);
-  assert.equal(adminBootstrapAfterUsers.state.maintenanceRecords.length, 1);
-  assert.equal(adminBootstrapAfterUsers.state.maintenanceRecords[0].machineId, createdMachine.id);
+  assert.equal(adminBootstrapAfterUsers.state.maintenanceRecords.length, 2);
+  assert.ok(adminBootstrapAfterUsers.state.maintenanceRecords.every((record) => record.machineId === createdMachine.id));
+  assert.equal(adminBootstrapAfterUsers.state.maintenanceWorkOrders.length, 1);
+  assert.equal(adminBootstrapAfterUsers.state.maintenanceWorkOrders[0].status, 'Completed');
 
   const adminUsers = await json(await fetch(baseUrl + '/api/users', { headers: { Cookie: adminCookie } }));
   assert.equal(adminUsers.users.length, 3);
@@ -597,6 +655,12 @@ test('authenticates users, enforces role access, persists operations and protect
     body: JSON.stringify({ serviceDate: '2026-11-02', serviceType: 'Inspection', performedBy: 'Worker' })
   });
   assert.equal(workerServiceDenied.status, 403);
+  const workerWorkOrderDenied = await fetch(baseUrl + '/api/maintenance/work-orders', {
+    method: 'POST',
+    headers: { Cookie: workerCookie, 'X-CSRF-Token': workerCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ machineId: createdMachine.id, title: 'Unauthorized repair', description: 'This should be denied.' })
+  });
+  assert.equal(workerWorkOrderDenied.status, 403);
   const workerState = await json(workerBootstrap);
   assert.deepEqual(workerState.state.quotes, []);
   assert.deepEqual(workerState.state.purchases, []);
@@ -693,5 +757,8 @@ test('authenticates users, enforces role access, persists operations and protect
   assert.ok(audit.records.some((record) => record.action === 'auth.initial_setup'));
   assert.ok(audit.records.some((record) => record.action === 'production.output_recorded'));
   assert.ok(audit.records.some((record) => record.action === 'machine.service_recorded'));
+  assert.ok(audit.records.some((record) => record.action === 'maintenance.work_order_created'));
+  assert.ok(audit.records.some((record) => record.action === 'maintenance.work_order_updated'));
+  assert.ok(audit.records.some((record) => record.action === 'maintenance.spare_part_issued'));
   assert.ok(audit.records.some((record) => record.action === 'auth.password_changed'));
 });
