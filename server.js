@@ -672,7 +672,6 @@ async function handleApi(request, response, pathname) {
         name: current.user.name
       });
       order.facilityId = current.facility.id;
-      store.maintenanceWorkOrders.push(order);
       appendAudit(store, current.user, 'maintenance.work_order_created', 'maintenance_work_order', order.id, {
         machineId: order.machineId, type: order.type, priority: order.priority
       }, request);
