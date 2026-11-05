@@ -173,11 +173,103 @@
     return part;
   }
 
+
+  function validateTechnician(input = {}, current = null) {
+    const name = String(input.name === undefined ? current && current.name || '' : input.name || '').trim();
+    const skills = input.skills === undefined ? list(current && current.skills) : list(input.skills).map((value) => String(value || '').trim()).filter(Boolean);
+    const capacityHoursPerDay = Number(input.capacityHoursPerDay === undefined ? current && current.capacityHoursPerDay || 8 : input.capacityHoursPerDay);
+    const active = input.active === undefined ? (current ? current.active !== false : true) : input.active;
+    const unavailableDates = input.unavailableDates === undefined ? list(current && current.unavailableDates) : list(input.unavailableDates);
+    if (name.length < 2 || name.length > 100) throw new Error('Technician name must be 2–100 characters.');
+    if (!Number.isFinite(capacityHoursPerDay) || capacityHoursPerDay < 0.25 || capacityHoursPerDay > 16) {
+      throw new Error('Technician daily capacity must be between 0.25 and 16 hours.');
+    }
+    if (typeof active !== 'boolean') throw new Error('Technician status must be active or inactive.');
+    if (skills.length > 20 || skills.some((skill) => skill.length > 60)) throw new Error('A technician can list at most 20 skills, each 60 characters or fewer.');
+    const normalizedSkills = [];
+    const seen = new Set();
+    skills.forEach((skill) => {
+      const key = skill.toLowerCase();
+      if (!seen.has(key)) { seen.add(key); normalizedSkills.push(skill); }
+    });
+    if (unavailableDates.length > 366) throw new Error('A technician can have at most 366 unavailable dates configured.');
+    const dates = unavailableDates.map((date) => String(date || '').trim());
+    if (dates.some((date) => !validDate(date))) throw new Error('Technician unavailable dates must be valid YYYY-MM-DD dates.');
+    if (new Set(dates).size !== dates.length) throw new Error('Technician unavailable dates cannot contain duplicates.');
+    return { name, skills: normalizedSkills, capacityHoursPerDay, active, unavailableDates: dates.sort() };
+  }
+
+  function createTechnician(technicians, input = {}, actor = {}) {
+    if (!Array.isArray(technicians)) throw new TypeError('Maintenance technicians must be an array.');
+    const fields = validateTechnician(input);
+    if (technicians.some((item) => String(item.name || '').trim().toLowerCase() === fields.name.toLowerCase())) {
+      throw new Error('A maintenance technician with this name already exists in this facility.');
+    }
+    const technician = {
+      id: nextId(technicians, 'MTEC'),
+      ...fields,
+      facilityId: input.facilityId || '',
+      createdBy: actor.id || '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    technicians.push(technician);
+    return technician;
+  }
+
+  function updateTechnician(technicians, technicianId, input = {}) {
+    const technician = list(technicians).find((item) => item && item.id === technicianId);
+    if (!technician) throw new Error('Maintenance technician not found in this facility.');
+    const fields = validateTechnician(input, technician);
+    if (list(technicians).some((item) => item.id !== technician.id && String(item.name || '').trim().toLowerCase() === fields.name.toLowerCase())) {
+      throw new Error('A maintenance technician with this name already exists in this facility.');
+    }
+    Object.assign(technician, fields, { updatedAt: new Date().toISOString() });
+    return technician;
+  }
+
+  function scheduleWorkOrder(workOrders, technicians, workOrderId, input = {}) {
+    const order = list(workOrders).find((item) => item && item.id === workOrderId);
+    if (!order) throw new Error('Maintenance work order not found in this facility.');
+    if (['Completed', 'Cancelled'].includes(order.status)) throw new Error('Completed or cancelled work orders cannot be scheduled.');
+    const technicianId = String(input.technicianId || '').trim();
+    const technician = list(technicians).find((item) => item && item.id === technicianId && item.active !== false);
+    if (!technician) throw new Error('Select an active maintenance technician.');
+    const scheduledDate = String(input.scheduledDate || '').trim();
+    const scheduledHours = Number(input.scheduledHours);
+    if (!validDate(scheduledDate)) throw new Error('Choose a valid maintenance schedule date.');
+    if (!Number.isFinite(scheduledHours) || scheduledHours <= 0 || scheduledHours > 16) {
+      throw new Error('Scheduled work hours must be greater than zero and no more than 16.');
+    }
+    if (list(technician.unavailableDates).includes(scheduledDate)) {
+      throw new Error(technician.name + ' is unavailable on ' + scheduledDate + '.');
+    }
+    const bookedHours = list(workOrders).filter((item) =>
+      item && item.id !== order.id && item.assignedTechnicianId === technician.id &&
+      item.scheduledDate === scheduledDate && !['Completed', 'Cancelled'].includes(item.status)
+    ).reduce((sum, item) => sum + (Number(item.scheduledHours) || 0), 0);
+    const capacity = Number(technician.capacityHoursPerDay);
+    if (bookedHours + scheduledHours > capacity + 1e-9) {
+      throw new Error(technician.name + ' has only ' + Math.max(0, capacity - bookedHours).toFixed(2) + ' hours available on ' + scheduledDate + '.');
+    }
+    order.assignedTechnicianId = technician.id;
+    order.assignedTo = technician.name;
+    order.scheduledDate = scheduledDate;
+    order.scheduledHours = Math.round(scheduledHours * 100) / 100;
+    order.updatedAt = new Date().toISOString();
+    if (order.status === 'Open') order.status = 'Assigned';
+    return { workOrder: order, technician, bookedHours, availableHours: Math.round((capacity - bookedHours - scheduledHours) * 100) / 100 };
+  }
+
   return {
     STATUSES,
     PRIORITIES,
     TYPES,
     validDate,
+    validateTechnician,
+    createTechnician,
+    updateTechnician,
+    scheduleWorkOrder,
     createWorkOrder,
     updateWorkOrder,
     recordPartUsage
