@@ -175,7 +175,8 @@ test('authenticates users, enforces role access, persists operations and protect
     qcInspections: [],
     reworkLogs: [],
     downtimeLogs: [],
-    maintenanceWorkOrders: []
+    maintenanceWorkOrders: [],
+    maintenanceTechnicians: []
   };
   const sync = await fetch(baseUrl + '/api/sync', {
     method: 'POST',
@@ -257,6 +258,87 @@ test('authenticates users, enforces role access, persists operations and protect
   const createdWorkOrder = (await json(createWorkOrder)).workOrder;
   assert.equal(createdWorkOrder.facilityId, 'FAC-001');
   assert.equal(createdWorkOrder.status, 'Assigned');
+
+  const createTechnician = await fetch(baseUrl + '/api/maintenance/technicians', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: 'Ravi Maintenance',
+      specialty: 'Mechanical',
+      capacityHoursPerDay: 4,
+      hourlyRate: 450,
+      workingDays: [1, 2, 3, 4, 5],
+      unavailableDates: ['2026-11-09']
+    })
+  });
+  assert.equal(createTechnician.status, 201);
+  const technician = (await json(createTechnician)).technician;
+  assert.equal(technician.facilityId, 'FAC-001');
+  assert.deepEqual(technician.workingDays, [1, 2, 3, 4, 5]);
+
+  const foreignTechnicianList = await json(await fetch(baseUrl + '/api/maintenance/technicians', {
+    headers: { Cookie: adminCookie, 'X-Facility-ID': puneFacility.id }
+  }));
+  assert.deepEqual(foreignTechnicianList.technicians, []);
+
+  const scheduleWorkOrder = await fetch(baseUrl + '/api/maintenance/work-orders/' + encodeURIComponent(createdWorkOrder.id) + '/schedule', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      technicianId: technician.id,
+      scheduledDate: '2026-11-06',
+      startTime: '09:00',
+      endTime: '11:00'
+    })
+  });
+  assert.equal(scheduleWorkOrder.status, 200);
+  const scheduledPayload = await json(scheduleWorkOrder);
+  assert.equal(scheduledPayload.workOrder.technicianId, technician.id);
+  assert.equal(scheduledPayload.workOrder.scheduledHours, 2);
+  assert.equal(scheduledPayload.workOrder.laborCost, 900);
+
+  const overlappingOrderResponse = await fetch(baseUrl + '/api/maintenance/work-orders', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      machineId: createdMachine.id, title: 'Inspect drive motor', description: 'Inspect motor mounting bolts.',
+      priority: 'High'
+    })
+  });
+  assert.equal(overlappingOrderResponse.status, 201);
+  const overlappingOrder = (await json(overlappingOrderResponse)).workOrder;
+
+  const overlapDenied = await fetch(baseUrl + '/api/maintenance/work-orders/' + encodeURIComponent(overlappingOrder.id) + '/schedule', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ technicianId: technician.id, scheduledDate: '2026-11-06', startTime: '10:00', endTime: '12:00' })
+  });
+  assert.equal(overlapDenied.status, 400);
+  assert.match((await json(overlapDenied)).error, /overlaps work order/i);
+
+  const capacityDenied = await fetch(baseUrl + '/api/maintenance/work-orders/' + encodeURIComponent(overlappingOrder.id) + '/schedule', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ technicianId: technician.id, scheduledDate: '2026-11-06', startTime: '11:00', endTime: '14:00' })
+  });
+  assert.equal(capacityDenied.status, 400);
+  assert.match((await json(capacityDenied)).error, /capacity/i);
+
+  const unavailableDenied = await fetch(baseUrl + '/api/maintenance/work-orders/' + encodeURIComponent(overlappingOrder.id) + '/schedule', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ technicianId: technician.id, scheduledDate: '2026-11-09', startTime: '09:00', endTime: '10:00' })
+  });
+  assert.equal(unavailableDenied.status, 400);
+  assert.match((await json(unavailableDenied)).error, /unavailable/i);
+
+  const calendarResponse = await fetch(baseUrl + '/api/maintenance/calendar?fromDate=2026-11-06&days=7', {
+    headers: { Cookie: adminCookie, 'X-Facility-ID': 'FAC-001' }
+  });
+  assert.equal(calendarResponse.status, 200);
+  const calendarPayload = await json(calendarResponse);
+  assert.equal(calendarPayload.calendar.events.length, 1);
+  assert.equal(calendarPayload.calendar.capacity[0].days[0].scheduledHours, 2);
 
   const issueSparePart = await fetch(baseUrl + '/api/maintenance/work-orders/' + encodeURIComponent(createdWorkOrder.id) + '/parts', {
     method: 'POST',
@@ -604,8 +686,10 @@ test('authenticates users, enforces role access, persists operations and protect
   assert.deepEqual(adminBootstrapAfterUsers.state.auditLogs, []);
   assert.equal(adminBootstrapAfterUsers.state.maintenanceRecords.length, 2);
   assert.ok(adminBootstrapAfterUsers.state.maintenanceRecords.every((record) => record.machineId === createdMachine.id));
-  assert.equal(adminBootstrapAfterUsers.state.maintenanceWorkOrders.length, 1);
-  assert.equal(adminBootstrapAfterUsers.state.maintenanceWorkOrders[0].status, 'Completed');
+  assert.equal(adminBootstrapAfterUsers.state.maintenanceWorkOrders.length, 2);
+  assert.equal(adminBootstrapAfterUsers.state.maintenanceTechnicians.length, 1);
+  assert.ok(adminBootstrapAfterUsers.state.maintenanceWorkOrders.some((item) => item.status === 'Completed'));
+  assert.equal(adminBootstrapAfterUsers.state.maintenanceWorkOrders.find((item) => item.id === createdWorkOrder.id).scheduledDate, '2026-11-06');
 
   const adminUsers = await json(await fetch(baseUrl + '/api/users', { headers: { Cookie: adminCookie } }));
   assert.equal(adminUsers.users.length, 3);
@@ -662,6 +746,13 @@ test('authenticates users, enforces role access, persists operations and protect
     body: JSON.stringify({ serviceDate: '2026-11-02', serviceType: 'Inspection', performedBy: 'Worker' })
   });
   assert.equal(workerServiceDenied.status, 403);
+  const workerTechnicianDenied = await fetch(baseUrl + '/api/maintenance/technicians', {
+    method: 'POST',
+    headers: { Cookie: workerCookie, 'X-CSRF-Token': workerCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Unauthorized technician' })
+  });
+  assert.equal(workerTechnicianDenied.status, 403);
+
   const workerWorkOrderDenied = await fetch(baseUrl + '/api/maintenance/work-orders', {
     method: 'POST',
     headers: { Cookie: workerCookie, 'X-CSRF-Token': workerCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
@@ -767,5 +858,7 @@ test('authenticates users, enforces role access, persists operations and protect
   assert.ok(audit.records.some((record) => record.action === 'maintenance.work_order_created'));
   assert.ok(audit.records.some((record) => record.action === 'maintenance.work_order_updated'));
   assert.ok(audit.records.some((record) => record.action === 'maintenance.spare_part_issued'));
+  assert.ok(audit.records.some((record) => record.action === 'maintenance.technician_created'));
+  assert.ok(audit.records.some((record) => record.action === 'maintenance.work_order_scheduled'));
   assert.ok(audit.records.some((record) => record.action === 'auth.password_changed'));
 });

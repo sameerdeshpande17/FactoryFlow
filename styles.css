@@ -267,3 +267,22 @@ body.auth-required .app-shell { visibility: hidden; }
 .mwo-detail small { display: block; margin-top: 8px; color: var(--muted); font-size: 10px; }
 .mwo-parts { display: grid; gap: 9px; margin-top: 16px; }
 @media (max-width: 680px) { .mwo-filters { gap: 5px; } .mwo-filters .filter-chip { padding: 6px 8px; } .material-actions { flex-direction: column; align-items: flex-start; } }
+
+
+/* Technician roster and maintenance scheduling calendar */
+.mtech-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.mtech-calendar-filter { margin-top: 16px; padding: 14px; }
+.mtech-calendar-filter form { align-items: end; gap: 12px; }
+.mtech-calendar-filter form label { min-width: 220px; }
+.mtech-calendar-filter p { margin: 8px 0 0; }
+.mtech-days { margin: 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; }
+.mtech-days legend { padding: 0 5px; color: var(--muted); font-size: 10px; font-weight: 750; }
+.mtech-days > div { display: flex; flex-wrap: wrap; gap: 12px; }
+.mtech-days label, .mtech-active { display: inline-flex; align-items: center; gap: 5px; color: var(--ink); font-size: 11px; }
+.mtech-days input, .mtech-active input { width: auto; }
+.mtech-active { width: max-content; }
+@media (max-width: 680px) {
+  .mtech-actions { width: 100%; }
+  .mtech-actions button { flex: 1; }
+  .mtech-calendar-filter form { align-items: stretch; }
+}

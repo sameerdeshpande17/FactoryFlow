@@ -64,6 +64,7 @@ function readStore() {
     machines: list(stored.machines),
     maintenanceRecords: list(stored.maintenanceRecords),
     maintenanceWorkOrders: list(stored.maintenanceWorkOrders),
+    maintenanceTechnicians: list(stored.maintenanceTechnicians),
     users: list(stored.users),
     auditLogs: list(stored.auditLogs)
   });
@@ -293,6 +294,7 @@ function projectStoreForUser(store, user) {
     machines: list(store.machines).filter((machine) => schedules.some((session) => session.machineId === machine.id)),
     maintenanceRecords: [],
     maintenanceWorkOrders: [],
+    maintenanceTechnicians: [],
     users: [],
     auditLogs: []
   };
@@ -797,6 +799,88 @@ async function handleApi(request, response, pathname) {
       }, request);
       writeStore(store);
       return sendJson(response, 200, { material });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+
+  if (pathname === '/api/maintenance/technicians' && request.method === 'GET') {
+    try {
+      requirePermission(current, 'maintenance.view');
+      const scoped = facilityModel.projectStoreForFacility(store, current.facility.id);
+      return sendJson(response, 200, { facilityId: current.facility.id, technicians: scoped.maintenanceTechnicians });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  if (pathname === '/api/maintenance/technicians' && request.method === 'POST') {
+    try {
+      requireCsrf(request, current);
+      requirePermission(current, 'maintenance.manage');
+      const body = await readJson(request);
+      const scoped = store.maintenanceTechnicians.filter((item) => item.facilityId === current.facility.id);
+      const technician = maintenanceWorkOrders.createTechnician(scoped, body, {
+        id: current.user.id,
+        name: current.user.name
+      });
+      technician.facilityId = current.facility.id;
+      store.maintenanceTechnicians.push(technician);
+      appendAudit(store, current.user, 'maintenance.technician_created', 'maintenance_technician', technician.id, {
+        name: technician.name, capacityHoursPerDay: technician.capacityHoursPerDay
+      }, request);
+      writeStore(store);
+      return sendJson(response, 201, { technician });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  const technicianMatch = /^\/api\/maintenance\/technicians\/([^/]+)$/;
+  const matchedTechnician = technicianMatch.exec(pathname);
+  if (matchedTechnician && request.method === 'PATCH') {
+    try {
+      requireCsrf(request, current);
+      requirePermission(current, 'maintenance.manage');
+      const body = await readJson(request);
+      const scoped = store.maintenanceTechnicians.filter((item) => item.facilityId === current.facility.id);
+      const technician = maintenanceWorkOrders.updateTechnician(scoped, matchedTechnician[1], body);
+      appendAudit(store, current.user, 'maintenance.technician_updated', 'maintenance_technician', technician.id, {
+        name: technician.name, active: technician.active, capacityHoursPerDay: technician.capacityHoursPerDay
+      }, request);
+      writeStore(store);
+      return sendJson(response, 200, { technician });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  const scheduleWorkOrderMatch = /^\/api\/maintenance\/work-orders\/([^/]+)\/schedule$/;
+  const matchedScheduleWorkOrder = scheduleWorkOrderMatch.exec(pathname);
+  if (matchedScheduleWorkOrder && request.method === 'POST') {
+    try {
+      requireCsrf(request, current);
+      requirePermission(current, 'maintenance.manage');
+      const body = await readJson(request);
+      const scopedOrders = store.maintenanceWorkOrders.filter((item) => item.facilityId === current.facility.id);
+      const scopedTechnicians = store.maintenanceTechnicians.filter((item) => item.facilityId === current.facility.id);
+      const order = maintenanceWorkOrders.scheduleWorkOrder(scopedOrders, scopedTechnicians, matchedScheduleWorkOrder[1], body, {
+        id: current.user.id,
+        name: current.user.name
+      });
+      appendAudit(store, current.user, 'maintenance.work_order_scheduled', 'maintenance_work_order', order.id, {
+        technicianId: order.technicianId, scheduledDate: order.scheduledDate,
+        startTime: order.startTime, endTime: order.endTime, scheduledHours: order.scheduledHours
+      }, request);
+      writeStore(store);
+      return sendJson(response, 200, { workOrder: order });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  if (pathname === '/api/maintenance/calendar' && request.method === 'GET') {
+    try {
+      requirePermission(current, 'maintenance.view');
+      const scoped = facilityModel.projectStoreForFacility(store, current.facility.id);
+      const url = new URL(request.url, 'http://localhost');
+      const fromDate = url.searchParams.get('fromDate') || new Date().toISOString().slice(0, 10);
+      const days = Number(url.searchParams.get('days') || 7);
+      const calendar = maintenanceWorkOrders.buildTechnicianCalendar(
+        scoped.maintenanceWorkOrders, scoped.maintenanceTechnicians, fromDate, days
+      );
+      return sendJson(response, 200, { facilityId: current.facility.id, calendar });
     } catch (error) { return publicAuthError(error, response); }
   }
 

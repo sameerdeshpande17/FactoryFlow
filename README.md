@@ -111,3 +111,12 @@ Create a work order against a registered machine for a breakdown repair, prevent
 In Materials, administrators and managers can mark stocked inventory items as **maintenance spare parts**. Production supervisors can issue those items against open work orders. An issue checks available quantity and unit, deducts inventory, stores the quantity and current unit-cost snapshot on the work order, and records an inventory movement linked to the work-order ID. Work orders show labour cost and issued-part cost separately so repair cost is traceable.
 
 Completed or cancelled work orders are locked against further edits and spare-part issues. Work orders, spare-part movements and service records are facility-scoped and audited. Workers do not receive work-order or maintenance service-history data.
+
+
+## Maintenance calendar and technician capacity
+
+Create facility-specific technician profiles with a specialty, daily hour capacity, hourly rate, working weekdays and unavailable dates. Schedule an open maintenance work order into a technician time slot. The server validates the technician is active and works that weekday, checks recorded time off, rejects overlapping bookings and prevents booked hours from exceeding the technician's daily capacity.
+
+The Maintenance calendar shows a seven-day schedule, assigned technician and machine, unscheduled work orders, technician roster and per-day booked versus remaining hours. Work orders retain their explicit date and start/end times. Technician labour rates are copied onto scheduled work orders as cost snapshots; changing a technician's rate later does not retroactively change the recorded work-order rate.
+
+Technician profiles, schedules and work orders are facility-scoped, permission-checked and audited. Administrators, managers and production supervisors can view and manage the roster and schedule; workers do not receive maintenance technician or work-order data. This is a planning calendar, not a live dispatch/attendance or payroll system.
