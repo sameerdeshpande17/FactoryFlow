@@ -224,6 +224,7 @@
       machines: 'machines.view',
       maintenance: 'machines.view',
       'work-orders': 'maintenance.view',
+      'maintenance-calendar': 'maintenance.view',
       dashboard: 'dashboard.view',
       quotes: 'quotes.view',
       jobs: 'jobs.view',
