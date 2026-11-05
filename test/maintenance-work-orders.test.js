@@ -169,7 +169,7 @@ test('schedules work orders without overlaps and enforces weekday, unavailable d
     technicianId: technician.id, scheduledDate: '2026-11-09', startTime: '09:00', endTime: '10:00'
   }), /unavailable/i);
   assert.throws(() => workOrders.scheduleWorkOrder(orders, technicians, second.id, {
-    technicianId: technician.id, scheduledDate: '2026-11-06', startTime: '15:00', endTime: '16:00'
+    technicianId: technician.id, scheduledDate: '2026-11-06', startTime: '13:00', endTime: '16:00'
   }), /daily capacity would be exceeded/i);
 });
 
