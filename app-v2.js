@@ -49,6 +49,8 @@ const machines = JSON.parse(localStorage.getItem('ff-machines') || 'null') || []
 const maintenanceRecords = JSON.parse(localStorage.getItem('ff-maintenance-records') || 'null') || [];
 const maintenanceWorkOrders = JSON.parse(localStorage.getItem('ff-maintenance-work-orders') || 'null') || [];
 let maintenanceWorkOrderFilter = 'All';
+const maintenanceTechnicians = JSON.parse(localStorage.getItem('ff-maintenance-technicians') || 'null') || [];
+let maintenanceCalendarDate = localDateISO();
 const analyticsFilters = JSON.parse(localStorage.getItem('ff-analytics-filters') || 'null') || { fromDate: '', toDate: '', groupBy: 'day' };
 
 const materials = [
@@ -78,7 +80,7 @@ const titles = {
   dashboard: ['JOB-WORK OS', 'Overview'], quotes: ['SALES', 'Quotes'], jobs: ['JOB CONTROL', 'Jobs'],
   purchases: ['PURCHASING', 'Purchase orders'], materials: ['RAW MATERIAL', 'Materials'],
   workers: ['PARTNERS', 'Job workers'], invoices: ['FINANCE', 'GST invoices'],
-  marketplace: ['B2B NETWORK', 'Marketplace'], facilities: ['ORGANIZATION', 'Factory facilities'], forecast: ['INVENTORY INTELLIGENCE', 'Demand forecast & reorder'], users: ['ADMINISTRATION', 'User management'], machines: ['EQUIPMENT', 'Machines & equipment'], maintenance: ['EQUIPMENT HEALTH', 'Predictive maintenance'], 'work-orders': ['EQUIPMENT', 'Maintenance work orders'], planning: ['PRODUCTION', 'Material planning'], schedule: ['PRODUCTION', 'Production schedule'], execution: ['PRODUCTION', 'Production execution & QC'], analytics: ['MANAGEMENT', 'Production analytics'], costing: ['FINANCE', 'Job costing'], settings: ['WORKSPACE', 'Settings']
+  marketplace: ['B2B NETWORK', 'Marketplace'], facilities: ['ORGANIZATION', 'Factory facilities'], forecast: ['INVENTORY INTELLIGENCE', 'Demand forecast & reorder'], users: ['ADMINISTRATION', 'User management'], machines: ['EQUIPMENT', 'Machines & equipment'], maintenance: ['EQUIPMENT HEALTH', 'Predictive maintenance'], 'work-orders': ['EQUIPMENT', 'Maintenance work orders'], 'maintenance-calendar': ['EQUIPMENT', 'Maintenance calendar'], planning: ['PRODUCTION', 'Material planning'], schedule: ['PRODUCTION', 'Production schedule'], execution: ['PRODUCTION', 'Production execution & QC'], analytics: ['MANAGEMENT', 'Production analytics'], costing: ['FINANCE', 'Job costing'], settings: ['WORKSPACE', 'Settings']
 };
 
 function save(shouldSync = true) {
@@ -103,6 +105,7 @@ function save(shouldSync = true) {
   localStorage.setItem('ff-machines', JSON.stringify(machines));
   localStorage.setItem('ff-maintenance-records', JSON.stringify(maintenanceRecords));
   localStorage.setItem('ff-maintenance-work-orders', JSON.stringify(maintenanceWorkOrders));
+  localStorage.setItem('ff-maintenance-technicians', JSON.stringify(maintenanceTechnicians));
   localStorage.setItem('ff-analytics-filters', JSON.stringify(analyticsFilters));
   localStorage.setItem('ff-language', app.language);
   ui('#quoteBadge').textContent = quotes.filter((quote) => quote.status === 'Follow up').length || '0';
@@ -124,7 +127,7 @@ async function syncWorkspace() {
   try {
     await window.FactoryFlowAuth.request('/api/sync', {
       method: 'POST',
-      body: JSON.stringify({ quotes, jobs, purchases, materials, deliveries, receipts, movements, requirements, workers, schedules, productionLogs, qcInspections, reworkLogs, downtimeLogs, machines, maintenanceRecords, maintenanceWorkOrders })
+      body: JSON.stringify({ quotes, jobs, purchases, materials, deliveries, receipts, movements, requirements, workers, schedules, productionLogs, qcInspections, reworkLogs, downtimeLogs, machines, maintenanceRecords, maintenanceWorkOrders, maintenanceTechnicians })
     });
     setDataStatus('Synced', 'online');
   } catch {
@@ -181,6 +184,7 @@ async function hydrateWorkspace() {
     replace(machines, 'machines');
     replace(maintenanceRecords, 'maintenanceRecords');
     replace(maintenanceWorkOrders, 'maintenanceWorkOrders');
+    replace(maintenanceTechnicians, 'maintenanceTechnicians');
     window.FactoryFlowInventory.ensureStockMetadata(materials);
     inventoryForecast = null;
     scheduleOptimization = null;
@@ -1619,9 +1623,9 @@ function maintenanceWorkOrdersPage() {
       '<td>' + status(order.priority) + '</td>' +
       '<td>' + safe(order.assignedTo || 'Unassigned') + '</td>' +
       '<td>' + (order.dueDate ? safe(order.dueDate) : '—') + (overdue ? '<div class="mwo-overdue">Overdue</div>' : '') + '</td>' +
-      '<td>' + status(order.status) + '</td>' +
+      '<td>' + status(order.status) + (order.scheduledDate ? '<div class="subtle">' + safe(order.scheduledDate + ' · ' + order.startTime + '–' + order.endTime) + '</div>' : '') + '</td>' +
       '<td>' + parts.length + ' part(s)<div class="subtle">' + (totalCost ? currency(totalCost) : 'Cost n/a') + '</div></td>' +
-      '<td><div class="machine-actions">' + (canManage && !['Completed', 'Cancelled'].includes(order.status) ? '<button class="table-button" data-edit-work-order="' + safe(order.id) + '">Update</button><button class="table-button" data-issue-work-order-parts="' + safe(order.id) + '">Issue parts</button>' : '<button class="table-button" data-edit-work-order="' + safe(order.id) + '">View</button>') + '</div></td></tr>';
+      '<td><div class="machine-actions">' + (canManage && !['Completed', 'Cancelled'].includes(order.status) ? '<button class="table-button" data-edit-work-order="' + safe(order.id) + '">Update</button><button class="table-button" data-schedule-work-order="' + safe(order.id) + '">Schedule</button><button class="table-button" data-issue-work-order-parts="' + safe(order.id) + '">Issue parts</button>' : '<button class="table-button" data-edit-work-order="' + safe(order.id) + '">View</button>') + '</div></td></tr>';
   }).join('');
   const filters = ['All', 'Open', 'Assigned', 'In progress', 'Waiting for parts', 'Completed', 'Cancelled'];
   const filterButtons = filters.map((filter) => '<button type="button" class="filter-chip ' + (maintenanceWorkOrderFilter === filter ? 'active' : '') + '" data-mwo-filter="' + safe(filter) + '">' + safe(filter) + '</button>').join('');
@@ -1790,6 +1794,150 @@ async function toggleMaintenanceSparePart(sku) {
   } catch (error) {
     notify(error.message);
   }
+}
+
+
+function editMaintenanceTechnician(technicianId) {
+  if (!window.FactoryFlowAuth.has('maintenance.manage')) return;
+  const current = technicianId ? maintenanceTechnicians.find((item) => item.id === technicianId) : null;
+  if (technicianId && !current) return notify('Technician not found.');
+  const days = [
+    { value: 0, label: 'Sun' }, { value: 1, label: 'Mon' }, { value: 2, label: 'Tue' },
+    { value: 3, label: 'Wed' }, { value: 4, label: 'Thu' }, { value: 5, label: 'Fri' }, { value: 6, label: 'Sat' }
+  ];
+  const selected = current ? current.workingDays || [] : [1, 2, 3, 4, 5, 6];
+  openModal('<h2 id="modalTitle">' + (current ? 'Edit technician' : 'Add technician') + '</h2><form id="maintenanceTechnicianForm" class="form-grid">' +
+    '<label>Technician / maintenance provider<input required maxlength="100" name="name" value="' + safe(current ? current.name : '') + '"></label>' +
+    '<label>Specialty / skills<input maxlength="100" name="specialty" value="' + safe(current ? current.specialty || '' : '') + '" placeholder="e.g. Electrical, mechanical, calibration"></label>' +
+    '<div class="form-row"><label>Daily capacity (hours)<input required type="number" name="capacityHoursPerDay" min="0.25" max="24" step="0.25" value="' + (current ? current.capacityHoursPerDay : 8) + '"></label>' +
+    '<label>Hourly labour rate (₹)<input type="number" name="hourlyRate" min="0" max="1000000" step="0.01" value="' + (current ? current.hourlyRate || 0 : 0) + '"></label></div>' +
+    '<fieldset class="mtech-days"><legend>Working days</legend><div>' + days.map((day) => '<label><input type="checkbox" name="workingDays" value="' + day.value + '"' + (selected.includes(day.value) ? ' checked' : '') + '> ' + day.label + '</label>').join('') + '</div></fieldset>' +
+    '<label>Unavailable dates (comma-separated YYYY-MM-DD)<input name="unavailableDates" value="' + safe(current ? (current.unavailableDates || []).join(', ') : '') + '" placeholder="e.g. 2026-11-14, 2026-11-15"></label>' +
+    (current ? '<label class="mtech-active"><input type="checkbox" name="active" value="true"' + (current.active !== false ? ' checked' : '') + '> Active technician</label>' : '') +
+    '<p id="mtechError" class="form-error" hidden></p><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="primary-button" type="submit">Save technician</button></div></form>');
+  ui('#maintenanceTechnicianForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const workingDays = data.getAll('workingDays').map(Number);
+    const unavailableDates = String(data.get('unavailableDates') || '').split(',').map((value) => value.trim()).filter(Boolean);
+    try {
+      const result = await window.FactoryFlowAuth.request(current
+        ? '/api/maintenance/technicians/' + encodeURIComponent(current.id)
+        : '/api/maintenance/technicians', {
+        method: current ? 'PATCH' : 'POST',
+        body: JSON.stringify({
+          name: data.get('name'), specialty: data.get('specialty'),
+          capacityHoursPerDay: Number(data.get('capacityHoursPerDay')),
+          hourlyRate: Number(data.get('hourlyRate')), workingDays, unavailableDates,
+          ...(current ? { active: data.get('active') === 'true' } : {})
+        })
+      });
+      if (current) {
+        const index = maintenanceTechnicians.findIndex((item) => item.id === current.id);
+        if (index >= 0) maintenanceTechnicians[index] = result.technician;
+      } else maintenanceTechnicians.unshift(result.technician);
+      save(false);
+      closeModal();
+      render();
+      notify('Technician saved.');
+    } catch (error) {
+      const node = ui('#mtechError');
+      node.textContent = error.message;
+      node.hidden = false;
+    }
+  });
+}
+
+function scheduleMaintenanceWorkOrder(workOrderId) {
+  if (!window.FactoryFlowAuth.has('maintenance.manage')) return;
+  const order = maintenanceWorkOrders.find((item) => item.id === workOrderId);
+  if (!order || ['Completed', 'Cancelled'].includes(order.status)) return notify('Only open work orders can be scheduled.');
+  const active = maintenanceTechnicians.filter((item) => item.active !== false);
+  if (!active.length) return notify('Add an active technician before scheduling maintenance work.');
+  const options = active.map((technician) => '<option value="' + safe(technician.id) + '"' +
+    (order.technicianId === technician.id ? ' selected' : '') + '>' +
+    safe(technician.name + ' · ' + (technician.specialty || 'General') + ' · ' + technician.capacityHoursPerDay + ' hrs/day') + '</option>').join('');
+  openModal('<h2 id="modalTitle">Schedule ' + safe(order.id) + '</h2><p>' + safe(order.machineName + ' · ' + order.title) + '</p>' +
+    '<form id="maintenanceScheduleForm" class="form-grid"><label>Technician<select name="technicianId" required>' + options + '</select></label>' +
+    '<label>Scheduled date<input required name="scheduledDate" type="date" value="' + safe(order.scheduledDate || order.dueDate || localDateISO()) + '"></label>' +
+    '<div class="form-row"><label>Start time<input required name="startTime" type="time" value="' + safe(order.startTime || '09:00') + '"></label>' +
+    '<label>End time<input required name="endTime" type="time" value="' + safe(order.endTime || '11:00') + '"></label></div>' +
+    '<p class="subtle">Scheduling checks the technician’s working days, unavailable dates, daily capacity and overlapping work orders.</p>' +
+    '<p id="mwoScheduleError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save schedule</button></div></form>');
+  ui('#maintenanceScheduleForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    try {
+      const result = await window.FactoryFlowAuth.request('/api/maintenance/work-orders/' + encodeURIComponent(order.id) + '/schedule', {
+        method: 'POST',
+        body: JSON.stringify({
+          technicianId: data.get('technicianId'), scheduledDate: data.get('scheduledDate'),
+          startTime: data.get('startTime'), endTime: data.get('endTime')
+        })
+      });
+      const index = maintenanceWorkOrders.findIndex((item) => item.id === order.id);
+      if (index >= 0) maintenanceWorkOrders[index] = result.workOrder;
+      save(false);
+      closeModal();
+      goto('maintenance-calendar');
+      notify('Work order ' + order.id + ' scheduled.');
+    } catch (error) {
+      const node = ui('#mwoScheduleError');
+      node.textContent = error.message;
+      node.hidden = false;
+    }
+  });
+}
+
+function maintenanceCalendarPage() {
+  const canManage = window.FactoryFlowAuth.has('maintenance.manage');
+  let calendar;
+  try {
+    calendar = window.FactoryFlowMaintenanceWorkOrders.buildTechnicianCalendar(
+      maintenanceWorkOrders, maintenanceTechnicians, maintenanceCalendarDate, 7
+    );
+  } catch (error) {
+    return head('EQUIPMENT', 'Maintenance calendar', error.message);
+  }
+  const eventRows = calendar.events.map((event) =>
+    '<tr><td><strong>' + safe(event.date) + '</strong><div class="subtle">' + safe(new Date(event.date + 'T00:00:00').toLocaleDateString('en-IN', { weekday: 'short' })) + '</div></td>' +
+    '<td>' + safe(event.startTime + '–' + event.endTime) + '<div class="subtle">' + Number(event.hours).toFixed(2) + ' hrs</div></td>' +
+    '<td><strong>' + safe(event.technicianName) + '</strong></td><td>' + safe(event.machineName) + '</td>' +
+    '<td><strong class="order-code">' + safe(event.workOrderId) + '</strong><div class="subtle">' + safe(event.title) + '</div></td>' +
+    '<td>' + status(event.priority) + '</td><td>' + status(event.status) + '</td></tr>'
+  ).join('');
+  const capacityRows = calendar.capacity.map((item) =>
+    item.days.map((day) => '<tr><td><strong>' + safe(item.technicianName) + '</strong><div class="subtle">' + item.capacityHoursPerDay + ' hrs/day</div></td>' +
+      '<td>' + safe(day.date) + '</td><td>' + (day.available ? '<span class="status on-track">Available</span>' : '<span class="status critical">Unavailable</span>') + '</td>' +
+      '<td>' + day.scheduledHours.toFixed(2) + ' hrs</td><td>' + day.remainingHours.toFixed(2) + ' hrs</td></tr>'
+    ).join('')
+  ).join('');
+  const unassigned = maintenanceWorkOrders.filter((order) =>
+    !['Completed', 'Cancelled'].includes(order.status) && !order.scheduledDate
+  );
+  const technicianRows = maintenanceTechnicians.map((technician) =>
+    '<tr><td><strong>' + safe(technician.name) + '</strong><div class="subtle">' + safe(technician.specialty || 'General maintenance') + '</div></td>' +
+    '<td>' + Number(technician.capacityHoursPerDay).toFixed(2) + ' hrs/day</td>' +
+    '<td>' + safe((technician.workingDays || []).map((day) => ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][day]).join(', ')) + '</td>' +
+    '<td>' + safe((technician.unavailableDates || []).join(', ') || 'None recorded') + '</td>' +
+    '<td>' + (technician.active === false ? '<span class="status critical">Inactive</span>' : '<span class="status on-track">Active</span>') + '</td>' +
+    '<td>' + (canManage ? '<button class="table-button" data-edit-technician="' + safe(technician.id) + '">Edit</button>' : '—') + '</td></tr>'
+  ).join('');
+  return head('EQUIPMENT', 'Maintenance calendar', 'Plan repair visits and preventive tasks against technician working days, unavailable dates and daily capacity.',
+    '<div class="mtech-actions">' + (canManage ? '<button class="secondary-button" data-new-technician>＋ Add technician</button>' : '') + '<button class="primary-button" data-go="work-orders">Work orders</button></div>') +
+    '<section class="content-card mtech-calendar-filter"><form id="maintenanceCalendarForm" class="form-row"><label>Week starts<input type="date" name="fromDate" value="' + safe(maintenanceCalendarDate) + '"></label><button class="secondary-button" type="submit">Show 7 days</button></form><p class="subtle">' + safe(calendar.fromDate) + ' through ' + safe(calendar.toDate) + ' · ' + calendar.events.length + ' scheduled work orders</p></section>' +
+    '<div class="inventory-grid"><article class="inventory-stat"><span>TECHNICIANS</span><strong>' + maintenanceTechnicians.filter((item) => item.active !== false).length + '</strong><small>Active facility roster</small></article>' +
+    '<article class="inventory-stat"><span>SCHEDULED JOBS</span><strong>' + calendar.events.length + '</strong><small>Within selected week</small></article>' +
+    '<article class="inventory-stat"><span>UNSCHEDULED WORK</span><strong>' + unassigned.length + '</strong><small>Open work orders without a slot</small></article>' +
+    '<article class="inventory-stat"><span>TECHNICIAN CAPACITY</span><strong>' + calendar.capacity.reduce((sum, row) => sum + row.days.reduce((daySum, day) => daySum + (day.available ? day.remainingHours : 0), 0), 0).toFixed(1) + ' hrs</strong><small>Remaining across selected week</small></article></div>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong>Scheduled maintenance · 7 days</strong><span class="subtle">Time slots and assigned equipment</span></div>' +
+    (eventRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>DATE</th><th>TIME</th><th>TECHNICIAN</th><th>MACHINE</th><th>WORK ORDER</th><th>PRIORITY</th><th>STATUS</th></tr></thead><tbody>' + eventRows + '</tbody></table></div>' : '<div class="empty-state">No maintenance work orders are scheduled for this period.</div>') + '</section>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong>Technician daily capacity</strong><span class="subtle">Scheduled versus remaining hours</span></div>' +
+    (capacityRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>TECHNICIAN</th><th>DATE</th><th>AVAILABILITY</th><th>BOOKED</th><th>REMAINING</th></tr></thead><tbody>' + capacityRows + '</tbody></table></div>' : '<div class="empty-state">Add technicians to start planning maintenance capacity.</div>') + '</section>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong>Technician roster</strong><span class="subtle">' + maintenanceTechnicians.length + ' profile(s)</span></div>' +
+    (technicianRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>TECHNICIAN</th><th>CAPACITY</th><th>WORKING DAYS</th><th>UNAVAILABLE DATES</th><th>STATUS</th><th>ACTIONS</th></tr></thead><tbody>' + technicianRows + '</tbody></table></div>' : '<div class="empty-state">Add a technician to assign and schedule maintenance work.</div>') + '</section>' +
+    '<section class="content-card" style="margin-top:18px"><div class="toolbar"><strong>Unscheduled work orders</strong><span class="subtle">' + unassigned.length + ' require planning</span></div>' +
+    (unassigned.length ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>WORK ORDER</th><th>MACHINE</th><th>PRIORITY</th><th>DUE DATE</th><th>ACTION</th></tr></thead><tbody>' + unassigned.map((order) => '<tr><td><strong>' + safe(order.id) + '</strong><div class="subtle">' + safe(order.title) + '</div></td><td>' + safe(order.machineName) + '</td><td>' + status(order.priority) + '</td><td>' + safe(order.dueDate || '—') + '</td><td>' + (canManage ? '<button class="table-button" data-schedule-work-order="' + safe(order.id) + '">Schedule</button>' : '—') + '</td></tr>').join('') + '</tbody></table></div>' : '<div class="empty-state">All open work orders have a scheduled date.</div>') + '</section>';
 }
 
 function machinesPage() {
@@ -1993,13 +2141,13 @@ function settingsPage() {
 }
 
 function render() {
-  const permissions = { dashboard: 'dashboard.view', quotes: 'quotes.view', jobs: 'jobs.view', purchases: 'purchases.view', materials: 'materials.view', forecast: 'materials.view', workers: 'workers.view', invoices: 'invoices.view', marketplace: 'marketplace.view', facilities: 'facilities.view', planning: 'planning.view', schedule: 'schedule.view', execution: 'execution.view', analytics: 'analytics.view', costing: 'costing.view', settings: 'settings.view', users: 'users.manage', machines: 'machines.view', maintenance: 'machines.view', 'work-orders': 'maintenance.view' };
+  const permissions = { dashboard: 'dashboard.view', quotes: 'quotes.view', jobs: 'jobs.view', purchases: 'purchases.view', materials: 'materials.view', forecast: 'materials.view', workers: 'workers.view', invoices: 'invoices.view', marketplace: 'marketplace.view', facilities: 'facilities.view', planning: 'planning.view', schedule: 'schedule.view', execution: 'execution.view', analytics: 'analytics.view', costing: 'costing.view', settings: 'settings.view', users: 'users.manage', machines: 'machines.view', maintenance: 'machines.view', 'work-orders': 'maintenance.view', 'maintenance-calendar': 'maintenance.view' };
   if (!window.FactoryFlowAuth.has(permissions[app.view])) app.view = 'dashboard';
   const label = titles[app.view];
   ui('#pageKicker').textContent = label[0];
   ui('#pageTitle').textContent = label[1];
   all('.nav-link[data-view]').forEach((button) => button.classList.toggle('active', button.dataset.view === app.view));
-  const pages = { dashboard: window.FactoryFlowAuth.state.user.role === 'worker' ? workerDashboard : window.FactoryFlowAuth.state.user.role === 'supervisor' ? supervisorDashboard : dashboard, quotes: quotesPage, jobs: jobsPage, purchases: purchasesPage, materials: materialsPage, forecast: forecastPage, workers: workersPage, invoices: invoicesPage, marketplace: marketplacePage, facilities: facilitiesPage, planning: planningPage, schedule: schedulePage, execution: executionPage, analytics: analyticsPage, costing: costingPage, settings: settingsPage, users: usersPage, machines: machinesPage, maintenance: maintenancePage, 'work-orders': maintenanceWorkOrdersPage };
+  const pages = { dashboard: window.FactoryFlowAuth.state.user.role === 'worker' ? workerDashboard : window.FactoryFlowAuth.state.user.role === 'supervisor' ? supervisorDashboard : dashboard, quotes: quotesPage, jobs: jobsPage, purchases: purchasesPage, materials: materialsPage, forecast: forecastPage, workers: workersPage, invoices: invoicesPage, marketplace: marketplacePage, facilities: facilitiesPage, planning: planningPage, schedule: schedulePage, execution: executionPage, analytics: analyticsPage, costing: costingPage, settings: settingsPage, users: usersPage, machines: machinesPage, maintenance: maintenancePage, 'work-orders': maintenanceWorkOrdersPage, 'maintenance-calendar': maintenanceCalendarPage };
   ui('#view').innerHTML = pages[app.view]();
   bind();
 }
@@ -2518,6 +2666,11 @@ function bind() {
   all('[data-add-maintenance]').forEach((button) => button.addEventListener('click', () => addMachineMaintenance(button.dataset.addMaintenance)));
   all('[data-service-machine]').forEach((button) => button.addEventListener('click', () => addMachineServiceRecord(button.dataset.serviceMachine)));
   all('[data-new-work-order]').forEach((button) => button.addEventListener('click', createMaintenanceWorkOrder));
+  all('[data-new-technician]').forEach((button) => button.addEventListener('click', () => editMaintenanceTechnician()));
+  all('[data-edit-technician]').forEach((button) => button.addEventListener('click', () => editMaintenanceTechnician(button.dataset.editTechnician)));
+  all('[data-schedule-work-order]').forEach((button) => button.addEventListener('click', () => scheduleMaintenanceWorkOrder(button.dataset.scheduleWorkOrder)));
+  const calendarForm = ui('#maintenanceCalendarForm');
+  if (calendarForm) calendarForm.addEventListener('submit', (event) => { event.preventDefault(); maintenanceCalendarDate = new FormData(event.currentTarget).get('fromDate') || localDateISO(); render(); });
   all('[data-edit-work-order]').forEach((button) => button.addEventListener('click', () => editMaintenanceWorkOrder(button.dataset.editWorkOrder)));
   all('[data-issue-work-order-parts]').forEach((button) => button.addEventListener('click', () => issueMaintenanceWorkOrderParts(button.dataset.issueWorkOrderParts)));
   all('[data-mwo-filter]').forEach((button) => button.addEventListener('click', () => { maintenanceWorkOrderFilter = button.dataset.mwoFilter; render(); }));
