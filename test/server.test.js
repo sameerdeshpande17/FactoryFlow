@@ -23,7 +23,7 @@ async function freePort() {
 before(async () => {
   const root = path.join(__dirname, '..');
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'factoryflow-test-'));
-  for (const file of ['server.js', 'auth.js', 'facilities.js', 'forecasting.js', 'inventory.js', 'scheduling.js', 'scheduler-optimizer.js', 'execution.js', 'analytics.js', 'machines.js', 'maintenance-work-orders.js']) {
+  for (const file of ['server.js', 'auth.js', 'facilities.js', 'forecasting.js', 'inventory.js', 'scheduling.js', 'scheduler-optimizer.js', 'execution.js', 'analytics.js', 'machines.js', 'maintenance-work-orders.js', 'gst-documents.js']) {
     fs.copyFileSync(path.join(root, file), path.join(tempDir, file));
   }
   fs.mkdirSync(path.join(tempDir, 'data'));
@@ -125,6 +125,110 @@ test('authenticates users, enforces role access, persists operations and protect
   const puneFacility = (await json(createFacility)).facility;
   assert.equal(puneFacility.code, 'PUNE-01');
   assert.notEqual(puneFacility.id, 'FAC-001');
+
+  const emptyGstProfile = await json(await fetch(baseUrl + '/api/gst/profile', {
+    headers: { Cookie: adminCookie, 'X-Facility-ID': 'FAC-001' }
+  }));
+  assert.equal(emptyGstProfile.profile, null);
+
+  const saveGstProfile = await fetch(baseUrl + '/api/gst/profile', {
+    method: 'PUT',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      legalName: 'Northstar Works Private Limited',
+      tradeName: 'Northstar Works',
+      gstin: '29ABCDE1234F1Z5',
+      pan: 'ABCDE1234F',
+      address: '12 Industrial Estate',
+      city: 'Bengaluru',
+      state: 'Karnataka',
+      stateCode: '29',
+      pincode: '560001',
+      email: 'accounts@example.com',
+      phone: '9876543210'
+    })
+  });
+  assert.equal(saveGstProfile.status, 200);
+  assert.equal((await json(saveGstProfile)).profile.facilityId, 'FAC-001');
+
+  const taxInvoicePayload = {
+    type: 'TAX_INVOICE',
+    documentDate: '2026-11-06',
+    dueDate: '2026-11-20',
+    customerName: 'Kaveri Foods',
+    customerGstin: '29ABCDE1234F1Z5',
+    customerAddress: '22 Market Road, Bengaluru',
+    placeOfSupplyState: 'Karnataka',
+    placeOfSupplyStateCode: '29',
+    reference: 'PO-2026-014',
+    lines: [{ description: 'Printed corrugated cartons', hsnSac: '48191010', quantity: 100, unit: 'pieces', unitPrice: 25, discount: 100, gstRate: 18 }]
+  };
+  const issueIntraStateInvoice = await fetch(baseUrl + '/api/gst/documents', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify(taxInvoicePayload)
+  });
+  assert.equal(issueIntraStateInvoice.status, 201);
+  const intraInvoice = (await json(issueIntraStateInvoice)).document;
+  assert.equal(intraInvoice.number, 'INV/2026-27/0001');
+  assert.equal(intraInvoice.cgstAmount, 216);
+  assert.equal(intraInvoice.sgstAmount, 216);
+  assert.equal(intraInvoice.igstAmount, 0);
+  assert.equal(intraInvoice.grandTotal, 2832);
+
+  const issueInterStateInvoice = await fetch(baseUrl + '/api/gst/documents', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...taxInvoicePayload,
+      customerName: 'Mumbai Retail',
+      customerGstin: '27ABCDE1234F1Z5',
+      placeOfSupplyState: 'Maharashtra',
+      placeOfSupplyStateCode: '27'
+    })
+  });
+  assert.equal(issueInterStateInvoice.status, 201);
+  const interInvoice = (await json(issueInterStateInvoice)).document;
+  assert.equal(interInvoice.number, 'INV/2026-27/0002');
+  assert.equal(interInvoice.cgstAmount, 0);
+  assert.equal(interInvoice.sgstAmount, 0);
+  assert.equal(interInvoice.igstAmount, 432);
+
+  const issueChallan = await fetch(baseUrl + '/api/gst/documents', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...taxInvoicePayload,
+      type: 'DELIVERY_CHALLAN',
+      dueDate: '',
+      customerName: 'Kaveri Foods Warehouse',
+      customerGstin: '',
+      reference: 'Dispatch DC',
+      lines: taxInvoicePayload.lines
+    })
+  });
+  assert.equal(issueChallan.status, 201);
+  const challan = (await json(issueChallan)).document;
+  assert.equal(challan.number, 'DC/2026-27/0001');
+  assert.equal(challan.declaredValue, 2400);
+  assert.equal(challan.grandTotal, 0);
+  assert.equal(challan.totalTax, 0);
+
+  const invalidGstRate = await fetch(baseUrl + '/api/gst/documents', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...taxInvoicePayload, lines: [{ ...taxInvoicePayload.lines[0], gstRate: 7 }] })
+  });
+  assert.equal(invalidGstRate.status, 400);
+
+  const foreignGstList = await json(await fetch(baseUrl + '/api/gst/documents', {
+    headers: { Cookie: adminCookie, 'X-Facility-ID': puneFacility.id }
+  }));
+  assert.deepEqual(foreignGstList.documents, []);
+  const foreignGstDocument = await fetch(baseUrl + '/api/gst/documents/' + encodeURIComponent(intraInvoice.id), {
+    headers: { Cookie: adminCookie, 'X-Facility-ID': puneFacility.id }
+  });
+  assert.equal(foreignGstDocument.status, 404);
 
   const initialFacilitySummary = await json(await fetch(baseUrl + '/api/facilities/summary', { headers: { Cookie: adminCookie } }));
   assert.equal(initialFacilitySummary.facilityCount, 2);
