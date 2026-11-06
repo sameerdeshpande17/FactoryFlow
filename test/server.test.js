@@ -1,5 +1,6 @@
 const { after, before, test } = require('node:test');
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { once } = require('node:events');
 const fs = require('node:fs');
@@ -23,7 +24,7 @@ async function freePort() {
 before(async () => {
   const root = path.join(__dirname, '..');
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'factoryflow-test-'));
-  for (const file of ['server.js', 'auth.js', 'facilities.js', 'forecasting.js', 'inventory.js', 'scheduling.js', 'scheduler-optimizer.js', 'execution.js', 'analytics.js', 'machines.js', 'maintenance-work-orders.js', 'gst-documents.js']) {
+  for (const file of ['server.js', 'auth.js', 'facilities.js', 'forecasting.js', 'inventory.js', 'scheduling.js', 'scheduler-optimizer.js', 'execution.js', 'analytics.js', 'machines.js', 'maintenance-work-orders.js', 'gst-documents.js', 'whatsapp.js']) {
     fs.copyFileSync(path.join(root, file), path.join(tempDir, file));
   }
   fs.mkdirSync(path.join(tempDir, 'data'));
@@ -32,7 +33,7 @@ before(async () => {
   baseUrl = 'http://127.0.0.1:' + port;
   server = spawn(process.execPath, ['server.js'], {
     cwd: tempDir,
-    env: { ...process.env, PORT: String(port), NODE_ENV: 'test' },
+    env: { ...process.env, PORT: String(port), NODE_ENV: 'test', WHATSAPP_APP_SECRET: 'test-app-secret', WHATSAPP_VERIFY_TOKEN: 'test-verify-token' },
     stdio: ['ignore', 'pipe', 'pipe']
   });
 
@@ -125,6 +126,83 @@ test('authenticates users, enforces role access, persists operations and protect
   const puneFacility = (await json(createFacility)).facility;
   assert.equal(puneFacility.code, 'PUNE-01');
   assert.notEqual(puneFacility.id, 'FAC-001');
+
+  const whatsappConfigResponse = await json(await fetch(baseUrl + '/api/whatsapp/config', {
+    headers: { Cookie: adminCookie, 'X-Facility-ID': 'FAC-001' }
+  }));
+  assert.equal(whatsappConfigResponse.configuration.apiConfigured, false);
+  assert.equal(whatsappConfigResponse.configuration.webhookConfigured, true);
+  assert.equal(Object.hasOwn(whatsappConfigResponse.configuration, 'accessToken'), false);
+
+  const invalidWebhookHandshake = await fetch(baseUrl + '/api/whatsapp/webhook?hub.mode=subscribe&hub.verify_token=wrong&hub.challenge=abc');
+  assert.equal(invalidWebhookHandshake.status, 403);
+  const validWebhookHandshake = await fetch(baseUrl + '/api/whatsapp/webhook?hub.mode=subscribe&hub.verify_token=test-verify-token&hub.challenge=challenge-123');
+  assert.equal(validWebhookHandshake.status, 200);
+  assert.equal(await validWebhookHandshake.text(), 'challenge-123');
+
+  const invalidWebhookSignature = await fetch(baseUrl + '/api/whatsapp/webhook', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Hub-Signature-256': 'sha256=' + '0'.repeat(64) },
+    body: JSON.stringify({ object: 'whatsapp_business_account', entry: [] })
+  });
+  assert.equal(invalidWebhookSignature.status, 401);
+
+  const webhookBody = JSON.stringify({ object: 'whatsapp_business_account', entry: [] });
+  const webhookSignature = 'sha256=' + crypto.createHmac('sha256', 'test-app-secret').update(webhookBody).digest('hex');
+  const validWebhook = await fetch(baseUrl + '/api/whatsapp/webhook', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Hub-Signature-256': webhookSignature },
+    body: webhookBody
+  });
+  assert.equal(validWebhook.status, 200);
+  assert.equal(await validWebhook.text(), 'EVENT_RECEIVED');
+
+  const createWhatsAppContact = await fetch(baseUrl + '/api/whatsapp/contacts', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Kaveri Foods', phone: '+91 98765 43210', optedIn: false })
+  });
+  assert.equal(createWhatsAppContact.status, 201);
+  const whatsappContact = (await json(createWhatsAppContact)).contact;
+  assert.equal(whatsappContact.phone, '919876543210');
+  assert.equal(whatsappContact.optedIn, false);
+
+  const unconsentedSend = await fetch(baseUrl + '/api/whatsapp/messages', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ contactId: whatsappContact.id, templateName: 'factoryflow_invoice_issued', languageCode: 'en', bodyParameters: [] })
+  });
+  assert.equal(unconsentedSend.status, 403);
+
+  const recordWhatsAppConsent = await fetch(baseUrl + '/api/whatsapp/contacts/' + encodeURIComponent(whatsappContact.id), {
+    method: 'PATCH',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      name: whatsappContact.name, phone: whatsappContact.phone,
+      optedIn: true, consentSource: 'Signed customer opt-in form',
+      consentAt: '2026-11-06T05:00:00.000Z'
+    })
+  });
+  assert.equal(recordWhatsAppConsent.status, 200);
+  const consentedContact = (await json(recordWhatsAppConsent)).contact;
+  assert.equal(consentedContact.optedIn, true);
+
+  const sendWithoutCloudCredentials = await fetch(baseUrl + '/api/whatsapp/messages', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contactId: consentedContact.id,
+      templateName: 'factoryflow_invoice_issued',
+      languageCode: 'en',
+      bodyParameters: ['Kaveri Foods', 'INV-1', '100', '2026-11-06']
+    })
+  });
+  assert.equal(sendWithoutCloudCredentials.status, 503);
+
+  const foreignWhatsAppContacts = await json(await fetch(baseUrl + '/api/whatsapp/contacts', {
+    headers: { Cookie: adminCookie, 'X-Facility-ID': puneFacility.id }
+  }));
+  assert.deepEqual(foreignWhatsAppContacts.contacts, []);
 
   const initialFacilitySummary = await json(await fetch(baseUrl + '/api/facilities/summary', { headers: { Cookie: adminCookie } }));
   assert.equal(initialFacilitySummary.facilityCount, 2);
@@ -833,6 +911,8 @@ test('authenticates users, enforces role access, persists operations and protect
   const workerBootstrapPayload = await json(workerBootstrap);
   assert.deepEqual(workerBootstrapPayload.state.gstProfiles, []);
   assert.deepEqual(workerBootstrapPayload.state.gstDocuments, []);
+  assert.deepEqual(workerBootstrapPayload.state.whatsappContacts, []);
+  assert.deepEqual(workerBootstrapPayload.state.whatsappMessages, []);
   const workerSchedulePreview = await fetch(baseUrl + '/api/scheduling/optimize', {
     method: 'POST',
     headers: { Cookie: workerCookie, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
@@ -856,6 +936,8 @@ test('authenticates users, enforces role access, persists operations and protect
     body: JSON.stringify({ serviceDate: '2026-11-02', serviceType: 'Inspection', performedBy: 'Worker' })
   });
   assert.equal(workerServiceDenied.status, 403);
+  const workerWhatsAppDenied = await fetch(baseUrl + '/api/whatsapp/contacts', { headers: { Cookie: workerCookie, 'X-Facility-ID': 'FAC-001' } });
+  assert.equal(workerWhatsAppDenied.status, 403);
   const workerTechnicianDenied = await fetch(baseUrl + '/api/maintenance/technicians', {
     method: 'POST',
     headers: { Cookie: workerCookie, 'X-CSRF-Token': workerCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
