@@ -2142,7 +2142,7 @@ function gstDocumentAmount(document) {
 }
 
 function invoicesPage() {
-  const profile = gstProfiles.find((item) => item.facilityId === (window.FactoryFlowAuth.state.activeFacilityId || '')) || gstProfiles[0] || null;
+  const profile = gstProfiles.find((item) => item.facilityId === (window.FactoryFlowAuth.state.activeFacilityId || '')) || null;
   const canManage = window.FactoryFlowAuth.has('invoices.manage');
   const docs = gstDocuments.slice().sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
   const filtered = gstDocumentFilter === 'ALL' ? docs : docs.filter((doc) => doc.type === gstDocumentFilter);
@@ -2172,7 +2172,7 @@ function invoicesPage() {
 
 function configureGstProfile() {
   if (!window.FactoryFlowAuth.has('invoices.manage')) return;
-  const profile = gstProfiles.find((item) => item.facilityId === (window.FactoryFlowAuth.state.activeFacilityId || '')) || gstProfiles[0] || {};
+  const profile = gstProfiles.find((item) => item.facilityId === (window.FactoryFlowAuth.state.activeFacilityId || '')) || {};
   openModal('<h2 id="modalTitle">Business GST profile</h2><p>These details appear as the supplier information on documents issued by this facility.</p><form id="gstProfileForm" class="form-grid">' +
     '<label>Legal business name<input required maxlength="150" name="legalName" value="' + safe(profile.legalName || '') + '"></label>' +
     '<label>Trade name (optional)<input maxlength="150" name="tradeName" value="' + safe(profile.tradeName || '') + '"></label>' +
@@ -2212,7 +2212,7 @@ function configureGstProfile() {
 
 function createGstDocument() {
   if (!window.FactoryFlowAuth.has('invoices.manage')) return;
-  const profile = gstProfiles.find((item) => item.facilityId === (window.FactoryFlowAuth.state.activeFacilityId || '')) || gstProfiles[0];
+  const profile = gstProfiles.find((item) => item.facilityId === (window.FactoryFlowAuth.state.activeFacilityId || ''));
   if (!profile) return configureGstProfile();
   const today = localDateISO();
   const initialLine = () => '<div class="gst-line-entry" data-gst-line><div class="form-row"><label>Description<input required maxlength="250" name="description" value="" placeholder="Goods / services"></label><label>HSN / SAC<input required maxlength="8" name="hsnSac" placeholder="48191010"></label></div>' +
