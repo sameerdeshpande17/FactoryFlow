@@ -499,6 +499,7 @@ async function handleApi(request, response, pathname) {
       facilities: visibleFacilities,
       activeFacilityId: current.facility.id,
       customers: customerDirectory(projected),
+      integrations: { whatsapp: whatsapp.getConfiguration(process.env).publicStatus },
       auth: {
         user: auth.sanitizeUser(current.user),
         permissions: auth.permissionsFor(current.user),
