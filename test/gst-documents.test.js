@@ -91,3 +91,29 @@ test('rejects invalid HSN, GST rates, supply state, dates and discounts', () => 
     lines: [line]
   }, { facilityId: 'FAC-001' }), /due date/i);
 });
+
+test('requires the profile PAN to match the PAN embedded in the business GSTIN', () => {
+  assert.throws(() => gst.validateProfile({ ...profile, pan: 'ABCDE1234X' }), /PAN must match/i);
+});
+
+test('maintains independent document sequences for each document type and financial year', () => {
+  const documents = [];
+  const profiles = [profile];
+  const create = (type, date) => gst.createDocument(documents, profiles, {
+    type, documentDate: date, dueDate: type === 'TAX_INVOICE' ? date : '',
+    customerName: 'Buyer', customerAddress: 'Buyer address',
+    placeOfSupplyState: 'Karnataka', placeOfSupplyStateCode: '29', lines: [line]
+  }, { facilityId: 'FAC-001' });
+  assert.equal(create('QUOTATION', '2026-03-31').number, 'QUO/2025-26/0001');
+  assert.equal(create('QUOTATION', '2026-04-01').number, 'QUO/2026-27/0001');
+  assert.equal(create('TAX_INVOICE', '2026-04-01').number, 'INV/2026-27/0001');
+});
+
+test('rejects a buyer GSTIN whose state code differs from place of supply', () => {
+  assert.throws(() => gst.createDocument([], [profile], {
+    type: 'TAX_INVOICE', documentDate: '2026-11-06', dueDate: '2026-11-20',
+    customerName: 'Buyer', customerAddress: 'Address',
+    customerGstin: '27ABCDE1234F1Z5',
+    placeOfSupplyState: 'Karnataka', placeOfSupplyStateCode: '29', lines: [line]
+  }, { facilityId: 'FAC-001' }), /customer GSTIN state code/i);
+});
