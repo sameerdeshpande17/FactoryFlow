@@ -132,7 +132,7 @@ async function syncWorkspace() {
   try {
     await window.FactoryFlowAuth.request('/api/sync', {
       method: 'POST',
-      body: JSON.stringify({ quotes, jobs, purchases, materials, deliveries, receipts, movements, requirements, workers, schedules, productionLogs, qcInspections, reworkLogs, downtimeLogs, machines, maintenanceRecords, maintenanceWorkOrders, maintenanceTechnicians, gstDocuments, gstProfiles, whatsappContacts, whatsappMessages })
+      body: JSON.stringify({ quotes, jobs, purchases, materials, deliveries, receipts, movements, requirements, workers, schedules, productionLogs, qcInspections, reworkLogs, downtimeLogs, machines, maintenanceRecords, maintenanceWorkOrders, maintenanceTechnicians, gstDocuments, gstProfiles })
     });
     setDataStatus('Synced', 'online');
   } catch {
@@ -194,8 +194,10 @@ async function hydrateWorkspace() {
     replace(gstProfiles, 'gstProfiles');
     replace(whatsappContacts, 'whatsappContacts');
     replace(whatsappMessages, 'whatsappMessages');
-    const whatsappStatus = await window.FactoryFlowAuth.request('/api/whatsapp/config', { headers: { Accept: 'application/json' } });
-    whatsappConfig = whatsappStatus.configuration || whatsappConfig;
+    if (window.FactoryFlowAuth.has('whatsapp.view')) {
+      const whatsappStatus = await window.FactoryFlowAuth.request('/api/whatsapp/config', { headers: { Accept: 'application/json' } });
+      whatsappConfig = whatsappStatus.configuration || whatsappConfig;
+    }
     window.FactoryFlowInventory.ensureStockMetadata(materials);
     inventoryForecast = null;
     scheduleOptimization = null;
