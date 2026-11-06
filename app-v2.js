@@ -2156,7 +2156,7 @@ function invoicesPage() {
     '<td>' + currency(gstDocumentAmount(doc)) + (doc.type === 'DELIVERY_CHALLAN' ? '<div class="subtle">Declared value · not an invoice</div>' : '') + '</td>' +
     '<td>' + safe(doc.documentDate) + (doc.dueDate ? '<div class="subtle">Due ' + safe(doc.dueDate) + '</div>' : '') + '</td>' +
     '<td>' + status(doc.status || 'Issued') + '</td>' +
-    '<td><button class="table-button" data-print-gst-doc="' + safe(doc.id) + '">Print / PDF</button></td></tr>'
+    '<td><button class="table-button" data-print-gst-doc="' + safe(doc.id) + '">Print / PDF</button>' + (window.FactoryFlowAuth.has('whatsapp.manage') ? '<button class="table-button" data-whatsapp-document="' + safe(doc.id) + '">WhatsApp</button>' : '') + '</td></tr>'
   ).join('');
   const filters = [['ALL', 'All'], ['QUOTATION', 'Quotations'], ['TAX_INVOICE', 'Tax invoices'], ['DELIVERY_CHALLAN', 'Delivery challans']];
   const filterButtons = filters.map(([key, label]) => '<button class="filter-chip ' + (gstDocumentFilter === key ? 'active' : '') + '" data-gst-filter="' + key + '">' + label + '</button>').join('');
@@ -3066,6 +3066,10 @@ function bind() {
   all('[data-create-gst-doc]').forEach((button) => button.addEventListener('click', createGstDocument));
   all('[data-print-gst-doc]').forEach((button) => button.addEventListener('click', () => printGstDocument(button.dataset.printGstDoc)));
   all('[data-gst-filter]').forEach((button) => button.addEventListener('click', () => { gstDocumentFilter = button.dataset.gstFilter; render(); }));
+  all('[data-wa-add-contact]').forEach((button) => button.addEventListener('click', createWhatsAppContact));
+  all('[data-wa-send]').forEach((button) => button.addEventListener('click', () => openWhatsAppTemplateSend()));
+  all('[data-wa-toggle-contact]').forEach((button) => button.addEventListener('click', () => toggleWhatsAppContact(button.dataset.waToggleContact)));
+  all('[data-whatsapp-document]').forEach((button) => button.addEventListener('click', () => sendGstDocumentWhatsApp(button.dataset.whatsappDocument)));
 
   all('[data-group]').forEach((button) => button.addEventListener('click', () => notify('You joined the ' + button.dataset.group + ' buying group.')));
   all('[data-action]').forEach((button) => button.addEventListener('click', () => {
