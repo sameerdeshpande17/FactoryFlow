@@ -267,6 +267,8 @@ function projectStoreForUser(store, user) {
       quotes: [],
       purchases: [],
       deliveries: [],
+      gstProfiles: [],
+      gstDocuments: [],
       users: [],
       auditLogs: []
     };
