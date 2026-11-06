@@ -254,7 +254,9 @@ test('authenticates users, enforces role access, persists operations and protect
     reworkLogs: [],
     downtimeLogs: [],
     maintenanceWorkOrders: [],
-    maintenanceTechnicians: []
+    maintenanceTechnicians: [],
+    whatsappContacts: [{ id: 'WAC-FORGED', name: 'Forged opt-in', phone: '919999999999', optedIn: true, consentAt: '2026-11-06T05:00:00.000Z' }],
+    whatsappMessages: [{ id: 'WAM-FORGED', recipientPhone: '919999999999', status: 'delivered' }]
   };
   const sync = await fetch(baseUrl + '/api/sync', {
     method: 'POST',
@@ -871,6 +873,10 @@ test('authenticates users, enforces role access, persists operations and protect
   assert.ok(adminBootstrapAfterUsers.state.maintenanceRecords.every((record) => record.machineId === createdMachine.id));
   assert.equal(adminBootstrapAfterUsers.state.maintenanceWorkOrders.length, 2);
   assert.equal(adminBootstrapAfterUsers.state.maintenanceTechnicians.length, 1);
+  assert.equal(adminBootstrapAfterUsers.state.whatsappContacts.length, 1);
+  assert.equal(adminBootstrapAfterUsers.state.whatsappContacts[0].id, whatsappContact.id);
+  assert.equal(adminBootstrapAfterUsers.state.whatsappContacts[0].optedIn, true);
+  assert.equal(adminBootstrapAfterUsers.state.whatsappMessages.length, 0);
   assert.equal(adminBootstrapAfterUsers.state.gstProfiles.length, 1);
   assert.equal(adminBootstrapAfterUsers.state.gstDocuments.length, 3);
   assert.ok(adminBootstrapAfterUsers.state.maintenanceWorkOrders.some((item) => item.status === 'Completed'));
