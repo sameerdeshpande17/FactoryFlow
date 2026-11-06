@@ -2894,6 +2894,12 @@ function bind() {
   all('[data-unit-cost]').forEach((button) => button.addEventListener('click', () => setMaterialUnitCost(button.dataset.unitCost)));
   all('[data-view-proof]').forEach((button) => button.addEventListener('click', () => viewDeliveryProof(button.dataset.viewProof)));
   all('[data-reminder]').forEach((button) => button.addEventListener('click', () => openReminder(button.dataset.reminder)));
+
+  all('[data-gst-profile]').forEach((button) => button.addEventListener('click', configureGstProfile));
+  all('[data-create-gst-doc]').forEach((button) => button.addEventListener('click', createGstDocument));
+  all('[data-print-gst-doc]').forEach((button) => button.addEventListener('click', () => printGstDocument(button.dataset.printGstDoc)));
+  all('[data-gst-filter]').forEach((button) => button.addEventListener('click', () => { gstDocumentFilter = button.dataset.gstFilter; render(); }));
+
   all('[data-group]').forEach((button) => button.addEventListener('click', () => notify('You joined the ' + button.dataset.group + ' buying group.')));
   all('[data-action]').forEach((button) => button.addEventListener('click', () => {
     const action = button.dataset.action;
