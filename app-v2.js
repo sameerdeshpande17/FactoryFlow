@@ -21,6 +21,9 @@ const purchases = [
 const gstDocuments = JSON.parse(localStorage.getItem('ff-gst-documents') || 'null') || [];
 const gstProfiles = JSON.parse(localStorage.getItem('ff-gst-profiles') || 'null') || [];
 let gstDocumentFilter = 'ALL';
+const whatsappContacts = JSON.parse(localStorage.getItem('ff-whatsapp-contacts') || 'null') || [];
+const whatsappMessages = JSON.parse(localStorage.getItem('ff-whatsapp-messages') || 'null') || [];
+let whatsappConfig = { apiConfigured: false, webhookConfigured: false, phoneNumberId: '', apiVersion: '' };
 
 const deliveries = JSON.parse(localStorage.getItem('ff-deliveries') || 'null') || [];
 
@@ -78,7 +81,7 @@ const titles = {
   dashboard: ['JOB-WORK OS', 'Overview'], quotes: ['SALES', 'Quotes'], jobs: ['JOB CONTROL', 'Jobs'],
   purchases: ['PURCHASING', 'Purchase orders'], materials: ['RAW MATERIAL', 'Materials'],
   workers: ['PARTNERS', 'Job workers'], invoices: ['FINANCE', 'GST invoices'],
-  marketplace: ['B2B NETWORK', 'Marketplace'], facilities: ['ORGANIZATION', 'Factory facilities'], forecast: ['INVENTORY INTELLIGENCE', 'Demand forecast & reorder'], users: ['ADMINISTRATION', 'User management'], machines: ['EQUIPMENT', 'Machines & equipment'], maintenance: ['EQUIPMENT HEALTH', 'Predictive maintenance'], 'work-orders': ['EQUIPMENT', 'Maintenance work orders'], 'maintenance-calendar': ['EQUIPMENT', 'Maintenance calendar'], planning: ['PRODUCTION', 'Material planning'], schedule: ['PRODUCTION', 'Production schedule'], execution: ['PRODUCTION', 'Production execution & QC'], analytics: ['MANAGEMENT', 'Production analytics'], costing: ['FINANCE', 'Job costing'], settings: ['WORKSPACE', 'Settings']
+  marketplace: ['B2B NETWORK', 'Marketplace'], facilities: ['ORGANIZATION', 'Factory facilities'], forecast: ['INVENTORY INTELLIGENCE', 'Demand forecast & reorder'], users: ['ADMINISTRATION', 'User management'], machines: ['EQUIPMENT', 'Machines & equipment'], maintenance: ['EQUIPMENT HEALTH', 'Predictive maintenance'], whatsapp: ['CUSTOMER MESSAGING', 'WhatsApp Business'], 'work-orders': ['EQUIPMENT', 'Maintenance work orders'], 'maintenance-calendar': ['EQUIPMENT', 'Maintenance calendar'], whatsapp: ['CUSTOMER MESSAGING', 'WhatsApp Business'], planning: ['PRODUCTION', 'Material planning'], schedule: ['PRODUCTION', 'Production schedule'], execution: ['PRODUCTION', 'Production execution & QC'], analytics: ['MANAGEMENT', 'Production analytics'], costing: ['FINANCE', 'Job costing'], settings: ['WORKSPACE', 'Settings']
 };
 
 function save(shouldSync = true) {
@@ -106,6 +109,8 @@ function save(shouldSync = true) {
   localStorage.setItem('ff-maintenance-technicians', JSON.stringify(maintenanceTechnicians));
   localStorage.setItem('ff-gst-documents', JSON.stringify(gstDocuments));
   localStorage.setItem('ff-gst-profiles', JSON.stringify(gstProfiles));
+  localStorage.setItem('ff-whatsapp-contacts', JSON.stringify(whatsappContacts));
+  localStorage.setItem('ff-whatsapp-messages', JSON.stringify(whatsappMessages));
   localStorage.setItem('ff-analytics-filters', JSON.stringify(analyticsFilters));
   localStorage.setItem('ff-language', app.language);
   ui('#quoteBadge').textContent = quotes.filter((quote) => quote.status === 'Follow up').length || '0';
@@ -127,7 +132,7 @@ async function syncWorkspace() {
   try {
     await window.FactoryFlowAuth.request('/api/sync', {
       method: 'POST',
-      body: JSON.stringify({ quotes, jobs, purchases, materials, deliveries, receipts, movements, requirements, workers, schedules, productionLogs, qcInspections, reworkLogs, downtimeLogs, machines, maintenanceRecords, maintenanceWorkOrders, maintenanceTechnicians, gstDocuments, gstProfiles })
+      body: JSON.stringify({ quotes, jobs, purchases, materials, deliveries, receipts, movements, requirements, workers, schedules, productionLogs, qcInspections, reworkLogs, downtimeLogs, machines, maintenanceRecords, maintenanceWorkOrders, maintenanceTechnicians, gstDocuments, gstProfiles, whatsappContacts, whatsappMessages })
     });
     setDataStatus('Synced', 'online');
   } catch {
@@ -187,6 +192,10 @@ async function hydrateWorkspace() {
     replace(maintenanceTechnicians, 'maintenanceTechnicians');
     replace(gstDocuments, 'gstDocuments');
     replace(gstProfiles, 'gstProfiles');
+    replace(whatsappContacts, 'whatsappContacts');
+    replace(whatsappMessages, 'whatsappMessages');
+    const whatsappStatus = await window.FactoryFlowAuth.request('/api/whatsapp/config', { headers: { Accept: 'application/json' } });
+    whatsappConfig = whatsappStatus.configuration || whatsappConfig;
     window.FactoryFlowInventory.ensureStockMetadata(materials);
     inventoryForecast = null;
     scheduleOptimization = null;
@@ -2302,6 +2311,181 @@ function printGstDocument(documentId) {
   win.focus();
 }
 
+
+function whatsappTemplateDefaults(type, document) {
+  const names = {
+    QUOTATION: 'factoryflow_quote_ready',
+    TAX_INVOICE: 'factoryflow_invoice_issued',
+    DELIVERY_CHALLAN: 'factoryflow_delivery_update'
+  };
+  return {
+    templateName: names[type] || 'factoryflow_order_update',
+    languageCode: 'en',
+    bodyParameters: document ? [
+      document.customer.name,
+      document.number,
+      currency(gstDocumentAmount(document)),
+      document.documentDate
+    ] : []
+  };
+}
+
+function whatsappPage() {
+  const canManage = window.FactoryFlowAuth.has('whatsapp.manage');
+  const contacts = whatsappContacts.slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  const optedIn = contacts.filter((item) => item.optedIn === true);
+  const recent = whatsappMessages.slice().sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).slice(0, 30);
+  const contactRows = contacts.map((contact) =>
+    '<tr><td><strong>' + safe(contact.name) + '</strong><div class="subtle">' + safe(contact.phone) + '</div></td>' +
+    '<td>' + (contact.optedIn ? '<span class="status on-track">Opted in</span>' : '<span class="status critical">Opted out</span>') + '</td>' +
+    '<td>' + safe(contact.consentSource || '—') + '</td><td>' + (contact.consentAt ? safe(new Date(contact.consentAt).toLocaleDateString('en-IN')) : '—') + '</td>' +
+    '<td>' + (canManage ? '<button class="table-button" data-wa-toggle-contact="' + safe(contact.id) + '">' + (contact.optedIn ? 'Opt out' : 'Record opt-in') + '</button>' : '—') + '</td></tr>'
+  ).join('');
+  const messageRows = recent.map((message) =>
+    '<tr><td>' + safe(message.createdAt ? new Date(message.createdAt).toLocaleString('en-IN') : '—') + '</td>' +
+    '<td><strong>' + safe(message.recipientName) + '</strong><div class="subtle">' + safe(message.recipientPhone) + '</div></td>' +
+    '<td><span class="order-code">' + safe(message.templateName) + '</span><div class="subtle">' + safe(message.languageCode) + '</div></td>' +
+    '<td>' + status(message.status) + '</td><td>' + safe(message.providerMessageId || 'Awaiting provider ID') + '</td>' +
+    '<td>' + safe((message.errors || []).map((item) => item.title).join('; ') || '—') + '</td></tr>'
+  ).join('');
+  const configCard = '<section class="content-card wa-setup"><div class="toolbar"><strong>Cloud API connection</strong>' +
+    (whatsappConfig.apiConfigured ? '<span class="status on-track">Configured</span>' : '<span class="status critical">Not configured</span>') + '</div>' +
+    '<p>' + (whatsappConfig.apiConfigured ? 'Server has the required Cloud API settings. The access token remains on the server and is never returned to this page.' :
+      'Add the Meta Cloud API settings to the server environment. No token or App Secret is stored in the browser or workspace database.') + '</p>' +
+    '<div class="wa-config-grid"><div><span>PHONE NUMBER ID</span><strong>' + safe(whatsappConfig.phoneNumberId || 'Not set') + '</strong></div><div><span>GRAPH API VERSION</span><strong>' + safe(whatsappConfig.apiVersion || 'Not set') + '</strong></div>' +
+    '<div><span>WEBHOOK</span><strong>' + (whatsappConfig.webhookConfigured ? 'Configured' : 'Not configured') + '</strong></div></div>' +
+    '<p class="subtle">Webhook callback URL: <code>' + safe(location.origin + '/api/whatsapp/webhook') + '</code></p>' +
+    '<details><summary>Server environment variables and setup</summary><pre>WHATSAPP_GRAPH_API_VERSION=v26.0\nWHATSAPP_PHONE_NUMBER_ID=your_phone_number_id\nWHATSAPP_ACCESS_TOKEN=your_server_access_token\nWHATSAPP_APP_SECRET=your_meta_app_secret\nWHATSAPP_VERIFY_TOKEN=your_random_webhook_verify_token</pre>' +
+    '<p>In Meta for Developers, add WhatsApp to a Business app, configure the Cloud API phone number and a durable access token, set the webhook callback URL and matching verify token, then subscribe the app to WhatsApp message/status events. Use HTTPS in production.</p>' +
+    '<p>Template messages must already be approved in WhatsApp Manager. Configure the template names below to match your approved templates.</p></details></section>';
+  return head('CUSTOMER MESSAGING', 'WhatsApp Business', 'Send approved WhatsApp templates to customers who have recorded opt-in, and track delivery status from Meta webhooks.',
+    canManage ? '<div class="wa-page-actions"><button class="secondary-button" data-wa-add-contact>＋ Add contact</button><button class="primary-button" data-wa-send>＋ Send template</button></div>' : '') +
+    '<div class="inventory-grid"><article class="inventory-stat"><span>CONTACTS</span><strong>' + contacts.length + '</strong><small>Facility contacts</small></article>' +
+    '<article class="inventory-stat"><span>OPTED-IN</span><strong>' + optedIn.length + '</strong><small>Eligible for messages</small></article>' +
+    '<article class="inventory-stat"><span>MESSAGES LOGGED</span><strong>' + whatsappMessages.length + '</strong><small>Accepted and attempted sends</small></article>' +
+    '<article class="inventory-stat"><span>WEBHOOK</span><strong>' + (whatsappConfig.webhookConfigured ? 'Ready' : 'Setup needed') + '</strong><small>Delivery/read status updates</small></article></div>' +
+    configCard +
+    '<section class="content-card wa-section"><div class="toolbar"><strong>Customer WhatsApp contacts</strong><span class="subtle">' + optedIn.length + ' opted in</span></div>' +
+    (contactRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>CONTACT</th><th>CONSENT</th><th>CONSENT SOURCE</th><th>RECORDED</th><th>ACTION</th></tr></thead><tbody>' + contactRows + '</tbody></table></div>' :
+      '<div class="empty-state"><h2>No WhatsApp contacts</h2><p>Add a customer contact and record their permission before sending business updates.</p>' + (canManage ? '<button class="primary-button" data-wa-add-contact>Add contact</button>' : '') + '</div>') + '</section>' +
+    '<section class="content-card wa-section"><div class="toolbar"><strong>Outbound message history</strong><span class="subtle">Latest 30</span></div>' +
+    (messageRows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>CREATED</th><th>RECIPIENT</th><th>TEMPLATE</th><th>STATUS</th><th>PROVIDER MESSAGE ID</th><th>DETAILS</th></tr></thead><tbody>' + messageRows + '</tbody></table></div>' :
+      '<div class="empty-state">No WhatsApp messages have been sent from this facility.</div>') + '</section>' +
+    '<section class="content-card wa-section"><strong>Suggested approved utility templates</strong><div class="wa-template-list">' +
+    '<div><code>factoryflow_quote_ready</code><span>Quotation number, customer, value and validity</span></div>' +
+    '<div><code>factoryflow_invoice_issued</code><span>Invoice number, customer, total and due date</span></div>' +
+    '<div><code>factoryflow_delivery_update</code><span>Delivery challan / dispatch update</span></div>' +
+    '<div><code>factoryflow_order_update</code><span>Generic production order status update</span></div>' +
+    '</div><p class="subtle">These are suggested template names only. Create and get each template approved in WhatsApp Manager before trying to send it.</p></section>';
+}
+
+function createWhatsAppContact() {
+  if (!window.FactoryFlowAuth.has('whatsapp.manage')) return;
+  openModal('<h2 id="modalTitle">Add WhatsApp contact</h2><p>Only record opt-in after the customer has explicitly agreed to receive WhatsApp messages from your business.</p>' +
+    '<form id="waContactForm" class="form-grid"><label>Customer / contact name<input required maxlength="150" name="name"></label>' +
+    '<label>WhatsApp phone with country code<input required name="phone" inputmode="tel" maxlength="20" placeholder="919876543210"></label>' +
+    '<label>Consent source<input maxlength="200" name="consentSource" placeholder="e.g. Signed form, website checkbox, WhatsApp opt-in"></label>' +
+    '<label class="wa-check"><input type="checkbox" name="optedIn" value="true"> Customer has explicitly opted in to WhatsApp business messages</label>' +
+    '<p id="waContactError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save contact</button></div></form>');
+  ui('#waContactForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    try {
+      const result = await window.FactoryFlowAuth.request('/api/whatsapp/contacts', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: data.get('name'), phone: data.get('phone'), consentSource: data.get('consentSource'),
+          optedIn: data.get('optedIn') === 'true', consentAt: data.get('optedIn') === 'true' ? new Date().toISOString() : ''
+        })
+      });
+      whatsappContacts.unshift(result.contact);
+      save(false);
+      closeModal();
+      render();
+      notify('WhatsApp contact saved.');
+    } catch (error) {
+      const node = ui('#waContactError');
+      node.textContent = error.message;
+      node.hidden = false;
+    }
+  });
+}
+
+async function toggleWhatsAppContact(contactId) {
+  const contact = whatsappContacts.find((item) => item.id === contactId);
+  if (!contact) return notify('WhatsApp contact not found.');
+  const optedIn = contact.optedIn !== true;
+  if (optedIn && !window.confirm('Confirm that the customer has given fresh WhatsApp consent?')) return;
+  try {
+    const result = await window.FactoryFlowAuth.request('/api/whatsapp/contacts/' + encodeURIComponent(contact.id), {
+      method: 'PATCH',
+      body: JSON.stringify({
+        optedIn,
+        consentAt: optedIn ? new Date().toISOString() : '',
+        consentSource: contact.consentSource || (optedIn ? 'Reconfirmed by business' : ''),
+        name: contact.name,
+        phone: contact.phone
+      })
+    });
+    const index = whatsappContacts.findIndex((item) => item.id === contact.id);
+    if (index >= 0) whatsappContacts[index] = result.contact;
+    save(false);
+    render();
+  } catch (error) { notify(error.message); }
+}
+
+function openWhatsAppTemplateSend(contactId = '', documentId = '') {
+  if (!window.FactoryFlowAuth.has('whatsapp.manage')) return;
+  const eligible = whatsappContacts.filter((item) => item.optedIn === true && item.consentAt);
+  if (!eligible.length) return notify('Add a WhatsApp contact with recorded consent before sending.');
+  const document = documentId ? gstDocuments.find((item) => item.id === documentId) : null;
+  const defaults = document ? whatsappTemplateDefaults(document.type, document) : { templateName: 'factoryflow_order_update', languageCode: 'en', bodyParameters: [] };
+  const options = eligible.map((contact) => '<option value="' + safe(contact.id) + '"' + (contact.id === contactId ? ' selected' : '') + '>' +
+    safe(contact.name + ' · ' + contact.phone) + '</option>').join('');
+  const parameters = defaults.bodyParameters.join('\n');
+  openModal('<h2 id="modalTitle">Send approved WhatsApp template</h2><p>Only approved templates can be sent. The contact must have a recorded opt-in.</p>' +
+    '<form id="waSendForm" class="form-grid"><label>Customer contact<select name="contactId" required>' + options + '</select></label>' +
+    '<label>Approved template name<input required maxlength="512" name="templateName" value="' + safe(defaults.templateName) + '" pattern="[a-z0-9_]+"></label>' +
+    '<label>Template language code<input required maxlength="20" name="languageCode" value="' + safe(defaults.languageCode) + '" placeholder="en or en_US"></label>' +
+    '<label>Body parameters (one per line, in approved template order)<textarea name="bodyParameters" rows="4" maxlength="5000">' + safe(parameters) + '</textarea></label>' +
+    '<p class="subtle">A successful API response means Meta accepted the message for processing. Final delivered/read status arrives through the webhook.</p>' +
+    '<p id="waSendError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Send template</button></div></form>');
+  ui('#waSendForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const bodyParameters = String(data.get('bodyParameters') || '').split('\n').filter((value) => value.length > 0);
+    try {
+      const result = await window.FactoryFlowAuth.request('/api/whatsapp/messages', {
+        method: 'POST',
+        body: JSON.stringify({
+          contactId: data.get('contactId'),
+          templateName: data.get('templateName'),
+          languageCode: data.get('languageCode'),
+          bodyParameters
+        })
+      });
+      whatsappMessages.unshift(result.message);
+      save(false);
+      closeModal();
+      render();
+      notify('WhatsApp template accepted by Meta.');
+    } catch (error) {
+      const node = ui('#waSendError');
+      node.textContent = error.message;
+      node.hidden = false;
+    }
+  });
+}
+
+function sendGstDocumentWhatsApp(documentId) {
+  const document = gstDocuments.find((item) => item.id === documentId);
+  if (!document) return notify('GST document not found.');
+  const contact = whatsappContacts.find((item) => item.optedIn === true &&
+    (item.phone === String(document.customer.phone || '') ||
+      item.name.toLowerCase() === String(document.customer.name || '').toLowerCase()));
+  openWhatsAppTemplateSend(contact ? contact.id : '', documentId);
+}
+
 function marketplacePage() {
   const suppliers = [{ name: 'Kraftline Papers', product: 'Kraft paper · 180 GSM', price: '₹58.20 / kg', save: '7.5% group saving', initials: 'KP', members: 11 }, { name: 'WestPack Films', product: 'BOPP film · 25 micron', price: '₹176 / kg', save: '5.2% group saving', initials: 'WF', members: 7 }, { name: 'Pioneer Inks', product: 'Water-based ink · black', price: '₹425 / kg', save: 'Verified price', initials: 'PI', members: 0 }];
   const cards = suppliers.map((supplier) => '<article class="supplier-card"><header><span class="person-avatar">' + supplier.initials + '</span><span><strong>' + supplier.name + '</strong><small>✓ Verified supplier</small></span></header><p>' + supplier.product + '</p><h3>' + supplier.price + '</h3><div class="supplier-meta"><span>' + supplier.save + '</span><span>' + (supplier.members ? supplier.members + ' businesses joined' : 'Ready to order') + '</span></div><button class="primary-button" data-group="' + supplier.name + '">' + (supplier.members ? 'Join group buy' : 'Request quote') + '</button></article>').join('');
@@ -2313,13 +2497,13 @@ function settingsPage() {
 }
 
 function render() {
-  const permissions = { dashboard: 'dashboard.view', quotes: 'quotes.view', jobs: 'jobs.view', purchases: 'purchases.view', materials: 'materials.view', forecast: 'materials.view', workers: 'workers.view', invoices: 'invoices.view', marketplace: 'marketplace.view', facilities: 'facilities.view', planning: 'planning.view', schedule: 'schedule.view', execution: 'execution.view', analytics: 'analytics.view', costing: 'costing.view', settings: 'settings.view', users: 'users.manage', machines: 'machines.view', maintenance: 'machines.view', 'work-orders': 'maintenance.view', 'maintenance-calendar': 'maintenance.view' };
+  const permissions = { dashboard: 'dashboard.view', quotes: 'quotes.view', jobs: 'jobs.view', purchases: 'purchases.view', materials: 'materials.view', forecast: 'materials.view', workers: 'workers.view', invoices: 'invoices.view', whatsapp: 'whatsapp.view', marketplace: 'marketplace.view', facilities: 'facilities.view', planning: 'planning.view', schedule: 'schedule.view', execution: 'execution.view', analytics: 'analytics.view', costing: 'costing.view', settings: 'settings.view', users: 'users.manage', machines: 'machines.view', maintenance: 'machines.view', 'work-orders': 'maintenance.view', 'maintenance-calendar': 'maintenance.view' };
   if (!window.FactoryFlowAuth.has(permissions[app.view])) app.view = 'dashboard';
   const label = titles[app.view];
   ui('#pageKicker').textContent = label[0];
   ui('#pageTitle').textContent = label[1];
   all('.nav-link[data-view]').forEach((button) => button.classList.toggle('active', button.dataset.view === app.view));
-  const pages = { dashboard: window.FactoryFlowAuth.state.user.role === 'worker' ? workerDashboard : window.FactoryFlowAuth.state.user.role === 'supervisor' ? supervisorDashboard : dashboard, quotes: quotesPage, jobs: jobsPage, purchases: purchasesPage, materials: materialsPage, forecast: forecastPage, workers: workersPage, invoices: invoicesPage, marketplace: marketplacePage, facilities: facilitiesPage, planning: planningPage, schedule: schedulePage, execution: executionPage, analytics: analyticsPage, costing: costingPage, settings: settingsPage, users: usersPage, machines: machinesPage, maintenance: maintenancePage, 'work-orders': maintenanceWorkOrdersPage, 'maintenance-calendar': maintenanceCalendarPage };
+  const pages = { dashboard: window.FactoryFlowAuth.state.user.role === 'worker' ? workerDashboard : window.FactoryFlowAuth.state.user.role === 'supervisor' ? supervisorDashboard : dashboard, quotes: quotesPage, jobs: jobsPage, purchases: purchasesPage, materials: materialsPage, forecast: forecastPage, workers: workersPage, invoices: invoicesPage, whatsapp: whatsappPage, marketplace: marketplacePage, facilities: facilitiesPage, planning: planningPage, schedule: schedulePage, execution: executionPage, analytics: analyticsPage, costing: costingPage, settings: settingsPage, users: usersPage, machines: machinesPage, maintenance: maintenancePage, 'work-orders': maintenanceWorkOrdersPage, 'maintenance-calendar': maintenanceCalendarPage };
   ui('#view').innerHTML = pages[app.view]();
   bind();
 }
