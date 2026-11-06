@@ -4,7 +4,7 @@ const DEFAULT_FACILITY_ID = 'FAC-001';
 const COLLECTIONS = Object.freeze([
   'quotes', 'jobs', 'purchases', 'materials', 'deliveries', 'receipts',
   'movements', 'requirements', 'workers', 'schedules', 'productionLogs',
-  'qcInspections', 'reworkLogs', 'downtimeLogs', 'machines', 'maintenanceRecords', 'maintenanceWorkOrders', 'maintenanceTechnicians', 'gstProfiles', 'gstDocuments'
+  'qcInspections', 'reworkLogs', 'downtimeLogs', 'machines', 'maintenanceRecords', 'maintenanceWorkOrders', 'maintenanceTechnicians', 'gstProfiles', 'gstDocuments', 'whatsappContacts', 'whatsappMessages'
 ]);
 
 function list(value) {
