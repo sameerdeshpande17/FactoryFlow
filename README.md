@@ -131,3 +131,24 @@ Line items capture description, HSN/SAC, quantity, unit, unit price, discount an
 Delivery challans display a declared goods value for movement/dispatch reference and explicitly show that they are not tax invoices; no GST is calculated as payable on a challan. The document view opens a print-ready A4 layout. Use the browser's **Print → Save as PDF** to create a PDF.
 
 **Important limitations:** this is a document drafting and tax-calculation workflow, not a legal opinion or a connection to the GST Network. GSTIN validation checks format and PAN/state consistency; it does not verify a registration with the GST portal. HSN/SAC classification, applicable rates, exemption, reverse charge, place of supply, invoice particulars, e-invoice/IRN/QR requirements, e-way bills and statutory retention must be checked for each transaction. Government IRP submission, digital signatures and automatic e-invoicing are not included in this milestone.
+
+
+## WhatsApp Business Cloud API integration
+
+FactoryFlow connects to Meta's official WhatsApp Business Platform Cloud API. The server reads these environment variables; do not store tokens or App Secrets in the browser, repository or workspace JSON:
+
+```text
+WHATSAPP_GRAPH_API_VERSION=v26.0
+WHATSAPP_PHONE_NUMBER_ID=your_phone_number_id
+WHATSAPP_ACCESS_TOKEN=your_server_access_token
+WHATSAPP_APP_SECRET=your_meta_app_secret
+WHATSAPP_VERIFY_TOKEN=your_random_webhook_verify_token
+```
+
+Configure a Meta Business app with WhatsApp enabled, connect the business phone number, generate a server-side access token with the required WhatsApp messaging permission, and set the callback URL to `https://YOUR_DOMAIN/api/whatsapp/webhook`. Use the same verify token in Meta and the server, then subscribe the app to the relevant WhatsApp webhook fields. The webhook GET handshake checks the verify token and returns Meta's challenge; POST deliveries are checked against `X-Hub-Signature-256` using the App Secret.
+
+The WhatsApp Business page supports facility-specific customer contacts, recorded opt-in/opt-out, approved template sends and the outbound delivery history. GST quotations, tax invoices and delivery challans have a WhatsApp action. Only template messages are sent; template names and language codes must match templates approved in WhatsApp Manager. Configure the suggested names (`factoryflow_quote_ready`, `factoryflow_invoice_issued`, `factoryflow_delivery_update`, `factoryflow_order_update`) in Meta before use.
+
+A recorded opt-in and its source are required before each send. Contact and message records are created and updated through dedicated server APIs, not the generic workspace-sync endpoint. They are facility-scoped, audited and hidden from supervisor/worker bootstrap data. Provider acceptance is recorded separately from sent/delivered/read/failed webhook status.
+
+**Before enabling production sends:** collect and retain customer permission according to applicable laws and Meta policy, provide a clear opt-out mechanism, obtain approval for utility/marketing templates, configure a public HTTPS webhook and set up a durable access token. The app stores consent source/date as evidence supplied by your team; it cannot independently prove the customer consented. Actual sends require valid Meta credentials, an active business phone number and approved templates. No live messages are sent in automated tests.
