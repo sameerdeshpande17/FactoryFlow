@@ -13,7 +13,7 @@ test('requires recorded consent before a contact can be opted in', () => {
   const contacts = [];
   assert.throws(() => whatsapp.createContact(contacts, {
     name: 'Kaveri Foods', phone: '919876543210', optedIn: true
-  }, { facilityId: 'FAC-001' }), /consent source/i);
+  }, { facilityId: 'FAC-001' }), /WhatsApp consent before opting in/i);
   const contact = whatsapp.createContact(contacts, {
     name: 'Kaveri Foods', phone: '919876543210', optedIn: false
   }, { facilityId: 'FAC-001', userId: 'USR-1' });
