@@ -1088,7 +1088,7 @@ async function handleApi(request, response, pathname) {
             'Content-Type': 'application/json'
           },
           body: JSON.stringify(messagePayload),
-          signal: AbortSignal.timeout(15000)
+          signal: typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(15000) : undefined
         });
         const providerBody = await providerResponse.json().catch(() => ({}));
         if (!providerResponse.ok) {
