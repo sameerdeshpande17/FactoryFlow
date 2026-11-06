@@ -120,3 +120,14 @@ Create facility-specific technician profiles with a specialty, daily hour capaci
 The Maintenance calendar shows a seven-day schedule, assigned technician and machine, unscheduled work orders, technician roster and per-day booked versus remaining hours. Work orders retain their explicit date and start/end times. Technician labour rates are copied onto scheduled work orders as cost snapshots; changing a technician's rate later does not retroactively change the recorded work-order rate.
 
 Technician profiles, schedules and work orders are facility-scoped, permission-checked and audited. Administrators, managers and production supervisors can view and manage the roster and schedule; workers do not receive maintenance technician or work-order data. This is a planning calendar, not a live dispatch/attendance or payroll system.
+
+
+## GST documents and printable PDF output
+
+Each facility can store its legal business name, GSTIN, PAN, registered address, state code and optional contact/bank details. The document register issues quotations, tax invoices and delivery challans with separate sequential numbers for each facility and Indian financial year (April–March).
+
+Line items capture description, HSN/SAC, quantity, unit, unit price, discount and a supported GST rate (0%, 5%, 12%, 18% or 28%). The server validates the document and calculates taxable value, CGST + SGST for intra-state supplies, or IGST for inter-state supplies, then applies invoice rounding. The first two digits of the seller GSTIN must match its state code; when a customer GSTIN is supplied, its state code must match place of supply.
+
+Delivery challans display a declared goods value for movement/dispatch reference and explicitly show that they are not tax invoices; no GST is calculated as payable on a challan. The document view opens a print-ready A4 layout. Use the browser's **Print → Save as PDF** to create a PDF.
+
+**Important limitations:** this is a document drafting and tax-calculation workflow, not a legal opinion or a connection to the GST Network. GSTIN validation checks format and PAN/state consistency; it does not verify a registration with the GST portal. HSN/SAC classification, applicable rates, exemption, reverse charge, place of supply, invoice particulars, e-invoice/IRN/QR requirements, e-way bills and statutory retention must be checked for each transaction. Government IRP submission, digital signatures and automatic e-invoicing are not included in this milestone.
