@@ -2361,7 +2361,7 @@ function whatsappPage() {
     '<p>In Meta for Developers, add WhatsApp to a Business app, configure the Cloud API phone number and a durable access token, set the webhook callback URL and matching verify token, then subscribe the app to WhatsApp message/status events. Use HTTPS in production.</p>' +
     '<p>Template messages must already be approved in WhatsApp Manager. Configure the template names below to match your approved templates.</p></details></section>';
   return head('CUSTOMER MESSAGING', 'WhatsApp Business', 'Send approved WhatsApp templates to customers who have recorded opt-in, and track delivery status from Meta webhooks.',
-    canManage ? '<div class="wa-page-actions"><button class="secondary-button" data-wa-add-contact>＋ Add contact</button><button class="primary-button" data-wa-send>＋ Send template</button></div>' : '') +
+    canManage ? '<div class="wa-page-actions"><button class="secondary-button" data-wa-refresh>Refresh status</button><button class="secondary-button" data-wa-add-contact>＋ Add contact</button><button class="primary-button" data-wa-send>＋ Send template</button></div>' : '') +
     '<div class="inventory-grid"><article class="inventory-stat"><span>CONTACTS</span><strong>' + contacts.length + '</strong><small>Facility contacts</small></article>' +
     '<article class="inventory-stat"><span>OPTED-IN</span><strong>' + optedIn.length + '</strong><small>Eligible for messages</small></article>' +
     '<article class="inventory-stat"><span>MESSAGES LOGGED</span><strong>' + whatsappMessages.length + '</strong><small>Accepted and attempted sends</small></article>' +
@@ -2379,6 +2379,23 @@ function whatsappPage() {
     '<div><code>factoryflow_delivery_update</code><span>Delivery challan / dispatch update</span></div>' +
     '<div><code>factoryflow_order_update</code><span>Generic production order status update</span></div>' +
     '</div><p class="subtle">These are suggested template names only. Create and get each template approved in WhatsApp Manager before trying to send it.</p></section>';
+}
+
+
+async function refreshWhatsAppData() {
+  try {
+    const [contactsPayload, messagesPayload, configPayload] = await Promise.all([
+      window.FactoryFlowAuth.request('/api/whatsapp/contacts', { headers: { Accept: 'application/json' } }),
+      window.FactoryFlowAuth.request('/api/whatsapp/messages', { headers: { Accept: 'application/json' } }),
+      window.FactoryFlowAuth.request('/api/whatsapp/config', { headers: { Accept: 'application/json' } })
+    ]);
+    whatsappContacts.splice(0, whatsappContacts.length, ...(contactsPayload.contacts || []));
+    whatsappMessages.splice(0, whatsappMessages.length, ...(messagesPayload.messages || []));
+    whatsappConfig = configPayload.configuration || whatsappConfig;
+    save(false);
+    render();
+    notify('WhatsApp contacts and delivery statuses refreshed.');
+  } catch (error) { notify(error.message); }
 }
 
 function createWhatsAppContact() {
@@ -3068,6 +3085,7 @@ function bind() {
   all('[data-create-gst-doc]').forEach((button) => button.addEventListener('click', createGstDocument));
   all('[data-print-gst-doc]').forEach((button) => button.addEventListener('click', () => printGstDocument(button.dataset.printGstDoc)));
   all('[data-gst-filter]').forEach((button) => button.addEventListener('click', () => { gstDocumentFilter = button.dataset.gstFilter; render(); }));
+  all('[data-wa-refresh]').forEach((button) => button.addEventListener('click', refreshWhatsAppData));
   all('[data-wa-add-contact]').forEach((button) => button.addEventListener('click', createWhatsAppContact));
   all('[data-wa-send]').forEach((button) => button.addEventListener('click', () => openWhatsAppTemplateSend()));
   all('[data-wa-toggle-contact]').forEach((button) => button.addEventListener('click', () => toggleWhatsAppContact(button.dataset.waToggleContact)));
