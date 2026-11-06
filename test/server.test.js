@@ -869,7 +869,7 @@ test('authenticates users, enforces role access, persists operations and protect
     body: JSON.stringify({ machineId: createdMachine.id, title: 'Unauthorized repair', description: 'This should be denied.' })
   });
   assert.equal(workerWorkOrderDenied.status, 403);
-  const workerState = await json(workerBootstrap);
+  const workerState = workerBootstrapPayload;
   assert.deepEqual(workerState.state.quotes, []);
   assert.deepEqual(workerState.state.purchases, []);
   assert.deepEqual(workerState.state.materials, []);
