@@ -493,6 +493,8 @@ async function handleApi(request, response, pathname) {
     const projected = facilityModel.projectStoreForFacility(roleProjected, current.facility.id);
     const visibleFacilities = store.facilities.filter((facility) => current.allowedFacilityIds.includes(facility.id) && facility.active !== false);
     projected.facilities = visibleFacilities;
+    projected.whatsappContacts = store.whatsappContacts.filter((item) => item.facilityId === current.facility.id);
+    projected.whatsappMessages = store.whatsappMessages.filter((item) => item.facilityId === current.facility.id);
     return sendJson(response, 200, {
       workspace: { ...store.workspace, activeFacilityId: current.facility.id },
       state: projected,
