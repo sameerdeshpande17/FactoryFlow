@@ -2126,13 +2126,6 @@ async function removeMachineMaintenance(machineId, windowId) {
   }
 }
 
-function invoicesPage() {
-  const invoices = invoiceRecords;
-  const rows = invoices.map((invoice) => '<tr><td class="order-code">' + invoice.id + '<div class="subtle">GST 18%</div></td><td><div class="item-name">' + invoice.customer + '</div><div class="subtle">' + invoice.job + '</div></td><td>' + currency(invoice.amount) + '</td><td>' + invoice.due + '</td><td>' + status(invoice.status) + '</td><td>' + (invoice.status === 'Paid' ? '<span class="subtle">Received</span>' : '<button class="table-button" data-reminder="' + invoice.id + '">WhatsApp reminder</button>') + '</td></tr>').join('');
-  return head('FINANCE', 'GST-ready invoices', 'Create a compliant invoice from delivery proof and nudge payment over WhatsApp.', '<button class="primary-button" data-action="invoice">＋ Create GST invoice</button>') + '<section class="content-card"><div class="toolbar"><div><strong style="font-size:12px">Receivables</strong><span class="subtle" style="margin-left:8px;font-size:11px">₹1.26L pending</span></div><button class="secondary-button" data-action="reminders">◔ Send payment reminders</button></div><div class="table-scroll"><table class="data-table"><thead><tr><th>INVOICE</th><th>CUSTOMER / JOB</th><th>AMOUNT</th><th>PAYMENT DUE</th><th>STATUS</th><th>ACTION</th></tr></thead><tbody>' + rows + '</tbody></table></div></section>';
-}
-
-
 function gstDocumentLabel(type) {
   return ({ QUOTATION: 'Quotation', TAX_INVOICE: 'Tax invoice', DELIVERY_CHALLAN: 'Delivery challan' })[type] || type;
 }
@@ -2539,15 +2532,6 @@ function printQuote(id) {
   printer.focus();
   setTimeout(() => printer.print(), 250);
 }
-function openReminder(id) {
-  const invoice = invoiceRecords.find((item) => item.id === id);
-  if (!invoice) return;
-  const message = 'Namaste ' + invoice.customer + ', a gentle reminder that ' + invoice.id + ' for ' + currency(invoice.amount) + ' is due ' + invoice.due + '. Please let us know the payment status. Thank you.';
-  const body = '<h2 id="modalTitle">Payment reminder</h2><p>Review the WhatsApp message before sending it to ' + safe(invoice.customer) + '.</p><div class="reminder-card"><span>' + safe(invoice.id) + ' · ' + status(invoice.status) + '</span><strong>' + currency(invoice.amount) + '</strong><p>' + safe(message) + '</p></div><div class="modal-actions"><button class="secondary-button" type="button" data-close>Cancel</button><button class="secondary-button" type="button" data-copy-reminder>Copy text</button><button class="primary-button" type="button" data-send-reminder>◔ Open WhatsApp</button></div>';
-  openModal(body);
-  ui('[data-copy-reminder]').addEventListener('click', async () => { await navigator.clipboard?.writeText(message); notify('Payment reminder copied.'); });
-  ui('[data-send-reminder]').addEventListener('click', () => { window.open('https://wa.me/' + invoice.phone + '?text=' + encodeURIComponent(message), '_blank', 'noopener'); notify('Payment reminder opened in WhatsApp.'); });
-}
 function share(id) {
   const quote = quotes.find((item) => item.id === id);
   if (!quote) return;
@@ -2893,7 +2877,6 @@ function bind() {
   }));
   all('[data-unit-cost]').forEach((button) => button.addEventListener('click', () => setMaterialUnitCost(button.dataset.unitCost)));
   all('[data-view-proof]').forEach((button) => button.addEventListener('click', () => viewDeliveryProof(button.dataset.viewProof)));
-  all('[data-reminder]').forEach((button) => button.addEventListener('click', () => openReminder(button.dataset.reminder)));
 
   all('[data-gst-profile]').forEach((button) => button.addEventListener('click', configureGstProfile));
   all('[data-create-gst-doc]').forEach((button) => button.addEventListener('click', createGstDocument));
