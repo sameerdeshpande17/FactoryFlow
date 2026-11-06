@@ -830,6 +830,9 @@ test('authenticates users, enforces role access, persists operations and protect
 
   const workerBootstrap = await fetch(baseUrl + '/api/bootstrap', { headers: { Cookie: workerCookie } });
   assert.equal(workerBootstrap.status, 200);
+  const workerBootstrapPayload = await json(workerBootstrap);
+  assert.deepEqual(workerBootstrapPayload.state.gstProfiles, []);
+  assert.deepEqual(workerBootstrapPayload.state.gstDocuments, []);
   const workerSchedulePreview = await fetch(baseUrl + '/api/scheduling/optimize', {
     method: 'POST',
     headers: { Cookie: workerCookie, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
