@@ -238,6 +238,7 @@
       costing: 'costing.view',
       workers: 'workers.view',
       invoices: 'invoices.view',
+      whatsapp: 'whatsapp.view',
       marketplace: 'marketplace.view',
       settings: 'settings.view',
       users: 'users.manage'
