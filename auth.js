@@ -15,7 +15,7 @@ const ROLE_PERMISSIONS = Object.freeze({
     'execution.view', 'execution.record', 'execution.qc',
     'analytics.view', 'analytics.downtime', 'costing.view', 'costing.manage',
     'workers.view', 'workers.manage', 'invoices.view', 'invoices.manage',
-    'marketplace.view', 'settings.view', 'users.manage', 'audit.view', 'facilities.view', 'facilities.manage', 'machines.view', 'machines.manage', 'maintenance.view', 'maintenance.manage'
+    'marketplace.view', 'settings.view', 'users.manage', 'audit.view', 'facilities.view', 'facilities.manage', 'machines.view', 'machines.manage', 'maintenance.view', 'maintenance.manage', 'whatsapp.view', 'whatsapp.manage'
   ],
   manager: [
     'dashboard.view', 'quotes.view', 'quotes.manage', 'jobs.view', 'jobs.manage',
