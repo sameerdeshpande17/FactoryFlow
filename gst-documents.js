@@ -48,6 +48,7 @@
     if (!profile.legalName || profile.legalName.length > 150) throw new Error('Legal business name is required (maximum 150 characters).');
     if (profile.tradeName.length > 150) throw new Error('Trade name must be 150 characters or fewer.');
     if (!/^[A-Z]{5}\d{4}[A-Z]$/.test(profile.pan)) throw new Error('Enter a valid 10-character PAN.');
+    if (profile.pan !== profile.gstin.slice(2, 12)) throw new Error('Business PAN must match the PAN embedded in the GSTIN.');
     if (!profile.address || profile.address.length > 300) throw new Error('Business address is required (maximum 300 characters).');
     if (!profile.city || profile.city.length > 80) throw new Error('Business city is required (maximum 80 characters).');
     if (!profile.state || profile.state.length > 80) throw new Error('Business state is required (maximum 80 characters).');
