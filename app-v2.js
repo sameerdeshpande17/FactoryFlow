@@ -18,11 +18,9 @@ const purchases = [
   { id: 'PO-488', supplier: 'WestPack Films', material: 'BOPP film · 25 micron', amount: 63800, delivery: 'Nov 01', status: 'Part received' }
 ];
 
-const invoiceRecords = [
-  { id: 'INV-392', customer: 'Kaleva Naturals', job: 'JB-831 · Label roll', amount: 72000, due: 'Today', status: 'Due soon', phone: '919845678901' },
-  { id: 'INV-389', customer: 'Narmada Foods', job: 'JB-822 · Pouch run', amount: 54000, due: 'Oct 24', status: 'Overdue', phone: '919812345678' },
-  { id: 'INV-385', customer: 'Shree Packaging', job: 'JB-812 · Carton run', amount: 126000, due: 'Paid Oct 22', status: 'Paid', phone: '919876543210' }
-];
+const gstDocuments = JSON.parse(localStorage.getItem('ff-gst-documents') || 'null') || [];
+const gstProfiles = JSON.parse(localStorage.getItem('ff-gst-profiles') || 'null') || [];
+let gstDocumentFilter = 'ALL';
 
 const deliveries = JSON.parse(localStorage.getItem('ff-deliveries') || 'null') || [];
 
@@ -106,6 +104,8 @@ function save(shouldSync = true) {
   localStorage.setItem('ff-maintenance-records', JSON.stringify(maintenanceRecords));
   localStorage.setItem('ff-maintenance-work-orders', JSON.stringify(maintenanceWorkOrders));
   localStorage.setItem('ff-maintenance-technicians', JSON.stringify(maintenanceTechnicians));
+  localStorage.setItem('ff-gst-documents', JSON.stringify(gstDocuments));
+  localStorage.setItem('ff-gst-profiles', JSON.stringify(gstProfiles));
   localStorage.setItem('ff-analytics-filters', JSON.stringify(analyticsFilters));
   localStorage.setItem('ff-language', app.language);
   ui('#quoteBadge').textContent = quotes.filter((quote) => quote.status === 'Follow up').length || '0';
@@ -127,7 +127,7 @@ async function syncWorkspace() {
   try {
     await window.FactoryFlowAuth.request('/api/sync', {
       method: 'POST',
-      body: JSON.stringify({ quotes, jobs, purchases, materials, deliveries, receipts, movements, requirements, workers, schedules, productionLogs, qcInspections, reworkLogs, downtimeLogs, machines, maintenanceRecords, maintenanceWorkOrders, maintenanceTechnicians })
+      body: JSON.stringify({ quotes, jobs, purchases, materials, deliveries, receipts, movements, requirements, workers, schedules, productionLogs, qcInspections, reworkLogs, downtimeLogs, machines, maintenanceRecords, maintenanceWorkOrders, maintenanceTechnicians, gstDocuments, gstProfiles })
     });
     setDataStatus('Synced', 'online');
   } catch {
@@ -185,6 +185,8 @@ async function hydrateWorkspace() {
     replace(maintenanceRecords, 'maintenanceRecords');
     replace(maintenanceWorkOrders, 'maintenanceWorkOrders');
     replace(maintenanceTechnicians, 'maintenanceTechnicians');
+    replace(gstDocuments, 'gstDocuments');
+    replace(gstProfiles, 'gstProfiles');
     window.FactoryFlowInventory.ensureStockMetadata(materials);
     inventoryForecast = null;
     scheduleOptimization = null;
@@ -2128,6 +2130,183 @@ function invoicesPage() {
   const invoices = invoiceRecords;
   const rows = invoices.map((invoice) => '<tr><td class="order-code">' + invoice.id + '<div class="subtle">GST 18%</div></td><td><div class="item-name">' + invoice.customer + '</div><div class="subtle">' + invoice.job + '</div></td><td>' + currency(invoice.amount) + '</td><td>' + invoice.due + '</td><td>' + status(invoice.status) + '</td><td>' + (invoice.status === 'Paid' ? '<span class="subtle">Received</span>' : '<button class="table-button" data-reminder="' + invoice.id + '">WhatsApp reminder</button>') + '</td></tr>').join('');
   return head('FINANCE', 'GST-ready invoices', 'Create a compliant invoice from delivery proof and nudge payment over WhatsApp.', '<button class="primary-button" data-action="invoice">＋ Create GST invoice</button>') + '<section class="content-card"><div class="toolbar"><div><strong style="font-size:12px">Receivables</strong><span class="subtle" style="margin-left:8px;font-size:11px">₹1.26L pending</span></div><button class="secondary-button" data-action="reminders">◔ Send payment reminders</button></div><div class="table-scroll"><table class="data-table"><thead><tr><th>INVOICE</th><th>CUSTOMER / JOB</th><th>AMOUNT</th><th>PAYMENT DUE</th><th>STATUS</th><th>ACTION</th></tr></thead><tbody>' + rows + '</tbody></table></div></section>';
+}
+
+
+function gstDocumentLabel(type) {
+  return ({ QUOTATION: 'Quotation', TAX_INVOICE: 'Tax invoice', DELIVERY_CHALLAN: 'Delivery challan' })[type] || type;
+}
+
+function gstDocumentAmount(document) {
+  return document.type === 'DELIVERY_CHALLAN' ? Number(document.declaredValue) || 0 : Number(document.grandTotal) || 0;
+}
+
+function invoicesPage() {
+  const profile = gstProfiles.find((item) => item.facilityId === (window.FactoryFlowAuth.state.activeFacilityId || '')) || gstProfiles[0] || null;
+  const canManage = window.FactoryFlowAuth.has('invoices.manage');
+  const docs = gstDocuments.slice().sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+  const filtered = gstDocumentFilter === 'ALL' ? docs : docs.filter((doc) => doc.type === gstDocumentFilter);
+  const invoiceDocs = docs.filter((doc) => doc.type === 'TAX_INVOICE');
+  const outstanding = invoiceDocs.filter((doc) => doc.paymentStatus !== 'Paid')
+    .reduce((sum, doc) => sum + (Number(doc.grandTotal) || 0) - (Number(doc.paidAmount) || 0), 0);
+  const rows = filtered.map((doc) => '<tr><td><strong class="order-code">' + safe(doc.number) + '</strong><div class="subtle">' + safe(gstDocumentLabel(doc.type)) + ' · FY ' + safe(doc.financialYear) + '</div></td>' +
+    '<td><strong>' + safe(doc.customer.name) + '</strong><div class="subtle">' + safe(doc.customer.gstin || 'Unregistered customer') + '</div></td>' +
+    '<td>' + currency(gstDocumentAmount(doc)) + (doc.type === 'DELIVERY_CHALLAN' ? '<div class="subtle">Declared value · not an invoice</div>' : '') + '</td>' +
+    '<td>' + safe(doc.documentDate) + (doc.dueDate ? '<div class="subtle">Due ' + safe(doc.dueDate) + '</div>' : '') + '</td>' +
+    '<td>' + status(doc.status || 'Issued') + '</td>' +
+    '<td><button class="table-button" data-print-gst-doc="' + safe(doc.id) + '">Print / PDF</button></td></tr>'
+  ).join('');
+  const filters = [['ALL', 'All'], ['QUOTATION', 'Quotations'], ['TAX_INVOICE', 'Tax invoices'], ['DELIVERY_CHALLAN', 'Delivery challans']];
+  const filterButtons = filters.map(([key, label]) => '<button class="filter-chip ' + (gstDocumentFilter === key ? 'active' : '') + '" data-gst-filter="' + key + '">' + label + '</button>').join('');
+  return head('FINANCE', 'GST documents', 'Create numbered quotations, tax invoices and delivery challans with facility GST details and printable layouts.',
+      (canManage ? '<div class="gst-page-actions"><button class="secondary-button" data-gst-profile>Business GST profile</button><button class="primary-button" data-create-gst-doc>＋ Create document</button></div>' : '')) +
+    '<div class="inventory-grid"><article class="inventory-stat"><span>DOCUMENTS ISSUED</span><strong>' + docs.length + '</strong><small>Across all document types</small></article>' +
+      '<article class="inventory-stat"><span>TAX INVOICES</span><strong>' + invoiceDocs.length + '</strong><small>Issued in this facility</small></article>' +
+      '<article class="inventory-stat"><span>OUTSTANDING</span><strong>' + currency(outstanding) + '</strong><small>Unpaid issued tax invoices</small></article>' +
+      '<article class="inventory-stat"><span>GST REGISTRATION</span><strong>' + (profile ? safe(profile.gstin) : 'Not configured') + '</strong><small>' + (profile ? safe(profile.legalName) : 'Add business details to issue documents') + '</small></article></div>' +
+    (!profile ? '<section class="content-card gst-profile-prompt"><strong>Set up the facility GST profile</strong><p>Add the legal business name, GSTIN and registered address before creating GST documents.</p>' + (canManage ? '<button class="primary-button" data-gst-profile>Configure GST profile</button>' : '<p>Ask an administrator or manager to configure the GST profile.</p>') + '</section>' : '') +
+    '<section class="content-card gst-register"><div class="toolbar"><strong>Document register</strong><span class="subtle">' + filtered.length + ' record(s)</span></div><div class="mwo-filters">' + filterButtons + '</div>' +
+    (rows ? '<div class="table-scroll"><table class="data-table"><thead><tr><th>DOCUMENT NUMBER</th><th>BILL TO</th><th>VALUE</th><th>DATE</th><th>STATUS</th><th>OUTPUT</th></tr></thead><tbody>' + rows + '</tbody></table></div>' : '<div class="empty-state"><h2>' + (docs.length ? 'No documents in this filter' : 'No GST documents yet') + '</h2><p>Create a quotation, tax invoice or delivery challan. Document numbers are generated by the server for the active facility and financial year.</p>' + (canManage && profile ? '<button class="primary-button" data-create-gst-doc>＋ Create first document</button>' : '') + '</div>') +
+    '</section><section class="content-card gst-method-note"><strong>Tax treatment</strong><p>Intra-state supplies use CGST + SGST; inter-state supplies use IGST. Tax is calculated server-side from the line items and place of supply. Delivery challans show a declared goods value only and are explicitly not tax invoices. Validate HSN/SAC codes and applicable rates with your tax adviser before issuing real documents.</p></section>';
+}
+
+function configureGstProfile() {
+  if (!window.FactoryFlowAuth.has('invoices.manage')) return;
+  const profile = gstProfiles.find((item) => item.facilityId === (window.FactoryFlowAuth.state.activeFacilityId || '')) || gstProfiles[0] || {};
+  openModal('<h2 id="modalTitle">Business GST profile</h2><p>These details appear as the supplier information on documents issued by this facility.</p><form id="gstProfileForm" class="form-grid">' +
+    '<label>Legal business name<input required maxlength="150" name="legalName" value="' + safe(profile.legalName || '') + '"></label>' +
+    '<label>Trade name (optional)<input maxlength="150" name="tradeName" value="' + safe(profile.tradeName || '') + '"></label>' +
+    '<div class="form-row"><label>GSTIN<input required maxlength="15" name="gstin" value="' + safe(profile.gstin || '') + '" placeholder="29ABCDE1234F1Z5"></label>' +
+    '<label>PAN<input required maxlength="10" name="pan" value="' + safe(profile.pan || '') + '" placeholder="ABCDE1234F"></label></div>' +
+    '<label>Registered address<input required maxlength="300" name="address" value="' + safe(profile.address || '') + '"></label>' +
+    '<div class="form-row"><label>City<input required maxlength="80" name="city" value="' + safe(profile.city || '') + '"></label><label>State<input required maxlength="80" name="state" value="' + safe(profile.state || '') + '"></label></div>' +
+    '<div class="form-row"><label>GST state code (2 digits)<input required maxlength="2" pattern="[0-9]{2}" name="stateCode" value="' + safe(profile.stateCode || '') + '" placeholder="29"></label>' +
+    '<label>PIN code<input required maxlength="6" pattern="[0-9]{6}" name="pincode" value="' + safe(profile.pincode || '') + '"></label></div>' +
+    '<div class="form-row"><label>Email<input type="email" name="email" value="' + safe(profile.email || '') + '"></label><label>Phone<input name="phone" maxlength="20" value="' + safe(profile.phone || '') + '"></label></div>' +
+    '<div class="form-row"><label>Bank name (optional)<input name="bankName" maxlength="100" value="' + safe(profile.bankName || '') + '"></label><label>Bank account<input name="bankAccount" maxlength="34" value="' + safe(profile.bankAccount || '') + '"></label></div>' +
+    '<label>Bank IFSC<input name="bankIfsc" maxlength="11" value="' + safe(profile.bankIfsc || '') + '" placeholder="ABCD0123456"></label>' +
+    '<p class="subtle">GSTIN first two digits must match the state code. PAN must be the PAN embedded in the GSTIN.</p><p id="gstProfileError" class="form-error" hidden></p>' +
+    '<div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save GST profile</button></div></form>');
+  ui('#gstProfileForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const payload = Object.fromEntries(data.entries());
+    try {
+      const result = await window.FactoryFlowAuth.request('/api/gst/profile', {
+        method: 'PUT', body: JSON.stringify(payload)
+      });
+      const index = gstProfiles.findIndex((item) => item.facilityId === result.profile.facilityId);
+      if (index >= 0) gstProfiles[index] = result.profile;
+      else gstProfiles.push(result.profile);
+      save(false);
+      closeModal();
+      render();
+      notify('Facility GST profile saved.');
+    } catch (error) {
+      const node = ui('#gstProfileError');
+      node.textContent = error.message;
+      node.hidden = false;
+    }
+  });
+}
+
+function createGstDocument() {
+  if (!window.FactoryFlowAuth.has('invoices.manage')) return;
+  const profile = gstProfiles.find((item) => item.facilityId === (window.FactoryFlowAuth.state.activeFacilityId || '')) || gstProfiles[0];
+  if (!profile) return configureGstProfile();
+  const today = localDateISO();
+  const initialLine = () => '<div class="gst-line-entry" data-gst-line><div class="form-row"><label>Description<input required maxlength="250" name="description" value="" placeholder="Goods / services"></label><label>HSN / SAC<input required maxlength="8" name="hsnSac" placeholder="48191010"></label></div>' +
+    '<div class="gst-line-grid"><label>Qty<input required type="number" min="0.001" step="0.001" name="quantity" value="1"></label><label>Unit<input required maxlength="20" name="unit" value="pcs"></label>' +
+    '<label>Rate (₹)<input required type="number" min="0" step="0.01" name="unitPrice" value="0"></label><label>Discount (₹)<input type="number" min="0" step="0.01" name="discount" value="0"></label>' +
+    '<label>GST rate<input required type="number" name="gstRate" value="18" min="0" max="28" step="1"></label></div></div>';
+  const lineContainer = '<div id="gstLineItems">' + initialLine() + '</div><button type="button" class="text-button" data-gst-add-line>＋ Add line item</button>';
+  const jobsOptions = '<option value="">No linked job</option>' + jobs.map((job) => '<option value="' + safe(job.id) + '">' + safe(job.id + ' · ' + job.customer + ' · ' + job.item) + '</option>').join('');
+  openModal('<h2 id="modalTitle">Create GST document</h2><form id="gstDocumentForm" class="form-grid">' +
+    '<div class="form-row"><label>Document type<select required name="type"><option value="QUOTATION">Quotation</option><option value="TAX_INVOICE">Tax invoice</option><option value="DELIVERY_CHALLAN">Delivery challan</option></select></label>' +
+    '<label>Document date<input required type="date" name="documentDate" value="' + today + '"></label></div>' +
+    '<div class="form-row"><label>Bill to / customer name<input required maxlength="150" name="customerName"></label><label>Customer GSTIN (optional)<input maxlength="15" name="customerGstin" placeholder="Unregistered / B2C"></label></div>' +
+    '<label>Customer billing address<input required maxlength="300" name="customerAddress"></label>' +
+    '<div class="form-row"><label>Place-of-supply state<input required maxlength="80" name="placeOfSupplyState"></label><label>State code<input required maxlength="2" pattern="[0-9]{2}" name="placeOfSupplyStateCode" placeholder="29"></label></div>' +
+    '<div class="form-row"><label>Due date (required for tax invoice)<input type="date" name="dueDate"></label><label>Linked production job<select name="reference">' + jobsOptions + '</select></label></div>' +
+    '<section class="gst-lines"><div class="toolbar"><strong>Items and services</strong><span class="subtle">GST rates: 0%, 5%, 12%, 18%, 28%</span></div>' + lineContainer + '</section>' +
+    '<label>Notes / terms<input maxlength="1200" name="notes" placeholder="Payment terms, delivery notes or quotation validity"></label>' +
+    '<p id="gstDocumentError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Issue document</button></div></form>');
+  ui('#gstDocumentForm').addEventListener('click', (event) => {
+    if (event.target.closest('[data-gst-add-line]')) ui('#gstLineItems').insertAdjacentHTML('beforeend', initialLine());
+  });
+  ui('#gstDocumentForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const data = new FormData(form);
+    const lines = Array.from(form.querySelectorAll('[data-gst-line]')).map((node) => ({
+      description: node.querySelector('[name="description"]').value,
+      hsnSac: node.querySelector('[name="hsnSac"]').value,
+      quantity: Number(node.querySelector('[name="quantity"]').value),
+      unit: node.querySelector('[name="unit"]').value,
+      unitPrice: Number(node.querySelector('[name="unitPrice"]').value),
+      discount: Number(node.querySelector('[name="discount"]').value),
+      gstRate: Number(node.querySelector('[name="gstRate"]').value)
+    }));
+    try {
+      const result = await window.FactoryFlowAuth.request('/api/gst/documents', {
+        method: 'POST',
+        body: JSON.stringify({
+          type: data.get('type'), documentDate: data.get('documentDate'), dueDate: data.get('dueDate'),
+          customerName: data.get('customerName'), customerGstin: data.get('customerGstin'),
+          customerAddress: data.get('customerAddress'), placeOfSupplyState: data.get('placeOfSupplyState'),
+          placeOfSupplyStateCode: data.get('placeOfSupplyStateCode'), reference: data.get('reference'), notes: data.get('notes'), lines
+        })
+      });
+      gstDocuments.unshift(result.document);
+      save(false);
+      closeModal();
+      gstDocumentFilter = 'ALL';
+      render();
+      notify(result.document.number + ' issued.');
+    } catch (error) {
+      const node = ui('#gstDocumentError');
+      node.textContent = error.message;
+      node.hidden = false;
+    }
+  });
+}
+
+function printGstDocument(documentId) {
+  const document = gstDocuments.find((item) => item.id === documentId);
+  if (!document) return notify('GST document not found.');
+  const esc = (value) => safe(value === null || value === undefined ? '' : String(value));
+  const money = (value) => '₹' + Number(value || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const challan = document.type === 'DELIVERY_CHALLAN';
+  const quotation = document.type === 'QUOTATION';
+  const title = challan ? 'DELIVERY CHALLAN' : quotation ? 'TAX QUOTATION' : 'TAX INVOICE';
+  const rows = document.lines.map((line, index) => '<tr><td>' + (index + 1) + '</td><td>' + esc(line.description) + '</td><td>' + esc(line.hsnSac) + '</td><td class="num">' + Number(line.quantity).toLocaleString('en-IN') + ' ' + esc(line.unit) + '</td><td class="num">' + money(line.unitPrice) + '</td><td class="num">' + money(line.discount) + '</td><td class="num">' + money(line.taxableValue) + '</td>' +
+    (!challan ? '<td class="num">' + Number(line.gstRate).toFixed(2) + '%</td><td class="num">' + money(line.taxAmount) + '</td>' : '') +
+    '<td class="num">' + money(line.lineTotal) + '</td></tr>').join('');
+  const taxRows = challan ? '' : (document.supplyType === 'INTRA_STATE'
+    ? '<tr><td>CGST</td><td class="num">' + money(document.cgstAmount) + '</td></tr><tr><td>SGST</td><td class="num">' + money(document.sgstAmount) + '</td></tr>'
+    : '<tr><td>IGST</td><td class="num">' + money(document.igstAmount) + '</td></tr>');
+  const note = challan
+    ? '<strong>Delivery document only — NOT A TAX INVOICE.</strong><br>Declared goods value is shown for movement reference only. No GST is charged or payable through this challan.'
+    : quotation
+      ? 'This is a quotation/estimate and is not a tax invoice. Taxes are estimates based on the entered place of supply and rates.'
+      : 'This is a tax invoice issued with the GST details and tax split recorded for this facility.';
+  const printHtml = '<!doctype html><html><head><meta charset="utf-8"><title>' + esc(document.number) + '</title><style>' +
+    'body{font:12px Arial,sans-serif;color:#18222d;margin:28px}header{display:flex;justify-content:space-between;gap:20px;border-bottom:2px solid #263746;padding-bottom:16px}h1{font-size:22px;margin:0 0 8px}h2{font-size:16px;margin:0}p{margin:4px 0;line-height:1.45}.muted{color:#536474}.meta{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:20px 0}.panel{border:1px solid #ccd5dc;padding:12px}.num{text-align:right;white-space:nowrap}table{width:100%;border-collapse:collapse;margin-top:16px}th,td{border:1px solid #cbd4dc;padding:7px;text-align:left;vertical-align:top}th{background:#f0f3f6;font-size:10px}.totals{width:320px;margin-left:auto}.totals td{padding:7px}.grand{font-size:15px;font-weight:bold;background:#f0f3f6}.notice{margin-top:20px;border:1px solid #ccd5dc;padding:12px;line-height:1.5}.sign{display:flex;justify-content:space-between;margin-top:60px}.sign div{width:42%;border-top:1px solid #80909e;padding-top:8px;text-align:center}@page{size:A4;margin:14mm}@media print{body{margin:0}.no-print{display:none}}</style></head><body>' +
+    '<header><div><h1>' + esc(document.seller.legalName) + '</h1><p>' + esc(document.seller.tradeName) + '</p><p>' + esc(document.seller.address) + ', ' + esc(document.seller.city) + ', ' + esc(document.seller.state) + ' - ' + esc(document.seller.pincode) + '</p><p>GSTIN: <strong>' + esc(document.seller.gstin) + '</strong> · PAN: ' + esc(document.seller.pan) + '</p><p>' + esc(document.seller.email) + ' ' + esc(document.seller.phone) + '</p></div><div><h2>' + title + '</h2><p><strong>' + esc(document.number) + '</strong></p><p>Date: ' + esc(document.documentDate) + '</p>' + (document.dueDate ? '<p>Due date: ' + esc(document.dueDate) + '</p>' : '') + '<p>FY: ' + esc(document.financialYear) + '</p></div></header>' +
+    '<section class="meta"><div class="panel"><strong>' + (challan ? 'CONSIGNEE / SHIP TO' : 'BILL TO') + '</strong><p><strong>' + esc(document.customer.name) + '</strong></p><p>' + esc(document.customer.address) + '</p><p>' + (document.customer.gstin ? 'GSTIN: ' + esc(document.customer.gstin) : 'Unregistered customer') + '</p></div><div class="panel"><strong>SUPPLY DETAILS</strong><p>Place of supply: ' + esc(document.placeOfSupplyState) + ' (' + esc(document.placeOfSupplyStateCode) + ')</p><p>Supply type: ' + (document.supplyType === 'INTRA_STATE' ? 'Intra-state' : 'Inter-state') + '</p><p>Reference: ' + esc(document.reference || '—') + '</p></div></section>' +
+    '<table><thead><tr><th>#</th><th>Description</th><th>HSN/SAC</th><th class="num">Qty / Unit</th><th class="num">Rate</th><th class="num">Discount</th><th class="num">Taxable value</th>' + (challan ? '' : '<th class="num">GST rate</th><th class="num">Tax</th>') + '<th class="num">Line total</th></tr></thead><tbody>' + rows + '</tbody></table>' +
+    (challan ? '<table class="totals"><tr><td>Declared goods value</td><td class="num">' + money(document.declaredValue) + '</td></tr><tr><td>GST payable on this challan</td><td class="num">₹0.00</td></tr></table>' :
+      '<table class="totals"><tr><td>Taxable value</td><td class="num">' + money(document.taxableValue) + '</td></tr>' + taxRows + '<tr><td>Total GST</td><td class="num">' + money(document.totalTax) + '</td></tr><tr><td>Round off</td><td class="num">' + money(document.roundOff) + '</td></tr><tr class="grand"><td>Grand total</td><td class="num">' + money(document.grandTotal) + '</td></tr></table>') +
+    '<div class="notice">' + note + (document.notes ? '<p><strong>Notes / terms:</strong> ' + esc(document.notes) + '</p>' : '') + '</div>' +
+    (document.seller.bankName || document.seller.bankAccount ? '<p style="margin-top:14px">Bank: ' + esc(document.seller.bankName) + ' · Account: ' + esc(document.seller.bankAccount) + ' · IFSC: ' + esc(document.seller.bankIfsc) + '</p>' : '') +
+    '<div class="sign"><div>Customer acknowledgment</div><div>Authorised signatory<br>' + esc(document.seller.legalName) + '</div></div>' +
+    '<button class="no-print" onclick="window.print()">Print / Save as PDF</button></body></html>';
+  const win = window.open('', '_blank');
+  if (!win) return notify('Allow pop-ups for FactoryFlow to print or save this document as PDF.');
+  win.document.open();
+  win.document.write(printHtml);
+  win.document.close();
+  win.focus();
 }
 
 function marketplacePage() {
