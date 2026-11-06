@@ -21,7 +21,7 @@ test('requires recorded consent before a contact can be opted in', () => {
   assert.equal(contact.consentAt, '');
   assert.throws(() => whatsapp.updateContact(contacts, contact.id, {
     optedIn: true, name: contact.name, phone: contact.phone, consentSource: 'Signed form'
-  }, { facilityId: 'FAC-001' }), /fresh consent date/i);
+  }, { facilityId: 'FAC-001' }), /new consent date/i);
   const updated = whatsapp.updateContact(contacts, contact.id, {
     optedIn: true,
     name: contact.name,
