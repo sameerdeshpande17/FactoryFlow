@@ -81,7 +81,7 @@ const titles = {
   dashboard: ['JOB-WORK OS', 'Overview'], quotes: ['SALES', 'Quotes'], jobs: ['JOB CONTROL', 'Jobs'],
   purchases: ['PURCHASING', 'Purchase orders'], materials: ['RAW MATERIAL', 'Materials'],
   workers: ['PARTNERS', 'Job workers'], invoices: ['FINANCE', 'GST invoices'],
-  marketplace: ['B2B NETWORK', 'Marketplace'], facilities: ['ORGANIZATION', 'Factory facilities'], forecast: ['INVENTORY INTELLIGENCE', 'Demand forecast & reorder'], users: ['ADMINISTRATION', 'User management'], machines: ['EQUIPMENT', 'Machines & equipment'], maintenance: ['EQUIPMENT HEALTH', 'Predictive maintenance'], whatsapp: ['CUSTOMER MESSAGING', 'WhatsApp Business'], 'work-orders': ['EQUIPMENT', 'Maintenance work orders'], 'maintenance-calendar': ['EQUIPMENT', 'Maintenance calendar'], whatsapp: ['CUSTOMER MESSAGING', 'WhatsApp Business'], planning: ['PRODUCTION', 'Material planning'], schedule: ['PRODUCTION', 'Production schedule'], execution: ['PRODUCTION', 'Production execution & QC'], analytics: ['MANAGEMENT', 'Production analytics'], costing: ['FINANCE', 'Job costing'], settings: ['WORKSPACE', 'Settings']
+  marketplace: ['B2B NETWORK', 'Marketplace'], facilities: ['ORGANIZATION', 'Factory facilities'], forecast: ['INVENTORY INTELLIGENCE', 'Demand forecast & reorder'], users: ['ADMINISTRATION', 'User management'], machines: ['EQUIPMENT', 'Machines & equipment'], maintenance: ['EQUIPMENT HEALTH', 'Predictive maintenance'], whatsapp: ['CUSTOMER MESSAGING', 'WhatsApp Business'], 'work-orders': ['EQUIPMENT', 'Maintenance work orders'], 'maintenance-calendar': ['EQUIPMENT', 'Maintenance calendar'], planning: ['PRODUCTION', 'Material planning'], schedule: ['PRODUCTION', 'Production schedule'], execution: ['PRODUCTION', 'Production execution & QC'], analytics: ['MANAGEMENT', 'Production analytics'], costing: ['FINANCE', 'Job costing'], settings: ['WORKSPACE', 'Settings']
 };
 
 function save(shouldSync = true) {
@@ -3091,7 +3091,7 @@ async function startFactoryFlowApplication() {
     const pagePermissions = {
       dashboard: 'dashboard.view', quotes: 'quotes.view', jobs: 'jobs.view',
       purchases: 'purchases.view', materials: 'materials.view', forecast: 'materials.view', workers: 'workers.view',
-      invoices: 'invoices.view', marketplace: 'marketplace.view', facilities: 'facilities.view', planning: 'planning.view',
+      invoices: 'invoices.view', whatsapp: 'whatsapp.view', marketplace: 'marketplace.view', facilities: 'facilities.view', planning: 'planning.view',
       schedule: 'schedule.view', execution: 'execution.view', analytics: 'analytics.view',
       costing: 'costing.view', settings: 'settings.view', users: 'users.manage', machines: 'machines.view'
     };
