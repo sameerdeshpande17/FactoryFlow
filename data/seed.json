@@ -57,5 +57,7 @@
   "facilities": [],
   "maintenanceRecords": [],
   "maintenanceWorkOrders": [],
-  "maintenanceTechnicians": []
+  "maintenanceTechnicians": [],
+  "gstProfiles": [],
+  "gstDocuments": []
 }
