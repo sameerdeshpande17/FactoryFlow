@@ -9,6 +9,7 @@ const facilityModel = require('./facilities.js');
 const forecasting = require('./forecasting.js');
 const scheduleOptimizer = require('./scheduler-optimizer.js');
 const machineModel = require('./machines.js');
+const gstDocuments = require('./gst-documents.js');
 const inventory = require('./inventory.js');
 const maintenanceWorkOrders = require('./maintenance-work-orders.js');
 
@@ -65,6 +66,8 @@ function readStore() {
     maintenanceRecords: list(stored.maintenanceRecords),
     maintenanceWorkOrders: list(stored.maintenanceWorkOrders),
     maintenanceTechnicians: list(stored.maintenanceTechnicians),
+    gstProfiles: list(stored.gstProfiles),
+    gstDocuments: list(stored.gstDocuments),
     users: list(stored.users),
     auditLogs: list(stored.auditLogs)
   });
@@ -295,6 +298,8 @@ function projectStoreForUser(store, user) {
     maintenanceRecords: [],
     maintenanceWorkOrders: [],
     maintenanceTechnicians: [],
+    gstProfiles: [],
+    gstDocuments: [],
     users: [],
     auditLogs: []
   };
@@ -881,6 +886,86 @@ async function handleApi(request, response, pathname) {
         scoped.maintenanceWorkOrders, scoped.maintenanceTechnicians, fromDate, days
       );
       return sendJson(response, 200, { facilityId: current.facility.id, calendar });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+
+  if (pathname === '/api/gst/profile' && request.method === 'GET') {
+    try {
+      requirePermission(current, 'invoices.view');
+      const profile = store.gstProfiles.find((item) => item.facilityId === current.facility.id) || null;
+      return sendJson(response, 200, { profile });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  if (pathname === '/api/gst/profile' && request.method === 'PUT') {
+    try {
+      requireCsrf(request, current);
+      requirePermission(current, 'invoices.manage');
+      const body = await readJson(request);
+      const existing = store.gstProfiles.find((item) => item.facilityId === current.facility.id);
+      const fields = gstDocuments.validateProfile(body, existing);
+      if (existing) {
+        Object.assign(existing, fields, { updatedAt: new Date().toISOString(), updatedBy: current.user.id });
+      } else {
+        store.gstProfiles.push({
+          id: 'GSTPROFILE-' + cryptoId(),
+          facilityId: current.facility.id,
+          ...fields,
+          createdAt: new Date().toISOString(),
+          createdBy: current.user.id
+        });
+      }
+      const profile = store.gstProfiles.find((item) => item.facilityId === current.facility.id);
+      appendAudit(store, current.user, 'gst.profile_saved', 'gst_profile', profile.id, {
+        gstin: profile.gstin, legalName: profile.legalName, stateCode: profile.stateCode
+      }, request);
+      writeStore(store);
+      return sendJson(response, 200, { profile });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  if (pathname === '/api/gst/documents' && request.method === 'GET') {
+    try {
+      requirePermission(current, 'invoices.view');
+      const url = new URL(request.url, 'http://localhost');
+      const type = url.searchParams.get('type') || '';
+      const documents = store.gstDocuments.filter((item) =>
+        item.facilityId === current.facility.id && (!type || item.type === type)
+      ).sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+      return sendJson(response, 200, { documents });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  if (pathname === '/api/gst/documents' && request.method === 'POST') {
+    try {
+      requireCsrf(request, current);
+      requirePermission(current, 'invoices.manage');
+      const body = await readJson(request);
+      const document = gstDocuments.createDocument(store.gstDocuments, store.gstProfiles, body, {
+        facilityId: current.facility.id,
+        userId: current.user.id,
+        userName: current.user.name
+      });
+      appendAudit(store, current.user, 'gst.document_issued', 'gst_document', document.id, {
+        type: document.type, number: document.number, grandTotal: document.grandTotal,
+        customerName: document.customer.name, financialYear: document.financialYear
+      }, request);
+      writeStore(store);
+      return sendJson(response, 201, { document });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  const gstDocumentMatch = /^\/api\/gst\/documents\/([^/]+)$/;
+  const matchedGstDocument = gstDocumentMatch.exec(pathname);
+  if (matchedGstDocument && request.method === 'GET') {
+    try {
+      requirePermission(current, 'invoices.view');
+      const document = store.gstDocuments.find((item) =>
+        item.id === matchedGstDocument[1] && item.facilityId === current.facility.id
+      );
+      if (!document) return sendJson(response, 404, { error: 'GST document not found in this facility.' });
+      return sendJson(response, 200, { document });
     } catch (error) { return publicAuthError(error, response); }
   }
 
