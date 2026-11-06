@@ -10,6 +10,7 @@ const forecasting = require('./forecasting.js');
 const scheduleOptimizer = require('./scheduler-optimizer.js');
 const machineModel = require('./machines.js');
 const gstDocuments = require('./gst-documents.js');
+const whatsapp = require('./whatsapp.js');
 const inventory = require('./inventory.js');
 const maintenanceWorkOrders = require('./maintenance-work-orders.js');
 
@@ -68,6 +69,8 @@ function readStore() {
     maintenanceTechnicians: list(stored.maintenanceTechnicians),
     gstProfiles: list(stored.gstProfiles),
     gstDocuments: list(stored.gstDocuments),
+    whatsappContacts: list(stored.whatsappContacts),
+    whatsappMessages: list(stored.whatsappMessages),
     users: list(stored.users),
     auditLogs: list(stored.auditLogs)
   });
@@ -129,6 +132,25 @@ function readJson(request) {
       try { resolve(body ? JSON.parse(body) : {}); }
       catch { reject(new Error('Request body must be valid JSON.')); }
     });
+    request.on('error', reject);
+  });
+}
+
+
+function readRawBody(request, maxBytes = 1024 * 1024) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    request.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > maxBytes) {
+        reject(new Error('Request body is too large.'));
+        request.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    request.on('end', () => resolve(Buffer.concat(chunks)));
     request.on('error', reject);
   });
 }
@@ -269,6 +291,8 @@ function projectStoreForUser(store, user) {
       deliveries: [],
       gstProfiles: [],
       gstDocuments: [],
+      whatsappContacts: [],
+      whatsappMessages: [],
       users: [],
       auditLogs: []
     };
@@ -302,6 +326,8 @@ function projectStoreForUser(store, user) {
     maintenanceTechnicians: [],
     gstProfiles: [],
     gstDocuments: [],
+    whatsappContacts: [],
+    whatsappMessages: [],
     users: [],
     auditLogs: []
   };
@@ -312,6 +338,63 @@ function publicAuthError(error, response) {
 }
 
 async function handleApi(request, response, pathname) {
+
+  // Meta webhook handshake and signed status callbacks are public routes.
+  if (pathname === '/api/whatsapp/webhook' && request.method === 'GET') {
+    const config = whatsapp.getConfiguration(process.env);
+    const url = new URL(request.url, 'http://localhost');
+    const mode = url.searchParams.get('hub.mode');
+    const token = url.searchParams.get('hub.verify_token');
+    const challenge = url.searchParams.get('hub.challenge');
+    if (!config.verifyToken || mode !== 'subscribe' || token !== config.verifyToken || !challenge) {
+      response.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return response.end('Webhook verification failed.');
+    }
+    response.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+    return response.end(challenge);
+  }
+
+  if (pathname === '/api/whatsapp/webhook' && request.method === 'POST') {
+    try {
+      const config = whatsapp.getConfiguration(process.env);
+      if (!config.appSecret) return sendJson(response, 503, { error: 'WhatsApp webhook is not configured.' });
+      const rawBody = await readRawBody(request);
+      if (!whatsapp.verifyWebhookSignature(rawBody, request.headers['x-hub-signature-256'], config.appSecret)) {
+        return sendJson(response, 401, { error: 'WhatsApp webhook signature is invalid.' });
+      }
+      const payload = JSON.parse(rawBody.toString('utf8'));
+      const store = readStore();
+      const updates = whatsapp.extractStatusUpdates(payload);
+      const now = new Date().toISOString();
+      updates.forEach((update) => {
+        const message = store.whatsappMessages.find((item) => item.providerMessageId === update.providerMessageId);
+        if (!message) return;
+        if (message.status === 'read' || message.status === 'failed') return;
+        const allowed = ['accepted', 'sent', 'delivered', 'read', 'failed'];
+        if (!allowed.includes(update.status)) return;
+        message.status = update.status;
+        message.statusUpdatedAt = update.timestamp ? new Date(Number(update.timestamp) * 1000).toISOString() : now;
+        message.lastWebhookAt = now;
+        message.errors = update.errors;
+      });
+      // Keep a small redacted event receipt for troubleshooting; message content and secrets are never stored here.
+      if (!Array.isArray(store.whatsappWebhookReceipts)) store.whatsappWebhookReceipts = [];
+      store.whatsappWebhookReceipts.unshift({
+        id: 'WAWH-' + cryptoId(),
+        receivedAt: now,
+        statusUpdateCount: updates.length,
+        object: String(payload.object || '')
+      });
+      store.whatsappWebhookReceipts = store.whatsappWebhookReceipts.slice(0, 200);
+      writeStore(store);
+      response.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
+      return response.end('EVENT_RECEIVED');
+    } catch (error) {
+      return sendJson(response, 400, { error: error.message || 'Invalid webhook payload.' });
+    }
+  }
+
+
   if (request.method === 'GET' && pathname === '/api/health') {
     return sendJson(response, 200, { ok: true });
   }
@@ -891,6 +974,150 @@ async function handleApi(request, response, pathname) {
     } catch (error) { return publicAuthError(error, response); }
   }
 
+
+
+  if (pathname === '/api/whatsapp/config' && request.method === 'GET') {
+    try {
+      requirePermission(current, 'whatsapp.view');
+      return sendJson(response, 200, { configuration: whatsapp.getConfiguration(process.env).publicStatus });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  if (pathname === '/api/whatsapp/contacts' && request.method === 'GET') {
+    try {
+      requirePermission(current, 'whatsapp.view');
+      const contacts = store.whatsappContacts.filter((item) => item.facilityId === current.facility.id)
+        .sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
+      return sendJson(response, 200, { contacts });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  if (pathname === '/api/whatsapp/contacts' && request.method === 'POST') {
+    try {
+      requireCsrf(request, current);
+      requirePermission(current, 'whatsapp.manage');
+      const body = await readJson(request);
+      const contact = whatsapp.createContact(store.whatsappContacts, body, {
+        facilityId: current.facility.id,
+        userId: current.user.id
+      });
+      appendAudit(store, current.user, 'whatsapp.contact_created', 'whatsapp_contact', contact.id, {
+        phone: contact.phone, optedIn: contact.optedIn
+      }, request);
+      writeStore(store);
+      return sendJson(response, 201, { contact });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  const whatsAppContactMatch = /^\/api\/whatsapp\/contacts\/([^/]+)$/;
+  const matchedWhatsAppContact = whatsAppContactMatch.exec(pathname);
+  if (matchedWhatsAppContact && request.method === 'PATCH') {
+    try {
+      requireCsrf(request, current);
+      requirePermission(current, 'whatsapp.manage');
+      const body = await readJson(request);
+      const contact = whatsapp.updateContact(store.whatsappContacts, matchedWhatsAppContact[1], body, {
+        facilityId: current.facility.id,
+        userId: current.user.id
+      });
+      appendAudit(store, current.user, 'whatsapp.contact_updated', 'whatsapp_contact', contact.id, {
+        phone: contact.phone, optedIn: contact.optedIn, consentAt: contact.consentAt, optedOutAt: contact.optedOutAt
+      }, request);
+      writeStore(store);
+      return sendJson(response, 200, { contact });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  if (pathname === '/api/whatsapp/messages' && request.method === 'GET') {
+    try {
+      requirePermission(current, 'whatsapp.view');
+      const messages = store.whatsappMessages.filter((item) => item.facilityId === current.facility.id)
+        .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt))).slice(0, 200);
+      return sendJson(response, 200, { messages });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  if (pathname === '/api/whatsapp/messages' && request.method === 'POST') {
+    try {
+      requireCsrf(request, current);
+      requirePermission(current, 'whatsapp.manage');
+      const body = await readJson(request);
+      const contact = store.whatsappContacts.find((item) =>
+        item.id === String(body.contactId || '') && item.facilityId === current.facility.id
+      );
+      if (!contact) return sendJson(response, 404, { error: 'WhatsApp contact not found in this facility.' });
+      if (contact.optedIn !== true || !contact.consentAt) {
+        return sendJson(response, 403, { error: 'A recorded customer WhatsApp opt-in is required before sending.' });
+      }
+      const config = whatsapp.getConfiguration(process.env);
+      if (!config.apiConfigured) return sendJson(response, 503, { error: 'WhatsApp Cloud API is not configured. Set the server environment variables first.' });
+      const messagePayload = whatsapp.buildTemplatePayload({
+        to: contact.phone,
+        templateName: body.templateName,
+        languageCode: body.languageCode,
+        bodyParameters: body.bodyParameters
+      });
+      const now = new Date().toISOString();
+      const message = {
+        id: 'WAM-' + cryptoId(),
+        facilityId: current.facility.id,
+        contactId: contact.id,
+        recipientName: contact.name,
+        recipientPhone: contact.phone,
+        templateName: messagePayload.template.name,
+        languageCode: messagePayload.template.language.code,
+        bodyParameters: messagePayload.template.components && messagePayload.template.components[0]
+          ? messagePayload.template.components[0].parameters.map((item) => item.text) : [],
+        status: 'accepted',
+        providerMessageId: '',
+        providerStatus: '',
+        errors: [],
+        createdAt: now,
+        createdBy: current.user.id
+      };
+      store.whatsappMessages.unshift(message);
+      try {
+        const providerResponse = await fetch('https://graph.facebook.com/' + config.apiVersion + '/' +
+          encodeURIComponent(config.phoneNumberId) + '/messages', {
+          method: 'POST',
+          headers: {
+            Authorization: 'Bearer ' + config.accessToken,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify(messagePayload),
+          signal: AbortSignal.timeout(15000)
+        });
+        const providerBody = await providerResponse.json().catch(() => ({}));
+        if (!providerResponse.ok) {
+          message.status = 'failed';
+          message.errors = [{
+            code: Number(providerBody.error && providerBody.error.code) || providerResponse.status,
+            title: String(providerBody.error && providerBody.error.message || 'WhatsApp provider rejected the message.').slice(0, 250)
+          }];
+          message.statusUpdatedAt = new Date().toISOString();
+          writeStore(store);
+          return sendJson(response, 502, { error: message.errors[0].title, message });
+        }
+        const providerMessage = Array.isArray(providerBody.messages) ? providerBody.messages[0] : null;
+        message.providerMessageId = String(providerMessage && providerMessage.id || '');
+        message.providerStatus = String(providerMessage && providerMessage.message_status || 'accepted');
+        message.status = 'accepted';
+        message.acceptedAt = new Date().toISOString();
+        contact.lastMessageAt = message.acceptedAt;
+        appendAudit(store, current.user, 'whatsapp.template_message_sent', 'whatsapp_message', message.id, {
+          contactId: contact.id, templateName: message.templateName, providerMessageId: message.providerMessageId
+        }, request);
+        writeStore(store);
+        return sendJson(response, 201, { message });
+      } catch (error) {
+        message.status = 'failed';
+        message.errors = [{ code: 0, title: error.name === 'TimeoutError' ? 'WhatsApp provider request timed out.' : 'WhatsApp provider request failed.' }];
+        message.statusUpdatedAt = new Date().toISOString();
+        writeStore(store);
+        return sendJson(response, 502, { error: message.errors[0].title, message });
+      }
+    } catch (error) { return publicAuthError(error, response); }
+  }
 
   if (pathname === '/api/gst/profile' && request.method === 'GET') {
     try {
