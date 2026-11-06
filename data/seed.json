@@ -59,5 +59,7 @@
   "maintenanceWorkOrders": [],
   "maintenanceTechnicians": [],
   "gstProfiles": [],
-  "gstDocuments": []
+  "gstDocuments": [],
+  "whatsappContacts": [],
+  "whatsappMessages": []
 }
