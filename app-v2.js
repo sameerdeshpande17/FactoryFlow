@@ -24,6 +24,8 @@ let gstDocumentFilter = 'ALL';
 const whatsappContacts = JSON.parse(localStorage.getItem('ff-whatsapp-contacts') || 'null') || [];
 const whatsappMessages = JSON.parse(localStorage.getItem('ff-whatsapp-messages') || 'null') || [];
 let whatsappConfig = { apiConfigured: false, webhookConfigured: false, phoneNumberId: '', apiVersion: '' };
+let suppliers = [];
+let supplierSearch = '';
 
 const deliveries = JSON.parse(localStorage.getItem('ff-deliveries') || 'null') || [];
 
@@ -192,6 +194,7 @@ async function hydrateWorkspace() {
     replace(maintenanceTechnicians, 'maintenanceTechnicians');
     replace(gstDocuments, 'gstDocuments');
     replace(gstProfiles, 'gstProfiles');
+    replace(suppliers, 'suppliers');
     replace(whatsappContacts, 'whatsappContacts');
     replace(whatsappMessages, 'whatsappMessages');
     if (window.FactoryFlowAuth.has('whatsapp.view')) {
@@ -2506,9 +2509,142 @@ function sendGstDocumentWhatsApp(documentId) {
 }
 
 function marketplacePage() {
-  const suppliers = [{ name: 'Kraftline Papers', product: 'Kraft paper · 180 GSM', price: '₹58.20 / kg', save: '7.5% group saving', initials: 'KP', members: 11 }, { name: 'WestPack Films', product: 'BOPP film · 25 micron', price: '₹176 / kg', save: '5.2% group saving', initials: 'WF', members: 7 }, { name: 'Pioneer Inks', product: 'Water-based ink · black', price: '₹425 / kg', save: 'Verified price', initials: 'PI', members: 0 }];
-  const cards = suppliers.map((supplier) => '<article class="supplier-card"><header><span class="person-avatar">' + supplier.initials + '</span><span><strong>' + supplier.name + '</strong><small>✓ Verified supplier</small></span></header><p>' + supplier.product + '</p><h3>' + supplier.price + '</h3><div class="supplier-meta"><span>' + supplier.save + '</span><span>' + (supplier.members ? supplier.members + ' businesses joined' : 'Ready to order') + '</span></div><button class="primary-button" data-group="' + supplier.name + '">' + (supplier.members ? 'Join group buy' : 'Request quote') + '</button></article>').join('');
-  return head('B2B NETWORK', 'Better buying, together', 'Discover verified suppliers, join cluster group buys, and protect every payment.', '<button class="primary-button" data-action="supplier">＋ Request supplier</button>') + '<section class="marketplace-hero"><div><span class="eyebrow">YOUR CLUSTER · PACKAGING</span><h2>Buy smarter with businesses like yours.</h2><p>Prices shown are from verified B2B suppliers. Group buys unlock better rates once the minimum quantity is reached.</p></div><div class="protection-card"><span>✦</span><strong>Protected payment</strong><small>Funds release after verified delivery proof.</small></div></section><div class="supplier-grid">' + cards + '</div><section class="panel marketplace-footer"><div><h2>Working capital when you need it</h2><p>Use verified orders and payment history to unlock raw-material financing for your next buy.</p></div><button class="secondary-button" data-action="capital">Check eligibility</button></section>';
+  const canManage = window.FactoryFlowAuth.has('marketplace.manage');
+  const query = supplierSearch.trim().toLocaleLowerCase();
+  const visible = suppliers.filter((supplier) => {
+    const value = [supplier.businessName, supplier.contactName, supplier.city, supplier.state, supplier.gstin, ...(supplier.categories || [])].join(' ').toLocaleLowerCase();
+    return !query || value.includes(query);
+  }).slice().sort((a, b) => String(a.businessName).localeCompare(String(b.businessName)));
+  const verifiedCount = suppliers.filter((item) => item.verification && item.verification.status === 'verified').length;
+  const pendingCount = suppliers.filter((item) => item.verification && item.verification.status === 'pending').length;
+  const cards = visible.map((supplier) => {
+    const trust = supplier.trust || {};
+    const verification = supplier.verification || {};
+    const statusLabel = {
+      verified: 'Internally verified', pending: 'Review pending',
+      rejected: 'Review rejected', suspended: 'Verification suspended',
+      unverified: 'Not reviewed'
+    }[verification.status] || 'Not reviewed';
+    const score = Number.isFinite(trust.score)
+      ? '<strong class="supplier-score">' + trust.score + '<small>/100</small></strong>'
+      : '<strong class="supplier-score supplier-score-na">—<small> no history</small></strong>';
+    const order = trust.orderHistory || {};
+    return '<article class="supplier-card supplier-record"><header><span class="person-avatar">' +
+      safe(String(supplier.businessName || 'S').split(/\s+/).map((part) => part[0]).slice(0, 2).join('').toUpperCase()) +
+      '</span><span class="supplier-card-title"><strong>' + safe(supplier.businessName) + '</strong><small>' + safe(statusLabel) + '</small></span>' +
+      '<span class="supplier-verification ' + safe(verification.status || 'unverified') + '">' + safe(statusLabel) + '</span></header>' +
+      '<p>' + safe((supplier.categories || []).join(' · ') || 'Product categories not yet recorded') + '</p>' +
+      '<div class="supplier-location">' + safe([supplier.city, supplier.state].filter(Boolean).join(', ') || 'Location not recorded') + '</div>' +
+      '<div class="supplier-trust-row"><div><span>INTERNAL INDICATOR</span>' + score + '</div>' +
+      '<div><span>PURCHASE ORDERS</span><strong>' + Number(order.total || 0) + '</strong><small>' + Number(order.received || 0) + ' received · ' + Number(order.open || 0) + ' open</small></div>' +
+      '<div><span>GSTIN</span><strong class="supplier-gstin">' + safe(supplier.gstin || 'Not supplied') + '</strong></div></div>' +
+      '<div class="supplier-score-breakdown">Profile ' + Number(trust.profilePoints || 0) + '/25 · Review ' + Number(trust.verificationPoints || 0) + '/40 · Fulfilment ' +
+      (trust.fulfilmentPoints === null || trust.fulfilmentPoints === undefined ? 'N/A' : Number(trust.fulfilmentPoints) + '/35') + '</div>' +
+      (verification.evidenceReference ? '<p class="supplier-evidence">Evidence reference: ' + safe(verification.evidenceReference) + '</p>' : '') +
+      (canManage ? '<div class="supplier-actions"><button class="secondary-button" data-supplier-edit="' + safe(supplier.id) + '">Edit profile</button><button class="primary-button" data-supplier-review="' + safe(supplier.id) + '">Review status</button></div>' : '') +
+      '</article>';
+  }).join('');
+  return head('B2B NETWORK', 'Supplier register', 'Manage supplier details, record internal due-diligence checks, and compare facility purchase history.',
+    canManage ? '<button class="primary-button" data-supplier-add>＋ Add supplier</button>' : '') +
+    '<div class="supplier-register-stats"><article><span>SUPPLIERS</span><strong>' + suppliers.length + '</strong></article><article><span>INTERNALLY VERIFIED</span><strong>' + verifiedCount + '</strong></article><article><span>REVIEWS PENDING</span><strong>' + pendingCount + '</strong></article></div>' +
+    '<section class="content-card supplier-register-toolbar"><div><strong>Facility supplier directory</strong><p class="subtle">Records and purchase metrics are restricted to the selected facility.</p></div>' +
+    '<form class="supplier-search" id="supplierSearchForm"><input type="search" name="q" placeholder="Search name, location, GSTIN or category" value="' + safe(supplierSearch) + '"><button class="secondary-button" type="submit">Search</button><button class="secondary-button" type="button" data-supplier-refresh>↻ Refresh</button></form></section>' +
+    (visible.length ? '<div class="supplier-grid supplier-register-grid">' + cards + '</div>' :
+      '<section class="content-card"><div class="empty-state"><h2>' + (query ? 'No suppliers match this search' : 'No suppliers registered yet') + '</h2><p>' +
+      (query ? 'Try another business name, location, GSTIN or product category.' : 'Add a supplier profile to begin recording due diligence and order history.') +
+      '</p>' + (canManage && !query ? '<button class="primary-button" data-supplier-add>＋ Add first supplier</button>' : '') + '</div></section>') +
+    '<section class="content-card supplier-trust-explainer"><h2>How the internal indicator works</h2><p>Up to 25 points for profile completeness, 40 for an internal verification review, and up to 35 from completed purchase-order fulfilment. Open orders are excluded; no numeric indicator appears until a purchase order is closed.</p><p><strong>This is an internal due-diligence aid, not a government certification, independent rating, credit score or guarantee.</strong> A GSTIN format check does not validate a registration with the GST portal.</p></section>' +
+    '<section class="panel marketplace-footer"><div><h2>Payments and escrow</h2><p>Payment protection is not enabled in this release. FactoryFlow does not hold or release funds.</p></div><span class="supplier-coming-soon">Provider integration required</span></section>';
+}
+
+function editSupplier(supplierId = '') {
+  if (!window.FactoryFlowAuth.has('marketplace.manage')) return;
+  const current = suppliers.find((item) => item.id === supplierId);
+  const value = (key) => current ? safe(Array.isArray(current[key]) ? current[key].join(', ') : current[key] || '') : '';
+  openModal('<h2 id="modalTitle">' + (current ? 'Edit supplier profile' : 'Add supplier') + '</h2>' +
+    '<p>Store business details for the selected factory. At least a phone number or email is required.</p>' +
+    '<form id="supplierForm" class="form-grid">' +
+    '<label>Business name<input required maxlength="160" name="businessName" value="' + value('businessName') + '"></label>' +
+    '<div class="form-row"><label>Contact person<input maxlength="120" name="contactName" value="' + value('contactName') + '"></label><label>Phone with country code<input maxlength="40" name="phone" inputmode="tel" placeholder="919876543210" value="' + value('phone') + '"></label></div>' +
+    '<label>Email<input type="email" maxlength="254" name="email" value="' + value('email') + '"></label>' +
+    '<div class="form-row"><label>GSTIN<input maxlength="15" name="gstin" value="' + value('gstin') + '"></label><label>PAN<input maxlength="10" name="pan" value="' + value('pan') + '"></label></div>' +
+    '<label>Product categories<input maxlength="720" name="categories" placeholder="Kraft paper, Corrugated board" value="' + value('categories') + '"></label>' +
+    '<label>Address<input maxlength="300" name="address" value="' + value('address') + '"></label>' +
+    '<div class="form-row"><label>City<input maxlength="100" name="city" value="' + value('city') + '"></label><label>State<input maxlength="100" name="state" value="' + value('state') + '"></label></div>' +
+    '<label>Internal notes<textarea maxlength="1200" name="notes">' + value('notes') + '</textarea></label>' +
+    '<p id="supplierFormError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save supplier</button></div></form>', true);
+  ui('#supplierForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const payload = {
+      businessName: data.get('businessName'), contactName: data.get('contactName'),
+      phone: data.get('phone'), email: data.get('email'), gstin: data.get('gstin'),
+      pan: data.get('pan'), categories: data.get('categories'),
+      address: data.get('address'), city: data.get('city'), state: data.get('state'),
+      notes: data.get('notes')
+    };
+    try {
+      const result = await window.FactoryFlowAuth.request(current ? '/api/suppliers/' + encodeURIComponent(current.id) : '/api/suppliers', {
+        method: current ? 'PATCH' : 'POST', body: JSON.stringify(payload)
+      });
+      const updated = result.supplier;
+      const index = suppliers.findIndex((item) => item.id === updated.id);
+      if (index >= 0) suppliers.splice(index, 1, updated); else suppliers.unshift(updated);
+      closeModal(); render();
+      notify(current ? 'Supplier profile updated.' : 'Supplier added to this facility.');
+    } catch (error) {
+      const node = ui('#supplierFormError'); node.textContent = error.message; node.hidden = false;
+    }
+  });
+}
+
+function reviewSupplier(supplierId) {
+  if (!window.FactoryFlowAuth.has('marketplace.manage')) return;
+  const supplier = suppliers.find((item) => item.id === supplierId);
+  if (!supplier) return notify('Supplier not found.');
+  const verification = supplier.verification || {};
+  const methods = [
+    ['business_documents', 'Business documents reviewed'],
+    ['gst_record_review', 'GST record review'],
+    ['in_person_visit', 'In-person visit'],
+    ['reference_call', 'Reference call'],
+    ['other', 'Other documented check']
+  ];
+  const methodOptions = methods.map(([value, label]) => '<option value="' + value + '"' + (verification.method === value ? ' selected' : '') + '>' + label + '</option>').join('');
+  const statuses = ['unverified', 'pending', 'verified', 'rejected', 'suspended'];
+  const statusOptions = statuses.map((value) => '<option value="' + value + '"' + ((verification.status || 'unverified') === value ? ' selected' : '') + '>' + value.charAt(0).toUpperCase() + value.slice(1) + '</option>').join('');
+  openModal('<h2 id="modalTitle">Review supplier</h2><p>' + safe(supplier.businessName) + ' · Record an internal review only. Verification is not government accreditation.</p>' +
+    '<form id="supplierReviewForm" class="form-grid"><label>Review status<select required name="status">' + statusOptions + '</select></label>' +
+    '<label>Review method<select name="method"><option value="">Not applicable</option>' + methodOptions + '</select></label>' +
+    '<label>Evidence reference<input maxlength="300" name="evidenceReference" value="' + safe(verification.evidenceReference || '') + '" placeholder="Document ID, register reference or visit note"></label>' +
+    '<label>Review notes<textarea maxlength="800" name="notes">' + safe(verification.notes || '') + '</textarea></label>' +
+    '<p id="supplierReviewError" class="form-error" hidden></p><div class="modal-actions"><button type="button" class="secondary-button" data-close>Cancel</button><button type="submit" class="primary-button">Save review</button></div></form>', true);
+  ui('#supplierReviewForm').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    try {
+      const result = await window.FactoryFlowAuth.request('/api/suppliers/' + encodeURIComponent(supplier.id) + '/verification', {
+        method: 'PATCH',
+        body: JSON.stringify({
+          status: data.get('status'), method: data.get('method'),
+          evidenceReference: data.get('evidenceReference'), notes: data.get('notes')
+        })
+      });
+      const index = suppliers.findIndex((item) => item.id === supplier.id);
+      if (index >= 0) suppliers.splice(index, 1, result.supplier);
+      closeModal(); render(); notify('Supplier review status updated.');
+    } catch (error) {
+      const node = ui('#supplierReviewError'); node.textContent = error.message; node.hidden = false;
+    }
+  });
+}
+
+async function refreshSuppliers() {
+  try {
+    const result = await window.FactoryFlowAuth.request('/api/suppliers', { headers: { Accept: 'application/json' } });
+    suppliers.splice(0, suppliers.length, ...(result.suppliers || []));
+    render(); notify('Supplier register refreshed.');
+  } catch (error) { notify(error.message); }
 }
 
 function settingsPage() {
@@ -3085,6 +3221,12 @@ function bind() {
   all('[data-create-gst-doc]').forEach((button) => button.addEventListener('click', createGstDocument));
   all('[data-print-gst-doc]').forEach((button) => button.addEventListener('click', () => printGstDocument(button.dataset.printGstDoc)));
   all('[data-gst-filter]').forEach((button) => button.addEventListener('click', () => { gstDocumentFilter = button.dataset.gstFilter; render(); }));
+  all('[data-supplier-add]').forEach((button) => button.addEventListener('click', () => editSupplier()));
+  all('[data-supplier-edit]').forEach((button) => button.addEventListener('click', () => editSupplier(button.dataset.supplierEdit)));
+  all('[data-supplier-review]').forEach((button) => button.addEventListener('click', () => reviewSupplier(button.dataset.supplierReview)));
+  all('[data-supplier-refresh]').forEach((button) => button.addEventListener('click', refreshSuppliers));
+  const supplierSearchForm = ui('#supplierSearchForm');
+  if (supplierSearchForm) supplierSearchForm.addEventListener('submit', (event) => { event.preventDefault(); supplierSearch = new FormData(supplierSearchForm).get('q') || ''; render(); });
   all('[data-wa-refresh]').forEach((button) => button.addEventListener('click', refreshWhatsAppData));
   all('[data-wa-add-contact]').forEach((button) => button.addEventListener('click', createWhatsAppContact));
   all('[data-wa-send]').forEach((button) => button.addEventListener('click', () => openWhatsAppTemplateSend()));

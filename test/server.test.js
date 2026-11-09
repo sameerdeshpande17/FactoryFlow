@@ -24,7 +24,7 @@ async function freePort() {
 before(async () => {
   const root = path.join(__dirname, '..');
   tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'factoryflow-test-'));
-  for (const file of ['server.js', 'auth.js', 'facilities.js', 'forecasting.js', 'inventory.js', 'scheduling.js', 'scheduler-optimizer.js', 'execution.js', 'analytics.js', 'machines.js', 'maintenance-work-orders.js', 'gst-documents.js', 'whatsapp.js']) {
+  for (const file of ['server.js', 'auth.js', 'facilities.js', 'forecasting.js', 'inventory.js', 'scheduling.js', 'scheduler-optimizer.js', 'execution.js', 'analytics.js', 'machines.js', 'maintenance-work-orders.js', 'gst-documents.js', 'whatsapp.js', 'supplier-network.js']) {
     fs.copyFileSync(path.join(root, file), path.join(tempDir, file));
   }
   fs.mkdirSync(path.join(tempDir, 'data'));
@@ -126,6 +126,61 @@ test('authenticates users, enforces role access, persists operations and protect
   const puneFacility = (await json(createFacility)).facility;
   assert.equal(puneFacility.code, 'PUNE-01');
   assert.notEqual(puneFacility.id, 'FAC-001');
+
+  const emptySupplierRegister = await json(await fetch(baseUrl + '/api/suppliers', {
+    headers: { Cookie: adminCookie, 'X-Facility-ID': 'FAC-001' }
+  }));
+  assert.deepEqual(emptySupplierRegister.suppliers, []);
+
+  const createSupplierResponse = await fetch(baseUrl + '/api/suppliers', {
+    method: 'POST',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      businessName: 'Kaveri Packaging Materials',
+      contactName: 'Arun Kumar',
+      phone: '+91 98765 43210',
+      email: 'sales@kaveri.example',
+      gstin: '29ABCDE1234F1Z5',
+      pan: 'ABCDE1234F',
+      address: 'Peenya Industrial Area',
+      city: 'Bengaluru',
+      state: 'Karnataka',
+      categories: ['Kraft paper', 'Corrugated board']
+    })
+  });
+  assert.equal(createSupplierResponse.status, 201);
+  const createdSupplier = (await json(createSupplierResponse)).supplier;
+  assert.equal(createdSupplier.verification.status, 'unverified');
+  assert.equal(createdSupplier.trust.score, null);
+
+  const missingSupplierEvidence = await fetch(baseUrl + '/api/suppliers/' + encodeURIComponent(createdSupplier.id) + '/verification', {
+    method: 'PATCH',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({ status: 'verified', method: 'business_documents' })
+  });
+  assert.equal(missingSupplierEvidence.status, 400);
+
+  const verifySupplierResponse = await fetch(baseUrl + '/api/suppliers/' + encodeURIComponent(createdSupplier.id) + '/verification', {
+    method: 'PATCH',
+    headers: { Cookie: adminCookie, 'X-CSRF-Token': adminCsrf, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      status: 'verified',
+      method: 'business_documents',
+      evidenceReference: 'GST certificate reviewed: DOC-2026-01',
+      notes: 'Internal document review completed.'
+    })
+  });
+  assert.equal(verifySupplierResponse.status, 200);
+  const verifiedSupplier = (await json(verifySupplierResponse)).supplier;
+  assert.equal(verifiedSupplier.verification.status, 'verified');
+  assert.ok(verifiedSupplier.verification.checkedBy);
+  assert.ok(verifiedSupplier.verification.checkedAt);
+  assert.equal(verifiedSupplier.trust.score, null);
+
+  const foreignSupplierRegister = await json(await fetch(baseUrl + '/api/suppliers', {
+    headers: { Cookie: adminCookie, 'X-Facility-ID': puneFacility.id }
+  }));
+  assert.deepEqual(foreignSupplierRegister.suppliers, []);
 
   const whatsappConfigResponse = await json(await fetch(baseUrl + '/api/whatsapp/config', {
     headers: { Cookie: adminCookie, 'X-Facility-ID': 'FAC-001' }
@@ -255,6 +310,7 @@ test('authenticates users, enforces role access, persists operations and protect
     downtimeLogs: [],
     maintenanceWorkOrders: [],
     maintenanceTechnicians: [],
+    suppliers: [{ id: 'SUP-FORGED', facilityId: 'FAC-001', businessName: 'Forged supplier', verification: { status: 'verified', evidenceReference: 'forged' } }],
     whatsappContacts: [{ id: 'WAC-FORGED', name: 'Forged opt-in', phone: '919999999999', optedIn: true, consentAt: '2026-11-06T05:00:00.000Z' }],
     whatsappMessages: [{ id: 'WAM-FORGED', recipientPhone: '919999999999', status: 'delivered' }]
   };
@@ -877,6 +933,9 @@ test('authenticates users, enforces role access, persists operations and protect
   assert.equal(adminBootstrapAfterUsers.state.whatsappContacts[0].id, whatsappContact.id);
   assert.equal(adminBootstrapAfterUsers.state.whatsappContacts[0].optedIn, true);
   assert.equal(adminBootstrapAfterUsers.state.whatsappMessages.length, 0);
+  assert.equal(adminBootstrapAfterUsers.state.suppliers.length, 1);
+  assert.equal(adminBootstrapAfterUsers.state.suppliers[0].id, createdSupplier.id);
+  assert.equal(adminBootstrapAfterUsers.state.suppliers[0].verification.status, 'verified');
   assert.equal(adminBootstrapAfterUsers.state.gstProfiles.length, 1);
   assert.equal(adminBootstrapAfterUsers.state.gstDocuments.length, 3);
   assert.ok(adminBootstrapAfterUsers.state.maintenanceWorkOrders.some((item) => item.status === 'Completed'));
@@ -919,6 +978,9 @@ test('authenticates users, enforces role access, persists operations and protect
   assert.deepEqual(workerBootstrapPayload.state.gstDocuments, []);
   assert.deepEqual(workerBootstrapPayload.state.whatsappContacts, []);
   assert.deepEqual(workerBootstrapPayload.state.whatsappMessages, []);
+  assert.deepEqual(workerBootstrapPayload.state.suppliers, []);
+  const workerSupplierDenied = await fetch(baseUrl + '/api/suppliers', { headers: { Cookie: workerCookie, 'X-Facility-ID': 'FAC-001' } });
+  assert.equal(workerSupplierDenied.status, 403);
   const workerSchedulePreview = await fetch(baseUrl + '/api/scheduling/optimize', {
     method: 'POST',
     headers: { Cookie: workerCookie, 'X-Facility-ID': 'FAC-001', 'Content-Type': 'application/json' },
