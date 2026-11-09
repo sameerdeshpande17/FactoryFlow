@@ -18,7 +18,7 @@ Opening index.html directly is still supported as a browser-only fallback, but c
 - Purchase orders and raw-material stock signals
 - Job-worker discovery, assignment, and delivery-proof workflow
 - GST invoice and WhatsApp payment-reminder workspace
-- Verified supplier discovery, group buying, payment protection, and working-capital entry points
+- Facility-scoped supplier directory with internal evidence review, profile completeness and transparent trust indicators derived from closed purchase-order history
 - English/Hindi language switch and responsive layout
 - Local API-backed persistence for quotes, jobs, purchases, and materials
 - Delivery-proof records with recipient, challan/reference, notes, and an optional 1 MB photo or PDF
@@ -152,3 +152,21 @@ The WhatsApp Business page supports facility-specific customer contacts, recorde
 A recorded opt-in and its source are required before each send. Contact and message records are created and updated through dedicated server APIs, not the generic workspace-sync endpoint. They are facility-scoped, audited and hidden from supervisor/worker bootstrap data. Provider acceptance is recorded separately from sent/delivered/read/failed webhook status.
 
 **Before enabling production sends:** collect and retain customer permission according to applicable laws and Meta policy, provide a clear opt-out mechanism, obtain approval for utility/marketing templates, configure a public HTTPS webhook and set up a durable access token. The app stores consent source/date as evidence supplied by your team; it cannot independently prove the customer consented. Actual sends require valid Meta credentials, an active business phone number and approved templates. No live messages are sent in automated tests.
+
+
+## Supplier verification and internal trust indicator
+
+Administrators and managers can maintain a supplier register for each active facility. Profiles may include contact details, GSTIN, PAN, address, supplied product categories and internal notes. The server validates the format of supplied tax identifiers and checks that a separately entered PAN matches the PAN embedded in a GSTIN; these checks do not query or certify a government registration.
+
+A supplier starts as **Unverified**. An administrator or manager can record a review status. Setting a supplier to **Verified internally** requires a verification method and a traceable evidence reference. The record stores who performed the review and when; it does not represent government accreditation, third-party certification or a guarantee of supplier quality. Review history is retained when the status changes.
+
+The optional 0–100 FactoryFlow supplier indicator is deliberately transparent:
+- 40 points for an internally verified supplier (15 while review is pending, otherwise 0).
+- Up to 25 profile-completeness points: valid GSTIN (10), address (5), contact method (5), and product categories (5).
+- Up to 35 fulfilment points based on received purchase orders divided by closed purchase orders (received plus cancelled). Open purchase orders are excluded.
+
+No numeric indicator is shown until at least one closed purchase order exists for that supplier in the selected facility. Orders are matched by the supplier name recorded on the purchase order, so name consistency matters. The indicator is a facility's internal due-diligence aid, not an independent rating, credit score or prediction. It does not use fabricated reviews or imply that a supplier has been externally vetted.
+
+Supplier profiles and verification evidence references are API-managed, facility-scoped and audited. They are not accepted from generic browser workspace sync, and workers/supervisors do not receive the supplier register. Evidence references are identifiers or notes supplied by the reviewer; uploading or validating original certificates is outside this milestone.
+
+**Payment protection is not active in this release.** FactoryFlow does not hold, escrow, release or transfer customer or supplier funds. A regulated payment/escrow provider and a separate integration are required before protected payments can be offered.
