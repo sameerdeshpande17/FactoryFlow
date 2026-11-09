@@ -11,6 +11,7 @@ const scheduleOptimizer = require('./scheduler-optimizer.js');
 const machineModel = require('./machines.js');
 const gstDocuments = require('./gst-documents.js');
 const whatsapp = require('./whatsapp.js');
+const supplierNetwork = require('./supplier-network.js');
 const inventory = require('./inventory.js');
 const maintenanceWorkOrders = require('./maintenance-work-orders.js');
 
@@ -69,6 +70,7 @@ function readStore() {
     maintenanceTechnicians: list(stored.maintenanceTechnicians),
     gstProfiles: list(stored.gstProfiles),
     gstDocuments: list(stored.gstDocuments),
+    suppliers: list(stored.suppliers),
     whatsappContacts: list(stored.whatsappContacts),
     whatsappMessages: list(stored.whatsappMessages),
     users: list(stored.users),
@@ -497,6 +499,10 @@ async function handleApi(request, response, pathname) {
       projected.whatsappContacts = store.whatsappContacts.filter((item) => item.facilityId === current.facility.id);
       projected.whatsappMessages = store.whatsappMessages.filter((item) => item.facilityId === current.facility.id);
     }
+    projected.suppliers = ['admin', 'manager'].includes(current.user.role)
+      ? store.suppliers.filter((item) => item.facilityId === current.facility.id)
+        .map((item) => supplierNetwork.enrichSupplier(item, store.purchases.filter((purchase) => purchase.facilityId === current.facility.id)))
+      : [];
     return sendJson(response, 200, {
       workspace: { ...store.workspace, activeFacilityId: current.facility.id },
       state: projected,
@@ -980,6 +986,74 @@ async function handleApi(request, response, pathname) {
   }
 
 
+
+  if (pathname === '/api/suppliers' && request.method === 'GET') {
+    try {
+      requirePermission(current, 'marketplace.view');
+      const purchases = store.purchases.filter((item) => item.facilityId === current.facility.id);
+      const suppliers = store.suppliers.filter((item) => item.facilityId === current.facility.id)
+        .map((item) => supplierNetwork.enrichSupplier(item, purchases))
+        .sort((a, b) => String(a.businessName).localeCompare(String(b.businessName)));
+      return sendJson(response, 200, { facilityId: current.facility.id, suppliers });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  if (pathname === '/api/suppliers' && request.method === 'POST') {
+    try {
+      requireCsrf(request, current);
+      requirePermission(current, 'marketplace.manage');
+      const body = await readJson(request);
+      const supplier = supplierNetwork.createSupplier(store.suppliers, body, {
+        facilityId: current.facility.id, userId: current.user.id
+      });
+      appendAudit(store, current.user, 'supplier.created', 'supplier', supplier.id, {
+        businessName: supplier.businessName
+      }, request);
+      writeStore(store);
+      const purchases = store.purchases.filter((item) => item.facilityId === current.facility.id);
+      return sendJson(response, 201, { supplier: supplierNetwork.enrichSupplier(supplier, purchases) });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  const supplierVerificationMatch = /^\/api\/suppliers\/([^/]+)\/verification$/.exec(pathname);
+  if (supplierVerificationMatch && request.method === 'PATCH') {
+    try {
+      requireCsrf(request, current);
+      requirePermission(current, 'marketplace.manage');
+      const body = await readJson(request);
+      const supplierId = decodeURIComponent(supplierVerificationMatch[1]);
+      const supplier = supplierNetwork.reviewSupplier(store.suppliers, supplierId, body, {
+        facilityId: current.facility.id, userId: current.user.id, userName: current.user.name
+      });
+      appendAudit(store, current.user, 'supplier.verification_reviewed', 'supplier', supplier.id, {
+        businessName: supplier.businessName,
+        verificationStatus: supplier.verification.status,
+        method: supplier.verification.method
+      }, request);
+      writeStore(store);
+      const purchases = store.purchases.filter((item) => item.facilityId === current.facility.id);
+      return sendJson(response, 200, { supplier: supplierNetwork.enrichSupplier(supplier, purchases) });
+    } catch (error) { return publicAuthError(error, response); }
+  }
+
+  const supplierMatch = /^\/api\/suppliers\/([^/]+)$/.exec(pathname);
+  if (supplierMatch && request.method === 'PATCH') {
+    try {
+      requireCsrf(request, current);
+      requirePermission(current, 'marketplace.manage');
+      const body = await readJson(request);
+      const supplierId = decodeURIComponent(supplierMatch[1]);
+      const supplier = supplierNetwork.updateSupplier(store.suppliers, supplierId, body, {
+        facilityId: current.facility.id, userId: current.user.id
+      });
+      appendAudit(store, current.user, 'supplier.profile_updated', 'supplier', supplier.id, {
+        businessName: supplier.businessName
+      }, request);
+      writeStore(store);
+      const purchases = store.purchases.filter((item) => item.facilityId === current.facility.id);
+      return sendJson(response, 200, { supplier: supplierNetwork.enrichSupplier(supplier, purchases) });
+    } catch (error) { return publicAuthError(error, response); }
+  }
 
   if (pathname === '/api/whatsapp/config' && request.method === 'GET') {
     try {
